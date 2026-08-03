@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# Per-machine Claude Code settings. The shared parts of .claude/ stay tracked.
+.claude/settings.local.json
+
+# Each project keeps its own ignore rules — AIDP/.gitignore and
+# Workers/.gitignore still apply to everything under those directories.

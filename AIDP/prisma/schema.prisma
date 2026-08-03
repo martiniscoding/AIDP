@@ -1,0 +1,652 @@
+// Dexter auth schema.
+//
+// These four models are Better Auth's core tables. The field names are not
+// arbitrary — Better Auth addresses them directly through the Prisma adapter,
+// so they must match `getAuthTables()` in @better-auth/core exactly. The
+// `@@map` on each model pins the physical table to the singular, lowercase
+// name Better Auth expects while leaving the Prisma model PascalCase.
+//
+// Adding a field here is only half the job: anything the sign-up form sends
+// also has to be declared in `user.additionalFields` in src/lib/auth-options.ts,
+// or Better Auth will reject it as an unknown field before it reaches Postgres.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+// Prisma 7 reads the connection string from prisma.config.ts, not from here.
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Collected at sign-up. Required in the app, so required here — see
+  // `additionalFields` in src/lib/auth-options.ts for the matching declaration.
+  company String
+  country String
+  phone   String
+
+  sessions Session[]
+  accounts Account[]
+
+  // One tech-stack assessment per account. See TechAssessment below.
+  assessment TechAssessment?
+
+  // Which customer organisations this person can see. Consultants span several.
+  memberships Membership[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  // For email/password this holds the hash. Better Auth marks it
+  // `returned: false`, so it never leaves the server in an API response.
+  password              String?
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+// Backs email verification and the password-reset flow.
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Technology Stack & Architecture Reference
+//
+// Mirrors the client assessment template: five sections, one row per account.
+// The shape here is deliberately split between arrays and a relation:
+//
+//   - Sections 2 and 3 are multi-select lists where the client may also type
+//     something we don't have on the shelf. Both cases are just strings, so a
+//     Postgres text[] holds them without a join. Anything not in the catalog in
+//     src/lib/tech-stack/catalog.ts is a write-in and renders as a monogram.
+//
+//   - Section 4 pairs each platform with two graded answers, and we will want
+//     to aggregate across clients ("how many rated Databricks high?"). That is
+//     a relation, not JSON, so it stays queryable.
+// ---------------------------------------------------------------------------
+
+model TechAssessment {
+  id String @id @default(cuid())
+
+  // One assessment per user; the form upserts against this.
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 1 — Client information. Seeded from the sign-up record on first open, then
+  // owned by this form: a client may complete it for a subsidiary.
+  companyName    String @default("")
+  primaryContact String @default("")
+  roleTitle      String @default("")
+  dateCompleted  String @default("")
+
+  // 2 — Current data infrastructure
+  dataSources     String[] @default([])
+  dataWarehousing String[] @default([])
+  biReporting     String[] @default([])
+  primaryCloud    String[] @default([])
+
+  // 3 — Workload requirements
+  workloads String[] @default([])
+
+  // 5 — Additional references and specific needs
+  additionalNotes String @default("")
+
+  // "draft" until the client presses Submit; they can still edit afterwards,
+  // so this records intent rather than locking the row.
+  status      String    @default("draft")
+  submittedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 4 — Platform preferences
+  platforms TechPlatformPreference[]
+
+  @@map("tech_assessment")
+}
+
+model TechPlatformPreference {
+  id String @id @default(cuid())
+
+  assessmentId String
+  assessment   TechAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  // Catalog slug ("databricks") or a slugified write-in ("custom-teradata").
+  // Unique per assessment so the save path can upsert row by row.
+  platformKey String
+  // Denormalised so a write-in keeps its label without a catalog entry.
+  label       String
+  isCustom    Boolean @default(false)
+
+  // Null means "not answered yet" — distinct from a deliberate "no".
+  currentUsage  String? // "yes" | "no"
+  interestLevel String? // "high" | "medium" | "low"
+
+  sortOrder Int @default(0)
+
+  @@unique([assessmentId, platformKey])
+  @@index([assessmentId])
+  @@map("tech_platform_preference")
+}
+
+// ---------------------------------------------------------------------------
+// Document ingestion
+//
+// An organisation is a customer of the consultancy, and it is the tenant
+// boundary: one customer's Internal-Use standards must never surface in
+// another's work. `organisationId` is denormalised onto Document, Chunk and Job
+// rather than reached through a join, because every retrieval filters on it and
+// the filter must be impossible to forget. See src/lib/ingest/retrieval.ts —
+// nothing builds a vector query without going through it.
+//
+// Cascades are deliberate, not incidental. Data Standards §10.4 requires
+// disposal to be "auditable, authorized, and verifiable" and that "all copies
+// and dependent systems must be identified and addressed": deleting a document
+// has to take its sections, clauses, tables, figures, chunks and vectors with
+// it. Blob cleanup is the one part Postgres can't do, so it runs as a job.
+// ---------------------------------------------------------------------------
+
+model Organisation {
+  id   String @id @default(cuid())
+  name String
+  // URL-safe handle. Stable once issued — it appears in paths.
+  slug String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  documents   Document[]
+  chunks      Chunk[]
+  jobs        Job[]
+  frameworks  Framework[]
+  runs        AssessmentRun[]
+
+  @@map("organisation")
+}
+
+model Membership {
+  id String @id @default(cuid())
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  // "owner" | "consultant" | "viewer"
+  role String @default("consultant")
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, organisationId])
+  @@index([organisationId])
+  @@map("membership")
+}
+
+model Document {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  // "reference" — a standards document; stops after embed.
+  // "assessed"  — a design submitted for review; continues into analyse.
+  role String @default("reference")
+
+  title         String
+  // Cover-page identifiers, when the document carries them: "DOC-SEC-STD", "V-1.0".
+  docCode       String?
+  version       String?
+  effectiveDate String?
+
+  // Lifted off the page footer during parse, not typed by a human. Drives
+  // access control — see Data Standards §8.1.
+  sensitivity String?
+
+  // Object-storage key, not a URL: the bucket may be private and the signing
+  // scheme may change.
+  storageKey String
+  mimeType   String @default("application/pdf")
+  byteSize   Int
+  // Content hash. Re-uploading the same bytes must not re-parse or re-embed.
+  sha256     String
+
+  pageCount Int?
+  // "prose-clause" | "table-principle" | "mixed" — detected, not declared.
+  profile   String?
+
+  // "pending" | "parsing" | "chunking" | "embedding" | "ready" | "failed"
+  status        String  @default("pending")
+  failureReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sections DocumentSection[]
+  chunks   Chunk[]
+  jobs     Job[]
+  issues   IngestIssue[]
+
+  // Reference documents belong to frameworks; assessed documents get runs.
+  frameworks FrameworkDocument[]
+  runs       AssessmentRun[]
+
+  // One live document per organisation per file. A second upload of the same
+  // bytes resolves to this row instead of starting the pipeline again.
+  @@unique([organisationId, sha256])
+  @@index([organisationId, status])
+  @@map("document")
+}
+
+model DocumentSection {
+  id String @id @default(cuid())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Reading order within the document. This is the identity, not `numberText`:
+  // real documents repeat section numbers (the sample corpus has two 9.1.1s
+  // from Word auto-numbering drift).
+  ordinal     Int
+  // "3.2", "Appendix A" — as printed, for display and citation only.
+  numberText  String?
+  title       String
+  // "Security Standards › 3. Identity and Access Management › 3.2 Authentication"
+  headingPath String
+  depth       Int     @default(1)
+
+  pageStart Int?
+  pageEnd   Int?
+
+  // Prose that belongs to the section itself rather than to any clause. Also
+  // the parent chunk when a query is broader than a single clause.
+  introText String @default("")
+
+  // No clause, no table, no figure, no prose. Surfaced as an issue rather than
+  // silently dropped — a compliance tool that swallows an empty section will
+  // later answer from a sibling document and sound certain.
+  isEmpty Boolean @default(false)
+
+  clauses Clause[]
+  tables  TableBlock[]
+  figures Figure[]
+
+  @@unique([documentId, ordinal])
+  @@index([documentId])
+  @@map("document_section")
+}
+
+model Clause {
+  id String @id @default(cuid())
+
+  sectionId String
+  section   DocumentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  ordinal Int
+  title   String?
+
+  // The template's own four parts. `guidance` only appears in Solution
+  // Architecture, which pairs each standard with the technologies to implement
+  // it — the prescription attached to the diagnosis.
+  statement    String   @default("")
+  rationale    String   @default("")
+  requirements String[] @default([])
+  guidance     String[] @default([])
+
+  pageStart Int?
+  pageEnd   Int?
+
+  tables TableBlock[]
+
+  @@unique([sectionId, ordinal])
+  @@index([sectionId])
+  @@map("clause")
+}
+
+model TableBlock {
+  id String @id @default(cuid())
+
+  sectionId String
+  section   DocumentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  // Set when the table belongs to a specific standard rather than to the
+  // section at large — Security §3.2 carries its password policy inside the
+  // clause, not beside it.
+  clauseId  String?
+  clause    Clause?         @relation(fields: [clauseId], references: [id], onDelete: SetNull)
+
+  ordinal Int
+  caption String?
+
+  columns String[] @default([])
+  // Array of objects keyed by column header. Empty cells are stored as null,
+  // never omitted: drop them and every later value shifts one column left,
+  // turning "not specified" into the previous row's answer.
+  rows    Json     @default("[]")
+
+  pageStart  Int?
+  pageEnd    Int?
+  // Extraction confidence. Low values raise an IngestIssue for review.
+  confidence Float @default(1)
+
+  @@index([sectionId])
+  @@map("table_block")
+}
+
+model Figure {
+  id String @id @default(cuid())
+
+  sectionId String
+  section   DocumentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  ordinal Int
+  page    Int
+  // [x0, y0, x1, y1] in PDF points, so a citation can highlight the region.
+  bbox    Float[] @default([])
+
+  storageKey  String
+  caption     String?
+  // Claude's description of the diagram. For vector-drawn figures this is the
+  // only searchable text that exists — the PDF text layer under them is empty.
+  description String  @default("")
+
+  @@index([sectionId])
+  @@map("figure")
+}
+
+model Chunk {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // "clause" | "table_row" | "table" | "figure" | "section"
+  sourceKind String
+  // Row id of the clause/table/figure this came from. Not a foreign key: one
+  // column can't reference four tables, and the cascade already runs through
+  // documentId.
+  sourceId   String?
+
+  ordinal     Int
+  headingPath String
+  // What gets embedded: heading path, contextual preamble, then the body.
+  text        String
+  tokenCount  Int     @default(0)
+  // Inherited from the document. Filtered on at query time so Restricted
+  // material can't surface through a broad question.
+  sensitivity String?
+
+  pageStart Int?
+  pageEnd   Int?
+
+  // Hash of the text. Unchanged chunks are not re-embedded on re-parse.
+  contentHash String
+
+  embeddings Embedding[]
+
+  @@unique([documentId, ordinal])
+  @@index([organisationId])
+  @@index([documentId])
+  @@map("chunk")
+}
+
+model Embedding {
+  id String @id @default(cuid())
+
+  chunkId String
+  chunk   Chunk  @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  // Recorded per row so a model change can be rolled out side-by-side instead
+  // of as a big-bang re-embed.
+  model String
+  dims  Int
+
+  // pgvector. Prisma has no native type for it, so the column is declared here
+  // and written by raw SQL from the Python worker. The HNSW index lives in the
+  // migration.
+  vector Unsupported("vector(1024)")?
+
+  createdAt DateTime @default(now())
+
+  @@unique([chunkId, model])
+  @@map("embedding")
+}
+
+model Job {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // "parse" | "chunk" | "embed" | "analyse"
+  stage String
+  // "queued" | "leased" | "done" | "failed" | "dead"
+  state String @default("queued")
+
+  attempts    Int @default(0)
+  maxAttempts Int @default(5)
+
+  // Backoff target. A retry is invisible to claimers until now() passes this.
+  runAfter   DateTime  @default(now())
+  leaseUntil DateTime?
+  leaseOwner String?
+
+  // Follows a document across every stage. Required by Data Standards §9.3 and
+  // the customer's own Integration principle 12.
+  correlationId String
+  payload       Json    @default("{}")
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage, state, runAfter])
+  @@index([state, leaseUntil])
+  @@index([documentId])
+  @@map("job")
+}
+
+model IngestIssue {
+  id String @id @default(cuid())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // "high" | "medium" | "low"
+  severity   String
+  // "section_missing" | "section_empty" | "toc_mismatch" | "table_low_confidence"
+  // | "figure_undescribed" | "needs_ocr"
+  kind       String
+  detail     String
+  // Where in the document, when we know.
+  page       Int?
+  sectionRef String?
+
+  createdAt DateTime @default(now())
+
+  @@index([documentId, severity])
+  @@map("ingest_issue")
+}
+
+// ---------------------------------------------------------------------------
+// Assessment
+//
+// This is the product. Retrieval runs backwards from the usual shape: the
+// reference clause is the query, not the user. For each of the ~120 clauses in
+// a customer's framework, the analyse worker searches the submitted design and
+// classifies what it finds. Nobody types a question.
+//
+// A run pins the framework version it ran against, because a finding that says
+// "breaches §3.2" is meaningless once §3.2 has been rewritten.
+// ---------------------------------------------------------------------------
+
+/// A versioned set of reference documents — what assessments measure against.
+model Framework {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name    String
+  version Int    @default(1)
+
+  /// The consultancy's house standard rather than the customer's own. Findings
+  /// record which layer a clause came from: "breaches your own standard" and
+  /// "below industry baseline" are different conversations in a review.
+  isBaseline Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents FrameworkDocument[]
+  runs      AssessmentRun[]
+
+  @@unique([organisationId, name, version])
+  @@index([organisationId])
+  @@map("framework")
+}
+
+model FrameworkDocument {
+  frameworkId String
+  framework   Framework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+  documentId  String
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  sortOrder Int @default(0)
+
+  @@id([frameworkId, documentId])
+  @@index([documentId])
+  @@map("framework_document")
+}
+
+model AssessmentRun {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// The submission under assessment — a document with role='assessed'.
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  frameworkId String
+  framework   Framework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+
+  // "queued" | "running" | "complete" | "failed"
+  state String @default("queued")
+
+  /// Progress, so a run over a hundred clauses can show more than a spinner.
+  totalClauses     Int @default(0)
+  completedClauses Int @default(0)
+
+  /// Recorded per run: a verdict is only interpretable alongside the model that
+  /// reached it, and these will be re-run as models change.
+  model         String?
+  failureReason String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  findings Finding[]
+
+  @@index([organisationId, state])
+  @@index([documentId])
+  @@map("assessment_run")
+}
+
+model Finding {
+  id String @id @default(cuid())
+
+  runId String
+  run   AssessmentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  /// The reference clause this answers. Not a foreign key to Clause: findings
+  /// have to outlive a re-parse of the reference document, and cascading them
+  /// away would silently erase a reviewer's decisions.
+  clauseId        String
+  /// Denormalised so a finding still reads correctly after the source moves.
+  clauseRef       String
+  clauseTitle     String @default("")
+  clauseStatement String @default("")
+
+  // "covered" | "partial" | "absent" | "contradicts" | "needs_review"
+  verdict    String
+  /// 0–1, from the model. Used to demote a low-confidence "absent" — see
+  /// Workers/aidp/stages/analyse.py.
+  confidence Float  @default(0)
+  rationale  String @default("")
+
+  /// [{ chunkId, headingPath, page, excerpt }]. A verdict of covered, partial
+  /// or contradicts with no evidence is downgraded, because a claim about a
+  /// document that cites nothing in it was invented.
+  evidence Json @default("[]")
+
+  /// How well retrieval did before the model saw anything. A confident "absent"
+  /// on top of weak retrieval is the failure this exists to catch.
+  retrievalScore Float @default(0)
+
+  // "pending" | "confirmed" | "overridden"
+  reviewerState   String    @default("pending")
+  reviewerVerdict String?
+  reviewerNote    String?
+  reviewedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([runId, clauseId])
+  @@index([runId, verdict])
+  @@map("finding")
+}

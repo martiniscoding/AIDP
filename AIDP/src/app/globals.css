@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Dexter design tokens
+ * Dark-only, and deliberately monochrome: near-black grounds, white and
+ * grey carry structure and body copy. Royal purple is the single accent
+ * and is spent only on what should draw the eye.
+ *
+ * The three purples are a contrast ladder against #08090c, not a palette:
+ *   royal      button fills and solid surfaces (white text on it, ~7:1)
+ *   royal-mid  large display emphasis — passes the 3:1 large-text bar
+ *   royal-soft small accent text and icons (~6.5:1)
+ * Using royal at small text sizes would fail contrast; that's what
+ * royal-soft is for.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-ink-950: #06070a;
+  --color-ink-900: #08090c;
+  --color-ink-850: #0a0b0f;
+  --color-ink-800: #0e1015;
+  --color-ink-700: #14161d;
+
+  --color-royal: #6d28d9;
+  --color-royal-mid: #8b5cf6;
+  --color-royal-soft: #a78bfa;
+
+  --font-display: var(--font-display-face), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --text-display-sm: 2.75rem;
+  --text-display-sm--line-height: 1.05;
+  --text-display-sm--letter-spacing: -0.03em;
+  --text-display: 4rem;
+  --text-display--line-height: 1;
+  --text-display--letter-spacing: -0.035em;
+  --text-display-lg: 5.5rem;
+  --text-display-lg--line-height: 0.95;
+  --text-display-lg--letter-spacing: -0.04em;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background-color: var(--color-ink-900);
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background-color: var(--color-ink-900);
+  color: #fff;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+/* Fine-grain film noise so the near-black never reads as flat fill.
+   Fixed-position overlay above content, non-interactive. */
+.grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ------------------------------------------------------------------ *
+ * Utilities
+ * ------------------------------------------------------------------ */
+/* Emphasis inside a display headline. Flat colour, not a gradient — the
+   palette only has one accent now, so there is nothing to blend to. */
+@utility text-accent {
+  color: var(--color-royal-mid);
+}
+
+@utility bg-accent {
+  background-color: var(--color-royal);
+}
+
+/* Navigation pending overlay (see LinkPending.tsx). Starts invisible and fades
+   in on a delay, so only a navigation that actually makes the user wait ever
+   shows a spinner — a prefetched, instant one resolves inside the delay. */
+@keyframes link-pending-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.link-pending {
+  opacity: 0;
+  animation: link-pending-in 140ms ease-out 120ms forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link-pending {
+    animation-duration: 1ms;
+  }
+}
+
+/* Hairline top edge that catches "light" — used on glass cards. */
+@utility edge-light {
+  &::before {
+    content: "";
+    position: absolute;
+    inset-inline: 15%;
+    top: -1px;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.25),
+      transparent
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Focus states — visible on dark without relying on the browser default
+ * ------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-royal) 65%, transparent);
+  color: #fff;
+}
+
+/* ------------------------------------------------------------------ *
+ * Workflow step "active" state
+ * ScrollPath toggles [data-path-active] on the step the travelling node is
+ * currently level with. Plain CSS rather than React state so the highlight
+ * costs no re-renders while scrolling.
+ * ------------------------------------------------------------------ */
+[data-path-step][data-path-active] .step-card {
+  border-color: rgb(255 255 255 / 0.2);
+  background-color: rgb(255 255 255 / 0.04);
+  box-shadow: 0 26px 80px -40px rgb(255 255 255 / 0.28);
+}
+
+[data-path-step][data-path-active] .step-index {
+  border-color: color-mix(in oklab, var(--color-royal-mid) 70%, transparent);
+  color: #fff;
+  background-color: color-mix(in oklab, var(--color-royal) 32%, transparent);
+}
+
+[data-path-step][data-path-active] .step-visual {
+  border-color: rgb(255 255 255 / 0.2);
+  box-shadow: 0 26px 80px -44px rgb(255 255 255 / 0.3);
+  transform: translateY(-3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-path-step][data-path-active] .step-visual {
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Ambient drift for the auth-page / touch-device gradient fallback
+ * ------------------------------------------------------------------ */
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(6%, -4%, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-5%, 5%, 0) scale(0.96);
+  }
+}
+
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  40% {
+    transform: translate3d(-7%, 6%, 0) scale(1.1);
+  }
+  75% {
+    transform: translate3d(5%, -3%, 0) scale(0.94);
+  }
+}
+
+.animate-drift-a {
+  animation: drift-a 26s ease-in-out infinite;
+}
+.animate-drift-b {
+  animation: drift-b 34s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-drift-a,
+  .animate-drift-b {
+    animation: none;
+  }
+}
