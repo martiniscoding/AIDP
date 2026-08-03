@@ -1,0 +1,68 @@
+# Local development: one build, three stage containers, one shared storage volume.
+#
+#   docker compose up --build
+#
+# Scale a stage independently when a document backs up:
+#   docker compose up --scale embed=3
+#
+# SKIP LOCKED means extra replicas of the same stage never collide.
+
+x-worker: &worker
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    # Shared with the Next.js app, which writes uploads here under
+    # STORAGE_BACKEND=local. Swapped for a bucket in deployment.
+    - ../AIDP/.storage:/app/.storage
+  environment:
+    STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+    STORAGE_LOCAL_PATH: /app/.storage
+    APP_BASE_URL: ${APP_BASE_URL:-http://host.docker.internal:3000}
+    WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-}
+
+services:
+  parse:
+    <<: *worker
+    environment:
+      STAGE: parse
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_LOCAL_PATH: /app/.storage
+      APP_BASE_URL: ${APP_BASE_URL:-http://host.docker.internal:3000}
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-}
+      # Parsing holds a document in memory and calls a vision model per figure.
+      LEASE_SECONDS: 900
+
+  chunk:
+    <<: *worker
+    environment:
+      STAGE: chunk
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_LOCAL_PATH: /app/.storage
+      APP_BASE_URL: ${APP_BASE_URL:-http://host.docker.internal:3000}
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-}
+      # One Claude call per chunk, run sequentially so the prompt cache is warm.
+      LEASE_SECONDS: 1800
+
+  embed:
+    <<: *worker
+    environment:
+      STAGE: embed
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_LOCAL_PATH: /app/.storage
+      APP_BASE_URL: ${APP_BASE_URL:-http://host.docker.internal:3000}
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-}
+      LEASE_SECONDS: 600
+
+  analyse:
+    <<: *worker
+    environment:
+      STAGE: analyse
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_LOCAL_PATH: /app/.storage
+      APP_BASE_URL: ${APP_BASE_URL:-http://host.docker.internal:3000}
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-}
+      # A run is one model call per clause — a hundred-odd for these documents.
+      # Findings commit one at a time, so a reap mid-run resumes rather than
+      # restarting, but a lease this long keeps that from happening routinely.
+      LEASE_SECONDS: 3600

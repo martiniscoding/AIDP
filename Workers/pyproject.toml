@@ -1,0 +1,43 @@
+[project]
+name = "aidp-workers"
+version = "0.1.0"
+description = "AIDP ingestion workers — parse, chunk, embed"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Postgres. psycopg 3 with the binary wheel, so no local libpq is needed.
+    "psycopg[binary,pool]>=3.2",
+    # PDF parsing: text with font metadata, table detection, figure extraction.
+    "pymupdf>=1.24",
+    # Every outbound call — Gemini, embeddings, and storage via the app — goes
+    # over plain HTTP rather than through a vendor SDK, so swapping providers is
+    # a config change and the dependency list stays short.
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+aidp-worker = "aidp.__main__:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The sample corpus is prose. Its clause statements and design paragraphs are
+# quoted text that has to read naturally in the generated PDF; hard-wrapping
+# them to satisfy a line-length rule would make the source worse and the output
+# no different.
+"scripts/samples/standards.py" = ["E501"]
+"scripts/samples/designs.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
