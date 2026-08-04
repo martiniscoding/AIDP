@@ -114,10 +114,37 @@ function wrongBackend(key: string): Error {
 export async function get(key: string): Promise<Buffer> {
   if (!keyMatchesBackend(key)) throw wrongBackend(key);
   if (backend === "uploadthing") {
-    const url = await signedUrl(key);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Could not fetch ${key}: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    // Retried, because the CDN edge occasionally refuses a connection outright
+    // and a single timeout would otherwise render as a broken image with no
+    // explanation. Observed in practice: ConnectTimeoutError against the
+    // Cloudflare front for a file that demonstrably exists.
+    let last: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const url = await signedUrl(key);
+        // Happy Eyeballs. The CDN is behind anycast and, on some networks,
+        // one of the advertised addresses blackholes while the other is fine —
+        // observed here as a 10s ConnectTimeoutError against a file that
+        // demonstrably exists. Without this, Node picks one address and sticks
+        // with it, so whether an image loads becomes a coin flip.
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(20_000),
+          // @ts-expect-error — undici option, not in the DOM fetch types
+          autoSelectFamily: true,
+          autoSelectFamilyAttemptTimeout: 1_500,
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return Buffer.from(await res.arrayBuffer());
+      } catch (error) {
+        last = error;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+    throw new Error(
+      `Could not fetch ${key} after 3 attempts: ${
+        last instanceof Error ? last.message : String(last)
+      }`,
+    );
   }
   return readFile(resolveLocal(key));
 }

@@ -45,6 +45,11 @@ class Figure:
     # "raster" or "vector" — worth keeping, because vector figures are the ones
     # with no text layer and therefore the ones that most need describing.
     kind: str = "raster"
+    # Drawing primitives plus text runs inside the region. A dense architecture
+    # diagram — many small labels, many arrows — is where vision models actually
+    # struggle; a three-box flow is not. Used to sort the review queue by risk
+    # rather than by page order.
+    complexity: int = 0
 
 
 def _area(rect: fitz.Rect) -> float:
@@ -135,6 +140,41 @@ def extract_page(
                 return True
         return False
 
+    def complexity_of(rect: fitz.Rect, kind: str) -> int:
+        """How risky this figure is to trust a model's reading of.
+
+        Counted from the page's own structures — cheap and deterministic. Labels
+        count double: a diagram's difficulty tracks the number of small text runs
+        a model has to read and associate, more than the number of boxes.
+
+        A raster gets a floor instead, and a high one. Counting page structures
+        inside an embedded image returns zero, because there are none — which
+        scored the single hardest case in the sample corpus, a context diagram
+        with no text layer at all, as the *safest* thing in the document. Exactly
+        backwards: an opaque image is the case where nothing but the vision model
+        can check the reading, so it is the one most worth a human's eye.
+        """
+        score = 0
+        try:
+            for drawing in page.get_drawings():
+                if rect.intersects(fitz.Rect(drawing["rect"])):
+                    score += 1
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            for block in page.get_text("blocks"):
+                if rect.intersects(fitz.Rect(block[:4])) and str(block[4]).strip():
+                    score += 2
+        except Exception:  # noqa: BLE001
+            pass
+
+        if kind == "raster" and score == 0:
+            # Scale with how much of the page it occupies: a full-width diagram
+            # carries more unverifiable claim than a small logo.
+            share = _area(rect) / max(_area(page_rect), 1.0)
+            return 50 + int(min(share, 1.0) * 50)
+        return score
+
     def render(rect: fitz.Rect, kind: str) -> None:
         clipped = rect & page_rect
         if not _plausible(clipped, page_rect) or blocked(clipped):
@@ -147,6 +187,7 @@ def extract_page(
                 png=pixmap.tobytes("png"),
                 caption=_caption_for(page, clipped),
                 kind=kind,
+                complexity=complexity_of(clipped, kind),
             )
         )
         taken.append(clipped)

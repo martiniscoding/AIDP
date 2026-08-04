@@ -13,6 +13,11 @@ is worse than one that admits uncertainty, so each demotion is asserted here:
   · absent on top of weak retrieval                     → needs_review
   · absent with low confidence                          → needs_review
   · an unrecognised verdict string                      → needs_review
+  · a decisive verdict resting only on a figure         → needs_review
+
+That last one is the figure-review guarantee: a diagram description is a model's
+reading of an image, not text from the page, and it may corroborate a verdict
+but never carry one alone.
 
     docker run --rm -v "$PWD":/w -w /w \\
       -e STAGE=analyse -e DATABASE_URL="$DIRECT_DATABASE_URL" \\
@@ -56,7 +61,7 @@ def _stub_embed(texts, input_type="document"):  # noqa: ARG001
 _scripted: dict[str, dict] = {}
 
 
-def _stub_judge(*, reference: str, clause: str, extracts: str):  # noqa: ARG001
+def _stub_judge(*, reference: str, clause: str, extracts: str, precedents: str = ""):  # noqa: ARG001
     # Longest key first. Matching on substrings otherwise lets one clause name
     # shadow another ("grounded-covered" contains no other key, but the earlier
     # "cited-covered" was a substring of "uncited-covered" and silently returned
@@ -123,6 +128,7 @@ def main() -> int:
                 ("absent-weak", "Zzyzx quorum thresholds must be ratified"),
                 ("absent-lowconf", "MFA must be reviewed annually"),
                 ("bogus-verdict", "MFA must be logged"),
+                ("figure-only", "The architecture must show an integration layer"),
             ]
             for i, (title, statement) in enumerate(clauses, start=1):
                 db.execute(
@@ -178,12 +184,39 @@ def main() -> int:
                 'INSERT INTO "framework_document" ("frameworkId","documentId") VALUES (%s,%s)',
                 (framework, ref_doc),
             )
+            # A figure-derived chunk: generated text, indistinguishable from a
+            # quotation once it is a chunk. The guard exists for exactly this.
+            fig_chunk = db.new_id()
+            chunk_ids.append(fig_chunk)
+            db.execute(
+                conn,
+                """
+                INSERT INTO "chunk"
+                    ("id","organisationId","documentId","sourceKind","sourceId","ordinal",
+                     "headingPath","text","contentHash")
+                VALUES (%s,%s,%s,'figure',%s,99,%s,%s,%s)
+                """,
+                (
+                    fig_chunk, org, sub_doc, "fig-" + marker,
+                    "Submitted Design › Figure",
+                    "Figure 1. The diagram shows an integration layer between the "
+                    "portal and the billing engine.",
+                    "hf" + marker,
+                ),
+            )
+            db.execute(
+                conn,
+                'INSERT INTO "embedding" ("id","chunkId","model","dims","vector")'
+                " VALUES (%s,%s,%s,%s,%s::vector)",
+                (db.new_id(), fig_chunk, model, DIMS, "[" + ",".join(["0.1"] * DIMS) + "]"),
+            )
+
             db.execute(
                 conn,
                 """
                 INSERT INTO "assessment_run"
                     ("id","organisationId","documentId","frameworkId","state","totalClauses")
-                VALUES (%s,%s,%s,%s,'queued',5)
+                VALUES (%s,%s,%s,%s,'queued',6)
                 """,
                 (run_id, org, sub_doc, framework),
             )
@@ -233,6 +266,12 @@ def main() -> int:
                     "rationale": "Invented a verdict.",
                     "evidence": [first_chunk],
                 },
+                "figure-only": {
+                    "verdict": "covered",
+                    "confidence": 0.95,
+                    "rationale": "The diagram shows it.",
+                    "evidence": [chunk_ids[-1]],
+                },
             }
         )
 
@@ -264,9 +303,9 @@ def main() -> int:
         by_title = {r["clauseTitle"]: r for r in rows}
 
         print("Coverage")
-        check("a finding per clause", len(rows) == 5, f"got {len(rows)}")
+        check("a finding per clause", len(rows) == 6, f"got {len(rows)}")
         check("run marked complete", run and run["state"] == "complete", str(run and run["state"]))
-        check("progress reached the total", run and run["completedClauses"] == 5)
+        check("progress reached the total", run and run["completedClauses"] == 6)
         check("job marked done", job_row and job_row["state"] == "done")
         check("model recorded", bool(run and run["model"]))
 
@@ -290,6 +329,11 @@ def main() -> int:
             "low-confidence 'absent' demoted",
             by_title.get("absent-lowconf", {}).get("verdict") == "needs_review",
             str(by_title.get("absent-lowconf")),
+        )
+        check(
+            "a decisive verdict resting only on a figure is demoted",
+            by_title.get("figure-only", {}).get("verdict") == "needs_review",
+            str(by_title.get("figure-only")),
         )
         check(
             "unrecognised verdict falls back to needs_review",
@@ -334,7 +378,7 @@ def main() -> int:
             total = db.one(
                 conn, 'SELECT count(*)::int AS n FROM "finding" WHERE "runId" = %s', (run_id,)
             )
-        check("full set restored", total and total["n"] == 5, str(total))
+        check("full set restored", total and total["n"] == 6, str(total))
 
         return 1 if failures else 0
 

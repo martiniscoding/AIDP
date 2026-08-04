@@ -9,6 +9,7 @@ import {
   Loader2,
   Play,
   ShieldAlert,
+  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -19,6 +20,7 @@ import {
   type Verdict,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
+import { EFFECT_META, type AppliedDecision } from "@/lib/ingest/decision-effects";
 import { reviewFinding, startAssessment } from "../actions";
 
 export type FindingView = {
@@ -33,6 +35,10 @@ export type FindingView = {
   reviewerState: string;
   reviewerVerdict: string | null;
   reviewerNote: string | null;
+  /** Standing decisions the model was given and said it applied. */
+  appliedDecisions: AppliedDecision[];
+  /** Set once this finding's review has been kept as a decision. */
+  promotedDecisionId: string | null;
 };
 
 export type RunView = {
@@ -65,11 +71,14 @@ export function Assessment({
   run,
   counts,
   findings,
+  decisionsInForce,
 }: {
   documentId: string;
   run: RunView;
   counts: VerdictCounts;
   findings: FindingView[];
+  /** Standing decisions this run will be judged with. */
+  decisionsInForce: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -99,6 +108,18 @@ export function Assessment({
               ? `${run.frameworkName} v${run.frameworkVersion}` +
                 (run.model ? ` · ${run.model}` : "")
               : "Measure this design against every clause in the standards library."}
+            {decisionsInForce > 0 && (
+              <>
+                {" · "}
+                <a
+                  href="/dashboard/decisions"
+                  className="text-royal-soft underline decoration-royal-soft/30 underline-offset-2 hover:text-white"
+                >
+                  {decisionsInForce} standing decision
+                  {decisionsInForce === 1 ? "" : "s"} in force
+                </a>
+              </>
+            )}
           </p>
         </div>
 
@@ -218,13 +239,25 @@ function FindingRow({ finding }: { finding: FindingView }) {
   const [pending, startTransition] = useTransition();
   const [overriding, setOverriding] = useState(false);
 
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [remember, setRemember] = useState(false);
+
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
   const decided = finding.reviewerState !== "pending";
 
   const decide = (confirm: boolean, verdict?: string) =>
     startTransition(async () => {
-      await reviewFinding(finding.id, { confirm, verdict });
+      await reviewFinding(finding.id, {
+        confirm,
+        verdict,
+        note: note.trim() || undefined,
+        remember,
+      });
       setOverriding(false);
+      setChosen(null);
+      setNote("");
+      setRemember(false);
       router.refresh();
     });
 
@@ -303,13 +336,40 @@ function FindingRow({ finding }: { finding: FindingView }) {
               {finding.evidence.map((item) => (
                 <li
                   key={item.chunkId}
-                  className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2.5"
+                  className="overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.02]"
                 >
-                  <p className="mb-1 text-[11.5px] text-white/35">
-                    {item.headingPath}
-                    {item.page != null && ` · page ${item.page}`}
-                  </p>
-                  <p className="text-[12.5px] leading-relaxed text-white/70">{item.excerpt}</p>
+                  <div className="px-3 py-2.5">
+                    <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-white/35">
+                      <span>{item.headingPath}</span>
+                      {item.page != null && <span>· page {item.page}</span>}
+                      {item.figureId && (
+                        <span
+                          title="A model's reading of a diagram, not text from the page"
+                          className="inline-flex items-center gap-1 rounded border border-amber-400/25 px-1.5 py-px text-[10.5px] text-amber-300/85"
+                        >
+                          <Sparkles size={9} />
+                          model-described diagram
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[12.5px] leading-relaxed text-white/70">{item.excerpt}</p>
+                  </div>
+
+                  {/*
+                    The diagram, beside the claim made about it. Checking here —
+                    when a verdict actually depends on it — is worth more than
+                    reviewing every figure speculatively at ingest.
+                  */}
+                  {item.figureId && (
+                    <div className="border-t border-white/[0.07] bg-white p-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/figures/${item.figureId}`}
+                        alt="The figure this description was written from"
+                        className="h-auto w-full rounded"
+                      />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -319,10 +379,47 @@ function FindingRow({ finding }: { finding: FindingView }) {
             </p>
           )}
 
+          {/* What the verdict rested on besides the document. Shown before the
+              review controls, because whether a standing decision was applied
+              changes how much a reviewer needs to look at the verdict at all. */}
+          {finding.appliedDecisions.length > 0 && (
+            <div className="mb-3 rounded-lg border border-royal-mid/25 bg-royal/[0.07] px-3 py-2.5">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-royal-soft">
+                <Sparkles size={11} />
+                Judged with {finding.appliedDecisions.length} standing decision
+                {finding.appliedDecisions.length === 1 ? "" : "s"}
+              </p>
+              <ul className="space-y-1">
+                {finding.appliedDecisions.map((decision) => (
+                  <li
+                    key={decision.id}
+                    className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-white/70"
+                  >
+                    <span className="text-white/35">
+                      {EFFECT_META[decision.effect].label}:
+                    </span>
+                    {decision.title}
+                  </li>
+                ))}
+              </ul>
+              <a
+                href="/dashboard/decisions"
+                className="mt-1.5 inline-block text-[11.5px] text-white/35 underline decoration-white/20 underline-offset-2 transition-colors hover:text-white/70"
+              >
+                Open the decisions register
+              </a>
+            </div>
+          )}
+
           {finding.reviewerNote && (
             <p className="mb-3 text-[12.5px] text-white/50">
               <span className="text-white/35">Note: </span>
               {finding.reviewerNote}
+              {finding.promotedDecisionId && (
+                <span className="ml-2 rounded bg-royal/20 px-1.5 py-0.5 text-[11px] text-royal-soft">
+                  kept as a decision
+                </span>
+              )}
             </p>
           )}
 
@@ -338,29 +435,96 @@ function FindingRow({ finding }: { finding: FindingView }) {
             </button>
 
             {overriding ? (
-              <span className="flex flex-wrap items-center gap-1.5">
-                {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
-                  <button
-                    key={verdict}
-                    type="button"
-                    disabled={pending}
-                    onClick={() => decide(false, verdict)}
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-[11.5px] transition-opacity hover:opacity-80 disabled:opacity-50",
-                      TONE[VERDICT_META[verdict].tone],
-                    )}
-                  >
-                    {VERDICT_META[verdict].label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setOverriding(false)}
-                  className="text-[12px] text-white/35 hover:text-white/70"
+              /* Choosing a verdict no longer submits on the spot. The reason
+                 for an override is the most valuable thing a reviewer produces
+                 — it is what a standing decision is made of — and a flow that
+                 never asked for it was throwing that away. */
+              <div className="w-full space-y-3 rounded-lg border border-white/10 bg-ink-950/40 p-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11.5px] text-white/40">Correct verdict:</span>
+                  {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
+                    <button
+                      key={verdict}
+                      type="button"
+                      disabled={pending}
+                      aria-pressed={chosen === verdict}
+                      onClick={() => setChosen(verdict)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11.5px] transition-[opacity,box-shadow] hover:opacity-80 disabled:opacity-50",
+                        TONE[VERDICT_META[verdict].tone],
+                        chosen === verdict && "ring-2 ring-white/60",
+                      )}
+                    >
+                      {VERDICT_META[verdict].label}
+                    </button>
+                  ))}
+                </div>
+
+                <label className="block">
+                  <span className="mb-1 block text-[11.5px] text-white/40">
+                    Why? This becomes the decision if you keep it.
+                  </span>
+                  <textarea
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    rows={2}
+                    placeholder="e.g. KMS-managed keys in eu-west-1 satisfy this clause."
+                    className="w-full resize-y rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+                  />
+                </label>
+
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
+                    remember
+                      ? "border-royal-mid/40 bg-royal/[0.10]"
+                      : "border-white/10 hover:border-white/20",
+                  )}
                 >
-                  cancel
-                </button>
-              </span>
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    disabled={!note.trim()}
+                    onChange={(event) => setRemember(event.target.checked)}
+                    className="mt-0.5 size-3.5 shrink-0 accent-royal-mid disabled:opacity-40"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[12.5px] text-white/85">
+                      Remember this for future assessments
+                    </span>
+                    <span className="block text-[11.5px] leading-relaxed text-white/40">
+                      {note.trim()
+                        ? "Every later assessment of this clause will be judged with this decision in front of it."
+                        : "Add a reason first — a decision with no stated basis is not one worth keeping."}
+                    </span>
+                  </span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={pending || !chosen}
+                    onClick={() => decide(false, chosen ?? undefined)}
+                    className="rounded-full bg-royal px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
+                  >
+                    {remember ? "Save and remember" : "Save override"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOverriding(false);
+                      setChosen(null);
+                      setRemember(false);
+                      // Also the note: leaving it behind would attach an
+                      // abandoned reason to whatever the reviewer does next.
+                      setNote("");
+                    }}
+                    className="text-[12px] text-white/35 hover:text-white/70"
+                  >
+                    cancel
+                  </button>
+                </div>
+              </div>
             ) : (
               <button
                 type="button"

@@ -7,8 +7,11 @@ import { cn } from "@/lib/cn";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
+import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
+import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { NotAMember } from "@/lib/ingest/org";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
+import { Figures, type FigureView } from "./Figures";
 import { DocumentActions } from "../DocumentActions";
 import { PipelineWatcher } from "../PipelineWatcher";
 
@@ -37,11 +40,24 @@ export default async function DocumentPage({
 
   const clauses = document.sections.reduce((n, s) => n + s.clauses.length, 0);
   const tables = document.sections.reduce((n, s) => n + s.tables.length, 0);
-  const figures = document.sections.reduce((n, s) => n + s.figures.length, 0);
-  const described = document.sections.reduce(
-    (n, s) => n + s.figures.filter((f) => f.description.trim().length > 0).length,
-    0,
-  );
+  const figureViews: FigureView[] = document.sections
+    .flatMap((s) =>
+      s.figures.map((f) => ({
+        id: f.id,
+        page: f.page,
+        caption: f.caption,
+        description: f.description,
+        correctedDescription: f.correctedDescription,
+        reviewState: f.reviewState,
+        complexity: f.complexity,
+        headingPath: s.headingPath,
+      })),
+    )
+    .sort(
+      (a, b) =>
+        Number(a.reviewState !== "pending") - Number(b.reviewState !== "pending") ||
+        b.complexity - a.complexity,
+    );
   const high = document.issues.filter((i) => i.severity === "high");
   const other = document.issues.filter((i) => i.severity !== "high");
 
@@ -65,6 +81,14 @@ export default async function DocumentPage({
       }
     : null;
 
+  // Which of these reviews were already kept as decisions, so the report can
+  // say so rather than inviting the same ruling to be recorded twice.
+  const decisionsInForce = await countActive(document.organisationId);
+  const promoted = await promotedFrom(
+    document.organisationId,
+    findings.map((f) => f.id),
+  );
+
   const findingViews: FindingView[] = findings.map((f) => ({
     id: f.id,
     clauseRef: f.clauseRef,
@@ -77,6 +101,8 @@ export default async function DocumentPage({
     reviewerState: f.reviewerState,
     reviewerVerdict: f.reviewerVerdict,
     reviewerNote: f.reviewerNote,
+    appliedDecisions: readAppliedDecisions(f.appliedDecisions),
+    promotedDecisionId: promoted.get(f.id) ?? null,
   }));
 
   return (
@@ -138,6 +164,7 @@ export default async function DocumentPage({
           run={runView}
           counts={counts}
           findings={findingViews}
+          decisionsInForce={decisionsInForce}
         />
       )}
 
@@ -185,6 +212,8 @@ export default async function DocumentPage({
           </ul>
         </section>
       )}
+
+      <Figures figures={figureViews} />
 
       <section>
         <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
@@ -281,13 +310,7 @@ export default async function DocumentPage({
         )}
       </section>
 
-      {figures > 0 && (
-        <p className="mt-6 text-[12.5px] text-white/35">
-          {described === figures
-            ? `${figures} figure${figures === 1 ? "" : "s"} extracted and described — diagrams carry content no text layer holds.`
-            : `${figures} figure${figures === 1 ? "" : "s"} extracted, ${described} described. An undescribed diagram contributes nothing to retrieval.`}
-        </p>
-      )}
+
     </>
   );
 }

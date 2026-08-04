@@ -44,6 +44,9 @@ model User {
   // Which customer organisations this person can see. Consultants span several.
   memberships Membership[]
 
+  // Standing decisions this person has ruled on.
+  decisions Decision[]
+
   @@map("user")
 }
 
@@ -211,6 +214,7 @@ model Organisation {
   jobs        Job[]
   frameworks  Framework[]
   runs        AssessmentRun[]
+  decisions   Decision[]
 
   @@map("organisation")
 }
@@ -395,9 +399,35 @@ model Figure {
 
   storageKey  String
   caption     String?
-  // Claude's description of the diagram. For vector-drawn figures this is the
-  // only searchable text that exists — the PDF text layer under them is empty.
+  // The model's description of the diagram. For vector-drawn figures this is
+  // the only searchable text that exists — the PDF text layer under them is
+  // empty.
+  //
+  // It is also *generated*, and once it becomes a chunk nothing distinguishes it
+  // from text lifted off the page. That is the risk worth designing against: not
+  // a corrupted index — embeddings are per-chunk, and a bad one re-embeds for a
+  // single API call — but fabricated evidence that reads like a quotation.
   description String  @default("")
+
+  // A human's correction, when the model got it wrong. Kept beside the original
+  // rather than overwriting it, so the disagreement stays visible and the vision
+  // model's accuracy stays measurable.
+  correctedDescription String?
+
+  // "pending" | "confirmed" | "corrected" | "rejected"
+  //
+  // Review is deliberately non-blocking: the document indexes immediately and a
+  // figure is reviewed when someone has reason to care. Gating ingestion on it
+  // would put a queue of human work in front of every upload — twenty decisions
+  // before a customer's library is searchable at all.
+  reviewState String    @default("pending")
+  reviewNote  String?
+  reviewedAt  DateTime?
+
+  // Drawing primitives plus text runs inside the region. A dense diagram is
+  // where vision models actually struggle; a three-box flow is not. Sorts the
+  // review queue by risk rather than by page order.
+  complexity Int @default(0)
 
   @@index([sectionId])
   @@map("figure")
@@ -638,6 +668,12 @@ model Finding {
   /// on top of weak retrieval is the failure this exists to catch.
   retrievalScore Float @default(0)
 
+  /// [{ id, title, effect }] — the standing decisions that were in the prompt
+  /// and that the model said it applied. Denormalised for the same reason as
+  /// `evidence`: a report from last year has to keep explaining itself after
+  /// the decision behind it has been superseded or deleted.
+  appliedDecisions Json @default("[]")
+
   // "pending" | "confirmed" | "overridden"
   reviewerState   String    @default("pending")
   reviewerVerdict String?
@@ -649,4 +685,84 @@ model Finding {
   @@unique([runId, clauseId])
   @@index([runId, verdict])
   @@map("finding")
+}
+
+/// A ruling the organisation has already made, carried into future assessments.
+///
+/// The third leg of the product promise. Standards say what good looks like and
+/// principles say why; this is what *this* customer decided when the two met a
+/// real design — "KMS-managed keys in eu-west-1 satisfy encryption at rest",
+/// "we accepted Kafka over Kinesis, stop raising it". Without it every
+/// assessment re-litigates settled questions and the reviewer overrides the
+/// same finding forever.
+///
+/// Two ways in: promoted from a reviewed finding (see `promote` in
+/// src/lib/ingest/decisions.ts) or authored directly in the register.
+model Decision {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// A short handle for the register. The statement is the ruling itself.
+  title     String
+  statement String
+  rationale String @default("")
+
+  /// How this should bias a verdict:
+  ///   accepts   the arrangement it describes satisfies the clause
+  ///   rejects   the arrangement it describes does not, and is a breach
+  ///   context   neither — background the model should weigh
+  effect String @default("context")
+
+  /// The clause this answers, when it answers one. Not a foreign key, and
+  /// denormalised, for the same reason as Finding: reference documents get
+  /// re-parsed and re-numbered, and a cascade would erase the review board's
+  /// rulings the first time someone re-uploads a standard.
+  clauseId    String?
+  clauseRef   String  @default("")
+  clauseTitle String  @default("")
+
+  /// Where it came from. Null throughout when authored directly.
+  sourceFindingId  String?
+  sourceRunId      String?
+  sourceDocumentId String?
+
+  /// "active" | "superseded" | "expired"
+  ///
+  /// Decisions are never edited in place. An edit writes a new row and points
+  /// the old one at it, so a run from six months ago still means what it said —
+  /// the same reasoning that makes Framework versioned rather than mutable.
+  status         String    @default("active")
+  supersededById String?   @unique
+  supersededBy   Decision? @relation("DecisionSupersedes", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     Decision? @relation("DecisionSupersedes")
+
+  /// Architecture exceptions are routinely granted for a fixed term. A register
+  /// that cannot expire its own entries turns into policy nobody voted for.
+  effectiveFrom DateTime  @default(now())
+  expiresAt     DateTime?
+
+  decidedById String?
+  decidedBy   User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+  /// Kept beside the relation so the register still attributes a decision after
+  /// the person who made it has left and their row is gone.
+  decidedByName String @default("")
+
+  /// pgvector, written by raw SQL exactly like Embedding.vector — Prisma has no
+  /// native type for it. Embedded as a *passage*, because clause queries are
+  /// what search it.
+  ///
+  /// No HNSW index: a register holds hundreds of rows, not millions, and an
+  /// exact scan over that is faster than a graph walk. Add one when a customer
+  /// crosses ~50k decisions, which would be a different product.
+  vector         Unsupported("vector(1024)")?
+  embeddingModel String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId, status])
+  @@index([organisationId, clauseRef])
+  @@map("decision")
 }

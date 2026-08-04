@@ -81,7 +81,7 @@ Reference: {reference}
 <extracts_from_submitted_document>
 {extracts}
 </extracts_from_submitted_document>
-
+{precedents}
 Choose exactly one verdict:
 
 - "covered"      — the extracts address every requirement in the clause
@@ -106,10 +106,16 @@ Rules that matter more than being decisive:
 3. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 4. confidence is your own certainty in the verdict, 0 to 1.
+5. Standing decisions, where any are given, are this organisation's own settled
+   rulings and outrank your general judgement about what good practice looks
+   like. If one resolves the clause, follow it and list its id in
+   appliedDecisions. Never list an id you were not given. A decision marked
+   "on a related clause" is guidance, not a ruling — it can inform a verdict but
+   cannot settle one on its own.
 
 Reply with JSON only, no prose around it:
 {{"verdict": "...", "confidence": 0.0, "rationale": "one sentence",
-  "evidence": ["extract id", ...]}}"""
+  "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...]}}"""
 
 
 class QuotaExhausted(RuntimeError):
@@ -182,13 +188,33 @@ class LLM(Protocol):
         self, image_png: bytes, *, heading_path: str, caption: str | None
     ) -> str: ...
     def contextualise(self, document_text: str, chunk_text: str, *, title: str) -> str: ...
-    def judge(self, *, reference: str, clause: str, extracts: str) -> dict: ...
+    def judge(
+        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+    ) -> dict: ...
 
 
 # Verdict shape, enforced by the API rather than requested in the prompt.
 # Without it the model returns plausible-looking but truncated JSON — observed
 # as `{"verdict": "covered", ""}` with a finish reason of STOP, which parses as
 # nothing and would silently cost a clause.
+
+def _precedent_block(precedents: str) -> str:
+    """Wrap the register for the prompt, or contribute nothing.
+
+    An empty string rather than "none recorded": a header announcing an absence
+    is tokens on every clause of every run, and invites the model to remark on
+    it in the rationale.
+    """
+    if not precedents.strip():
+        return ""
+    return (
+        "\n<standing_decisions>\n"
+        "Rulings this organisation has already made. They outrank general practice.\n"
+        f"{precedents}\n"
+        "</standing_decisions>\n"
+    )
+
+
 _VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -199,9 +225,16 @@ _VERDICT_SCHEMA = {
         "confidence": {"type": "number"},
         "rationale": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}},
+        "appliedDecisions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["verdict", "confidence", "rationale", "evidence"],
-    "propertyOrdering": ["verdict", "confidence", "rationale", "evidence"],
+    "required": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
+    "propertyOrdering": [
+        "verdict",
+        "confidence",
+        "rationale",
+        "evidence",
+        "appliedDecisions",
+    ],
 }
 
 
@@ -290,12 +323,17 @@ class GeminiLLM:
         )
 
 
-    def judge(self, *, reference: str, clause: str, extracts: str) -> dict:
+    def judge(
+        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+    ) -> dict:
         text = self._generate(
             [
                 {
                     "text": _JUDGE_PROMPT.format(
-                        reference=reference, clause=clause, extracts=extracts
+                        reference=reference,
+                        clause=clause,
+                        extracts=extracts,
+                        precedents=_precedent_block(precedents),
                     )
                 }
             ],
@@ -391,7 +429,9 @@ class AnthropicLLM:
         return self._text_of(data)
 
 
-    def judge(self, *, reference: str, clause: str, extracts: str) -> dict:
+    def judge(
+        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+    ) -> dict:
         data = _post(
             self.BASE,
             self._headers(),
@@ -403,7 +443,10 @@ class AnthropicLLM:
                     {
                         "role": "user",
                         "content": _JUDGE_PROMPT.format(
-                            reference=reference, clause=clause, extracts=extracts
+                            reference=reference,
+                            clause=clause,
+                            extracts=extracts,
+                            precedents=_precedent_block(precedents),
                         ),
                     },
                     # Prefilling the opening brace is the closest equivalent to
@@ -477,8 +520,10 @@ def contextualise(document_text: str, chunk_text: str, *, title: str) -> str:
     return client().contextualise(document_text, chunk_text, title=title)
 
 
-def judge(*, reference: str, clause: str, extracts: str) -> dict:
-    return client().judge(reference=reference, clause=clause, extracts=extracts)
+def judge(*, reference: str, clause: str, extracts: str, precedents: str = "") -> dict:
+    return client().judge(
+        reference=reference, clause=clause, extracts=extracts, precedents=precedents
+    )
 
 
 def contextualise_many(

@@ -159,12 +159,20 @@ def _build(document, sections, clauses, table_blocks, figures) -> list[_Draft]:
             )
 
         for figure in figures.get(sid, []):
-            if not (figure["description"] or "").strip():
+            # A rejected description was judged wrong by a person. Indexing it
+            # anyway would be worse than having no chunk for the figure at all —
+            # the whole point of the review is that generated text can otherwise
+            # read like a quotation from the document.
+            if figure["reviewState"] == "rejected":
+                continue
+            # The correction wins where there is one.
+            body = (figure["correctedDescription"] or figure["description"] or "").strip()
+            if not body:
                 continue
             caption = figure["caption"] or "Figure"
             drafts.append(
                 _Draft("figure", figure["id"], path,
-                       f"{caption}\n\n{figure['description']}",
+                       f"{caption}\n\n{body}",
                        figure["page"], figure["page"])
             )
 

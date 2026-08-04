@@ -126,6 +126,129 @@ body {
 }
 
 /* ------------------------------------------------------------------ *
+ * Ingestion surfaces — the drop target and the pipeline rail
+ *
+ * A document that lands here is swept, cut into chunks and turned into
+ * vectors. These three primitives are that idea made visible, and they are
+ * shared so the drop target, the upload receipt and the progress rail all
+ * speak the same language rather than three unrelated treatments.
+ * ------------------------------------------------------------------ */
+
+/* Gradient hairline. A real border can only be one flat colour, so the ring is
+   painted as a background and masked down to the edge — that is what lets the
+   accent fall off around the curve instead of ringing the box evenly. */
+.ring-gradient {
+  position: relative;
+}
+
+.ring-gradient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(
+    --ring,
+    linear-gradient(
+      140deg,
+      rgb(255 255 255 / 0.22),
+      rgb(255 255 255 / 0.04) 42%,
+      transparent 70%
+    )
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+/* The scan beam. Travels the height of its container once per cycle; the
+   container clips it. Used while a file is being dragged over the aperture and
+   while one is uploading — i.e. only ever when something is actually moving. */
+/* `top`, not translateY: a percentage transform resolves against the element's
+   own box, and the beam is 1px tall — it would travel 5px and stop. A
+   percentage offset resolves against the panel, which is the distance meant. */
+@keyframes beam-sweep {
+  0% {
+    top: -2%;
+    opacity: 0;
+  }
+  12%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    top: 102%;
+    opacity: 0;
+  }
+}
+
+.beam {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--color-royal-soft) 55%, transparent) 22%,
+    rgb(255 255 255 / 0.85) 50%,
+    color-mix(in oklab, var(--color-royal-soft) 55%, transparent) 78%,
+    transparent
+  );
+  animation: beam-sweep 2.1s cubic-bezier(0.4, 0, 0.3, 1) infinite;
+}
+
+/* Slow drift across a wide gradient, so the aperture's glow is never static
+   without ever pulling attention the way a pulse would. */
+@keyframes aurora-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.aurora {
+  background-size: 220% 220%;
+  animation: aurora-pan 18s ease-in-out infinite;
+}
+
+/* Indeterminate progress: a gradient that slides through its own track. The
+   upload has no measurable percentage — the request is one multipart body —
+   so a filling bar would be a lie. */
+@keyframes rail-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.rail-slide {
+  animation: rail-slide 1.4s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beam,
+  .aurora,
+  .rail-slide {
+    animation: none;
+  }
+  /* The beam is the only cue that the aperture is armed, so it stays — held
+     still at the midpoint rather than removed. */
+  .beam {
+    opacity: 0.5;
+    top: 50%;
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Focus states — visible on dark without relying on the browser default
  * ------------------------------------------------------------------ */
 :focus-visible {

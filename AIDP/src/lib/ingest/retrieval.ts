@@ -50,13 +50,20 @@ export type SearchOptions = {
 const RRF_K = 60;
 
 /**
- * Embed a search query.
+ * Embed text.
  *
  * Asymmetric on providers that support it: a question and a passage are
  * embedded differently, and getting `input_type` backwards degrades retrieval
  * quietly rather than loudly. Kept in step with Workers/aidp/ai/embeddings.py.
+ *
+ * `kind` is which side of that asymmetry the caller is on. Search queries are
+ * "query"; anything stored to be *found* by a query — a passage, or a standing
+ * decision in the register — is "passage".
  */
-async function embedQuery(text: string): Promise<number[]> {
+export async function embedText(
+  text: string,
+  kind: "query" | "passage" = "query",
+): Promise<number[]> {
   const provider = (process.env.EMBEDDING_PROVIDER ?? "gemini").toLowerCase();
   const model = process.env.EMBEDDING_MODEL ?? "gemini-embedding-001";
   const dims = Number(process.env.EMBEDDING_DIMS ?? 1024);
@@ -72,9 +79,7 @@ async function embedQuery(text: string): Promise<number[]> {
         body: JSON.stringify({
           model: `models/${model}`,
           content: { parts: [{ text }] },
-          // RETRIEVAL_QUERY, not RETRIEVAL_DOCUMENT — the worker embeds
-          // passages, this embeds questions, and the two are asymmetric.
-          taskType: "RETRIEVAL_QUERY",
+          taskType: kind === "query" ? "RETRIEVAL_QUERY" : "RETRIEVAL_DOCUMENT",
           outputDimensionality: dims,
         }),
       },
@@ -90,7 +95,7 @@ async function embedQuery(text: string): Promise<number[]> {
     const res = await fetch("https://api.voyageai.com/v1/embeddings", {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, input: [text], input_type: "query" }),
+      body: JSON.stringify({ model, input: [text], input_type: kind === "query" ? "query" : "document" }),
     });
     if (!res.ok) throw new Error(`Voyage embeddings failed: ${res.status}`);
     const json = (await res.json()) as { data: { embedding: number[] }[] };
@@ -113,7 +118,7 @@ async function embedQuery(text: string): Promise<number[]> {
   throw new Error(`Unknown EMBEDDING_PROVIDER: ${provider}`);
 }
 
-function toVectorLiteral(vector: number[]): string {
+export function toVectorLiteral(vector: number[]): string {
   return `[${vector.join(",")}]`;
 }
 
@@ -122,7 +127,7 @@ export async function search(options: SearchOptions): Promise<Hit[]> {
   await requireMembership(userId, organisationId);
   if (!query.trim()) return [];
 
-  const vector = toVectorLiteral(await embedQuery(query));
+  const vector = toVectorLiteral(await embedText(query, "query"));
   const model = process.env.EMBEDDING_MODEL ?? "voyage-3";
   // Fuse from a wider candidate pool than we return, or the two rankings barely
   // overlap and fusion has nothing to work with.

@@ -94,9 +94,22 @@ function Group({
   const chunks = documents.reduce((n, d) => n + d._count.chunks, 0);
   const review = documents.reduce((n, d) => n + d.issues.high, 0);
 
+  // Same light logic as the drop target below: the yardstick is lit from
+  // above, the thing being measured from below. Held to a fraction of the
+  // aperture's intensity — the panel is the room, not the event in it.
+  const wash =
+    role === "reference"
+      ? "radial-gradient(90% 60% at 50% 0%, rgba(124,58,237,0.10), transparent 70%)"
+      : "radial-gradient(90% 60% at 50% 100%, rgba(124,58,237,0.09), transparent 70%)";
+
   return (
-    <section className="rounded-2xl border border-white/[0.09] bg-white/[0.015] p-4 sm:p-5">
-      <header className="mb-3.5 flex items-start gap-3">
+    <section className="ring-gradient relative overflow-hidden rounded-2xl bg-white/[0.015] p-4 sm:p-5">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{ backgroundImage: wash }}
+      />
+      <header className="relative mb-3.5 flex items-start gap-3">
         <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border border-white/12 bg-white/[0.04] text-white/50">
           {icon}
         </span>
@@ -117,11 +130,11 @@ function Group({
       </header>
 
       {documents.length === 0 ? (
-        <p className="mb-3 rounded-lg border border-white/[0.07] bg-white/[0.015] px-3.5 py-5 text-center text-[12.5px] text-white/35">
+        <p className="relative mb-3 rounded-lg border border-white/[0.07] bg-white/[0.015] px-3.5 py-5 text-center text-[12.5px] text-white/35">
           {empty}
         </p>
       ) : (
-        <ul className="mb-3 space-y-1.5">
+        <ul className="relative mb-3 space-y-1.5">
           {documents.map((doc) => (
             <li key={doc.id}>
               <Row doc={doc} />
@@ -131,13 +144,15 @@ function Group({
       )}
 
       {review > 0 && (
-        <p className="mb-3 inline-flex items-center gap-1.5 text-[12px] text-amber-300/80">
+        <p className="relative mb-3 inline-flex items-center gap-1.5 text-[12px] text-amber-300/80">
           <AlertTriangle size={12} />
           {review} document{review === 1 ? "" : "s"} to review
         </p>
       )}
 
-      <UploadZone role={role} label={uploadLabel} />
+      <div className="relative">
+        <UploadZone role={role} label={uploadLabel} />
+      </div>
     </section>
   );
 }
@@ -205,25 +220,27 @@ function Status({ doc }: { doc: Doc }) {
 
   if (doc.status === "ready") return <ReadyTick />;
 
-  const steps = PIPELINE.slice(1);
   const index = PIPELINE.indexOf(doc.status as (typeof PIPELINE)[number]);
+  // One continuous rail rather than four separate pips. The stages are a real
+  // sequence — parse, chunk, embed — so distance travelled is the honest
+  // encoding, and the leading edge is where the work currently is.
+  const travelled = Math.max(0, index) / (PIPELINE.length - 1);
 
   return (
-    <span className="flex shrink-0 items-center gap-2">
-      <span className="hidden items-center gap-1 sm:flex" aria-hidden="true">
-        {steps.map((step, i) => (
-          <span
-            key={step}
-            className={cn(
-              "h-1 w-4 rounded-full transition-colors duration-500",
-              i < index
-                ? "bg-royal-mid"
-                : i === index
-                  ? "animate-pulse bg-royal-mid/45"
-                  : "bg-white/12",
-            )}
-          />
-        ))}
+    <span className="flex shrink-0 items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className="relative hidden h-1 w-16 overflow-hidden rounded-full bg-white/[0.09] sm:block"
+      >
+        <span
+          className="absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-royal to-royal-soft transition-[width] duration-700 ease-out"
+          style={{ width: `${Math.max(travelled * 100, 6)}%` }}
+        />
+        {/* The head of the rail glows where the pipeline is working. */}
+        <span
+          className="absolute inset-y-0 w-2 rounded-full bg-white/80 blur-[2px] transition-[left] duration-700 ease-out"
+          style={{ left: `calc(${Math.max(travelled * 100, 6)}% - 6px)` }}
+        />
       </span>
       <span className="text-[11.5px] whitespace-nowrap text-white/50">
         {STATUS_LABEL[doc.status] ?? doc.status}

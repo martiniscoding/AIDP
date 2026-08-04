@@ -58,6 +58,14 @@ export type EvidenceItem = {
   headingPath: string;
   page: number | null;
   excerpt: string;
+  /** "clause" | "table_row" | "figure" | … — where the passage came from. */
+  sourceKind: string;
+  /**
+   * Set only when the passage is a model's reading of a diagram. The finding
+   * renders the diagram beside it, so the claim can be checked against the
+   * thing it was made about.
+   */
+  figureId: string | null;
 };
 
 /** `evidence` is Json in the schema; narrow it before rendering. */
@@ -73,6 +81,8 @@ export function readEvidence(value: unknown): EvidenceItem[] {
         headingPath: typeof row.headingPath === "string" ? row.headingPath : "",
         page: typeof row.page === "number" ? row.page : null,
         excerpt: typeof row.excerpt === "string" ? row.excerpt : "",
+        sourceKind: typeof row.sourceKind === "string" ? row.sourceKind : "clause",
+        figureId: typeof row.figureId === "string" ? row.figureId : null,
       },
     ];
   });

@@ -1,12 +1,13 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { resolveFramework } from "@/lib/ingest/assessment";
+import { promoteFinding } from "@/lib/ingest/decisions";
 import { remove } from "@/lib/ingest/storage";
 
 export type ActionResult = { ok: boolean; message: string; runId?: string };
@@ -219,7 +220,17 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
  */
 export async function reviewFinding(
   findingId: string,
-  decision: { confirm: boolean; verdict?: string; note?: string },
+  decision: {
+    confirm: boolean;
+    verdict?: string;
+    note?: string;
+    /**
+     * Carry this ruling into every future assessment. The reviewer has already
+     * made the call and said why; promoting it is a checkbox rather than a
+     * second act of authoring.
+     */
+    remember?: boolean;
+  },
 ): Promise<ActionResult> {
   try {
     const user = await requireUser();
@@ -241,8 +252,30 @@ export async function reviewFinding(
       },
     });
 
+    // Promotion runs after the review is durable, and its failure is reported
+    // rather than thrown: losing the reviewer's verdict because an embedding
+    // call timed out would be a bad trade.
+    let remembered = false;
+    if (decision.remember) {
+      try {
+        await promoteFinding(user.id, findingId, {}, user.name || user.email);
+        remembered = true;
+      } catch {
+        remembered = false;
+      }
+    }
+
     revalidatePath(`/dashboard/documents/${finding.run.documentId}`);
-    return { ok: true, message: decision.confirm ? "Confirmed." : "Override recorded." };
+    revalidatePath("/dashboard/decisions");
+
+    const verb = decision.confirm ? "Confirmed" : "Override recorded";
+    if (!decision.remember) return { ok: true, message: `${verb}.` };
+    return {
+      ok: true,
+      message: remembered
+        ? `${verb}, and added to your decisions.`
+        : `${verb}. It could not be added to your decisions — try again from the register.`,
+    };
   } catch (error) {
     if (error instanceof NotAMember) {
       return { ok: false, message: "You do not have access to that finding." };
@@ -257,4 +290,128 @@ function isUniqueViolation(error: unknown): boolean {
   // P2002 is Prisma's; 23505 comes straight from Postgres when the constraint
   // is a partial index Prisma does not know about.
   return code === "P2002" || code === "23505";
+}
+
+/**
+ * Record a human's verdict on a figure description.
+ *
+ * Non-blocking by design: the document is already indexed, so this corrects a
+ * chunk rather than releasing one. Three outcomes —
+ *
+ *   confirm  the model read the diagram correctly; nothing changes
+ *   correct  the description is replaced, and only that chunk re-embeds
+ *   reject   the description is unusable; the chunk is removed entirely
+ *
+ * Rejecting is deliberately destructive. An unusable description is worse than
+ * no chunk at all: it reads like a quotation from the document and would be
+ * cited as one.
+ *
+ * The model's original is never overwritten — `correctedDescription` sits
+ * beside it, so the disagreement stays visible and the vision model's accuracy
+ * stays measurable.
+ */
+export async function reviewFigure(
+  figureId: string,
+  decision: { action: "confirm" | "correct" | "reject"; description?: string; note?: string },
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+
+    const figure = await prisma.figure.findUnique({
+      where: { id: figureId },
+      select: {
+        description: true,
+        correctedDescription: true,
+        caption: true,
+        section: {
+          select: {
+            headingPath: true,
+            document: { select: { id: true, organisationId: true } },
+          },
+        },
+      },
+    });
+    if (!figure) return { ok: false, message: "That figure no longer exists." };
+
+    const { id: documentId, organisationId } = figure.section.document;
+    await requireMembership(user.id, organisationId);
+
+    const corrected =
+      decision.action === "correct" ? (decision.description ?? "").trim() : null;
+    if (decision.action === "correct" && !corrected) {
+      return { ok: false, message: "Write a description, or reject it instead." };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.figure.update({
+        where: { id: figureId },
+        data: {
+          reviewState:
+            decision.action === "confirm"
+              ? "confirmed"
+              : decision.action === "correct"
+                ? "corrected"
+                : "rejected",
+          correctedDescription: corrected,
+          reviewNote: decision.note?.trim() || null,
+          reviewedAt: new Date(),
+        },
+      });
+
+      // Confirming changes no text, so there is nothing to re-index.
+      if (decision.action === "confirm") return;
+
+      const chunk = await tx.chunk.findFirst({
+        where: { documentId, sourceKind: "figure", sourceId: figureId },
+        select: { id: true },
+      });
+      if (!chunk) return;
+
+      if (decision.action === "reject") {
+        // Embeddings cascade from the chunk.
+        await tx.chunk.delete({ where: { id: chunk.id } });
+        return;
+      }
+
+      const body = `${figure.caption ?? "Figure"}\n\n${corrected}`;
+      const text = `${figure.section.headingPath}\n\n${body}`;
+      await tx.chunk.update({
+        where: { id: chunk.id },
+        data: {
+          text,
+          tokenCount: Math.round(text.length / 3.8),
+          contentHash: createHash("sha256").update(text).digest("hex"),
+        },
+      });
+      // Drop the stale vector. The embed stage only embeds chunks missing one
+      // for the current model, so the job below re-embeds exactly this chunk
+      // and nothing else.
+      await tx.embedding.deleteMany({ where: { chunkId: chunk.id } });
+      await tx.job.deleteMany({ where: { documentId, stage: "embed" } });
+      await tx.job.create({
+        data: {
+          organisationId,
+          documentId,
+          stage: "embed",
+          correlationId: randomUUID(),
+        },
+      });
+    });
+
+    revalidatePath(`/dashboard/documents/${documentId}`);
+    return {
+      ok: true,
+      message:
+        decision.action === "confirm"
+          ? "Confirmed."
+          : decision.action === "correct"
+            ? "Description replaced — re-indexing this figure."
+            : "Rejected. This figure is no longer searchable.",
+    };
+  } catch (error) {
+    if (error instanceof NotAMember) {
+      return { ok: false, message: "You do not have access to that figure." };
+    }
+    return { ok: false, message: "Could not record that decision." };
+  }
 }

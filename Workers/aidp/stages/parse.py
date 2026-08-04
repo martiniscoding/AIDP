@@ -133,6 +133,10 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         out.figures.setdefault(index, []).append(figure)
     heartbeat()
 
+    # Three shapes, tried in order of how much the document told us. Labelled
+    # prose and the principle grid are explicit; the normative fallback is
+    # inference, so it only runs when neither of the others found anything.
+    inferred: set[int] = set()
     for index, section in enumerate(out.sections):
         if section.is_structural:
             continue
@@ -140,10 +144,17 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         if not found:
             for table in out.tables.get(index, []):
                 found.extend(clause_parser.from_table(section, table.rows))
+        if not found:
+            found = clause_parser.from_normative_prose(section)
+            if found:
+                inferred.add(index)
         if found:
             out.clauses[index] = found
 
+    _flag_inferred_clauses(out, inferred)
+    _flag_missed_obligations(out)
     _flag_empty_sections(out)
+    _flag_no_clauses(out, document)
     _reconcile(out, toc_entries)
     return out
 
@@ -223,6 +234,74 @@ def _empty_sections(out: _Result) -> set[int]:
         if not has_content:
             empty.add(index)
     return empty
+
+
+
+
+def _flag_no_clauses(out: _Result, document: dict) -> None:
+    """A reference standard that produced no clauses assesses nothing.
+
+    The framework is built from clauses, so a reference document with none
+    contributes exactly nothing to every future assessment while still appearing
+    in the library as an indexed, healthy-looking document. That is worth
+    stopping the reviewer over — most often it means the document is a template
+    nobody filled in, or its house style is one no extractor here recognises.
+    """
+    if document.get("role") != "reference":
+        return
+    if sum(len(c) for c in out.clauses.values()) > 0:
+        return
+    out.issue(
+        "high",
+        "no_clauses",
+        "No clauses could be extracted from this reference document, so it "
+        "contributes nothing to an assessment. Check that it contains stated "
+        "rules rather than being an unfilled template.",
+    )
+
+
+def _flag_inferred_clauses(out: _Result, inferred: set[int]) -> None:
+    """Say when a clause was read out of unlabelled prose rather than parsed.
+
+    These are correct often enough to be worth having — the alternative is not
+    assessing the rule at all — but they are inference, and a reviewer deciding
+    how much to trust a finding deserves to know which kind of clause it came
+    from. Medium, not high: the content is present and being assessed.
+    """
+    for index in sorted(inferred):
+        section = out.sections[index]
+        out.issue(
+            "medium",
+            "clause_inferred",
+            f"'{section.title}' states an obligation but does not label its parts, "
+            "so the clause was inferred from the prose. Check that the statement "
+            "and requirements match what the document intends.",
+            page=section.page_start,
+            ref=section.heading_path,
+        )
+
+
+def _flag_missed_obligations(out: _Result) -> None:
+    """A section that states a rule and yielded no clause is the worst case.
+
+    It is not a wrong answer a reviewer can catch — the clause is simply never
+    fired at any submitted design, and every report is silently narrower than it
+    appears. `_flag_empty_sections` cannot catch it: the section is full of
+    prose, so it does not look empty. This exists so the gap is visible.
+    """
+    for index, section in enumerate(out.sections):
+        if section.is_structural or out.clauses.get(index):
+            continue
+        if clause_parser.has_unextracted_obligation(section):
+            out.issue(
+                "high",
+                "clause_not_extracted",
+                f"'{section.title}' states an obligation ('must', 'shall' or "
+                "similar) but no clause could be extracted from it. Nothing in "
+                "this section will be assessed against a submitted design.",
+                page=section.page_start,
+                ref=section.heading_path,
+            )
 
 
 def _flag_empty_sections(out: _Result) -> None:
@@ -440,8 +519,8 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
                     """
                     INSERT INTO "figure"
                         ("id","sectionId","ordinal","page","bbox","storageKey",
-                         "caption","description")
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                         "caption","description","complexity")
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
                         db.new_id(),
@@ -452,6 +531,7 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
                         key,
                         figure.caption,
                         description,
+                        figure.complexity,
                     ),
                 )
 

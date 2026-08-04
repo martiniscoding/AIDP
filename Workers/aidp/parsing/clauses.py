@@ -177,3 +177,80 @@ def _split_statement_rationale(body: str) -> tuple[str, str]:
         return " ".join(_LABELS["statement"].sub("", body, count=1).split()), ""
     statement = _LABELS["statement"].sub("", body[: match.start()], count=1)
     return " ".join(statement.split()), " ".join(body[match.end() :].split())
+
+
+# Words that make a sentence an obligation rather than a description. Kept
+# narrow on purpose: "should" and "may" are advisory in every standards document
+# in this corpus, and admitting them would turn commentary into requirements.
+_NORMATIVE = re.compile(
+    r"\b(?:must|shall|is\s+required\s+to|are\s+required\s+to|is\s+prohibited|"
+    r"are\s+prohibited|may\s+not|must\s+not|shall\s+not)\b",
+    re.IGNORECASE,
+)
+
+# A line that is really a table cell — a bare label with no verb. Classification
+# grids arrive as one short line per cell once the table extractor has declined
+# them, and stitching those into a statement produces nonsense.
+_MAX_SENTENCE_CHARS = 400
+_MIN_SENTENCE_CHARS = 25
+
+
+def _sentences(text: str) -> list[str]:
+    """Split prose into sentences, tolerating PDF line breaks mid-sentence.
+
+    Lines are joined first: a sentence broken across two lines by the PDF is one
+    sentence, and splitting on the newline would leave half an obligation.
+    """
+    joined = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", joined)
+    return [" ".join(p.split()) for p in parts if p.strip()]
+
+
+def from_normative_prose(section: Section) -> list[Clause]:
+    """Last resort: a section that states obligations without labelling them.
+
+    The two labelled shapes — `Statement:`/`Rationale:`/`Requirements:` prose and
+    the principle grid — cover the documents this was built against, and nothing
+    else. A standard written as ordinary numbered prose ("6.1 Data
+    Classification: All data assets must be classified…") matched neither, so it
+    produced no clause, was never fired at a submitted design, and raised no
+    warning: the section had prose, so it did not look empty.
+
+    That is the worst failure this system can have. A missed clause is not a
+    wrong answer a reviewer can catch — it is a question nobody was asked.
+
+    Deliberately conservative. It fires only on sentences carrying a real
+    obligation (`must`, `shall`, `is required to`, prohibitions), because a
+    fabricated requirement is as damaging as a missed one, and "should"/"may"
+    are advisory throughout this corpus. Sections yielding nothing here are
+    reported by the parse stage rather than passed over.
+    """
+    if section.is_structural:
+        return []
+
+    candidates = [
+        s
+        for s in _sentences(section.text)
+        if _MIN_SENTENCE_CHARS <= len(s) <= _MAX_SENTENCE_CHARS and _NORMATIVE.search(s)
+    ]
+    if not candidates:
+        return []
+
+    # The first obligation is the rule; the rest are the obligations it carries.
+    # That ordering matches how these sections are written — a lead sentence
+    # stating the rule, then its specifics.
+    clause = Clause(
+        ordinal=1,
+        title=section.title,
+        statement=candidates[0],
+        requirements=candidates[1:9],
+        page_start=section.page_start,
+        page_end=section.page_end,
+    )
+    return [] if clause.is_empty else [clause]
+
+
+def has_unextracted_obligation(section: Section) -> bool:
+    """True when a section states an obligation that no extractor turned into a
+    clause. Drives the review issue — the point is that this is never silent."""
+    return bool(not section.is_structural and _NORMATIVE.search(section.text or ""))

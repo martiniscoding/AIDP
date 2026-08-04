@@ -57,6 +57,12 @@ export default async function DashboardLayout({
             >
               Standards library
             </Link>
+            <Link
+              href="/dashboard/decisions"
+              className="rounded-full px-3 py-1.5 text-[13.5px] text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white"
+            >
+              Decisions
+            </Link>
           </nav>
 
           <div className="ml-auto flex items-center gap-3">

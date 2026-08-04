@@ -34,6 +34,18 @@ class Candidate:
     score: float
     vector_rank: int | None
     lexical_rank: int | None
+    # Where the passage came from. "figure" means it is a *model's reading of a
+    # diagram*, not text lifted off the page — which the judge is told, and
+    # which the guards in analyse.py refuse to let decide a verdict alone.
+    source_kind: str = "clause"
+    # The row this chunk was derived from. For a figure that is the figure id,
+    # which is what lets a finding render the diagram beside the model's reading
+    # of it — verification at the point of use rather than at ingest.
+    source_id: str | None = None
+
+    @property
+    def is_generated(self) -> bool:
+        return self.source_kind == "figure"
 
     @property
     def excerpt(self) -> str:
@@ -79,13 +91,23 @@ fused AS (
       FROM dense d
       FULL OUTER JOIN lexical l ON l."id" = d."id"
 )
-SELECT c."id", c."headingPath", c."text", c."pageStart",
+SELECT c."id", c."headingPath", c."text", c."pageStart", c."sourceKind", c."sourceId",
        f.score::float8 AS score, f.vector_rank, f.lexical_rank
   FROM fused f
   JOIN "chunk" c ON c."id" = f.id
  ORDER BY f.score DESC
  LIMIT %(limit)s
 """
+
+
+def embed_query(query: str) -> str:
+    """A query as a pgvector literal.
+
+    Exposed so one clause can be embedded once and the vector shared between
+    passage retrieval and the decision lookup, rather than paying the provider
+    twice for the same string on every clause of every run.
+    """
+    return embeddings.to_pgvector(embeddings.embed_all([query], "query")[0])
 
 
 def search_document(
@@ -95,6 +117,7 @@ def search_document(
     document_id: str,
     query: str,
     limit: int = 8,
+    vector: str | None = None,
 ) -> list[Candidate]:
     """Best passages in one document for one query.
 
@@ -107,7 +130,8 @@ def search_document(
         return []
 
     cfg = get_config()
-    vector = embeddings.to_pgvector(embeddings.embed_all([query], "query")[0])
+    if vector is None:
+        vector = embed_query(query)
 
     # HNSW discards non-matching rows *after* walking the graph, so a filter as
     # tight as a single document can starve the result set. pgvector 0.8 keeps
@@ -141,6 +165,8 @@ def search_document(
             score=float(r["score"] or 0),
             vector_rank=r["vector_rank"],
             lexical_rank=r["lexical_rank"],
+            source_kind=r["sourceKind"],
+            source_id=r["sourceId"],
         )
         for r in rows
     ]
