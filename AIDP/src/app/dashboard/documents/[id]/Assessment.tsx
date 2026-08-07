@@ -85,9 +85,19 @@ export function Assessment({
   const [message, setMessage] = useState<string | null>(null);
   const [filter, setFilter] = useState<Verdict | null>(null);
 
-  const running = run?.state === "queued" || run?.state === "running";
+  /**
+   * Queued and running are different things, and collapsing them hid a real
+   * failure: with no analyse worker up, a run sat queued for two days while
+   * this panel said "Assessing clause by clause…" and showed a progress bar
+   * pinned at 0. Nothing was assessing anything. A run nobody has picked up
+   * needs to look like one, because the fix is to go and start a worker.
+   */
+  const queued = run?.state === "queued";
+  const assessing = run?.state === "running";
+  const inFlight = queued || assessing;
   const shown = filter ? findings.filter((f) => f.verdict === filter) : findings;
   const reviewed = findings.filter((f) => f.reviewerState !== "pending").length;
+
 
   const begin = () =>
     startTransition(async () => {
@@ -126,7 +136,7 @@ export function Assessment({
         <button
           type="button"
           onClick={begin}
-          disabled={pending || running}
+          disabled={pending || inFlight}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors",
             "border-royal-mid/40 bg-royal/15 text-white hover:bg-royal/25",
@@ -134,12 +144,18 @@ export function Assessment({
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           )}
         >
-          {pending || running ? (
+          {pending || inFlight ? (
             <Loader2 size={13} className="animate-spin" />
           ) : (
             <Play size={13} />
           )}
-          {running ? "Running…" : run ? "Re-run assessment" : "Run assessment"}
+          {queued
+            ? "Queued…"
+            : assessing
+              ? "Running…"
+              : run
+                ? "Re-run assessment"
+                : "Run assessment"}
         </button>
       </div>
 
@@ -151,22 +167,32 @@ export function Assessment({
         </p>
       )}
 
-      {running && (
+      {inFlight && (
         <div className="mb-4 rounded-xl border border-white/[0.09] bg-white/[0.02] px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-[12.5px] text-white/55">
-            <span>Assessing clause by clause…</span>
             <span>
-              {run.completedClauses} / {run.totalClauses}
+              {queued
+                ? "Queued — waiting for an analysis worker to pick this up."
+                : "Assessing clause by clause…"}
             </span>
+            {assessing && (
+              <span>
+                {run.completedClauses} / {run.totalClauses}
+              </span>
+            )}
           </div>
-          <div className="h-1 overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-full rounded-full bg-royal-mid transition-[width] duration-700"
-              style={{
-                width: `${run.totalClauses ? (run.completedClauses / run.totalClauses) * 100 : 0}%`,
-              }}
-            />
-          </div>
+          {/* No bar while queued. A bar at 0% claims work has started and is
+              going slowly; the truth is that nothing has begun. */}
+          {assessing && (
+            <div className="h-1 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-royal-mid transition-[width] duration-700"
+                style={{
+                  width: `${run.totalClauses ? (run.completedClauses / run.totalClauses) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -224,7 +250,7 @@ export function Assessment({
         </>
       )}
 
-      {run && findings.length === 0 && !running && (
+      {run && findings.length === 0 && !inFlight && (
         <p className="rounded-xl border border-white/10 bg-white/[0.015] px-5 py-8 text-center text-[13.5px] text-white/40">
           No findings recorded. The run may have failed before it reached a clause.
         </p>
@@ -233,11 +259,96 @@ export function Assessment({
   );
 }
 
+
+/**
+ * A cited passage, rendered the way it was written.
+ *
+ * A table's meaning is which value sits in which column, so showing its rows as
+ * a run-on paragraph makes the evidence unreadable at exactly the moment a
+ * reviewer is deciding whether a finding is fair. Prose is left alone — its line
+ * breaks are where the PDF wrapped and mean nothing.
+ */
+function Excerpt({ item }: { item: EvidenceItem }) {
+  const rows = item.excerpt
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split("|").map((cell) => cell.trim()));
+
+  // Two or more lines that each split on a pipe into the same number of cells is
+  // a grid. One line, or ragged ones, is prose that happens to contain a pipe.
+  const width = rows[0]?.length ?? 0;
+  const isTable =
+    rows.length > 1 && width > 1 && rows.every((row) => row.length === width);
+
+  if (!isTable) {
+    return (
+      <p className="text-[12.5px] leading-relaxed whitespace-pre-wrap text-white/70">
+        {item.excerpt}
+      </p>
+    );
+  }
+
+  const [head, ...body] = rows;
+  return (
+    // Its own scroller: a wide table must never make the report scroll sideways.
+    <div className="-mx-1 overflow-x-auto">
+      <table className="w-full min-w-max border-collapse text-[12px]">
+        <thead>
+          <tr>
+            {head.map((cell, i) => (
+              <th
+                key={i}
+                scope="col"
+                className="border-b border-white/12 px-2 py-1.5 text-left font-medium text-white/55"
+              >
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((row, r) => (
+            <tr key={r} className="align-top">
+              {row.map((cell, c) => (
+                <td
+                  key={c}
+                  className={cn(
+                    "border-b border-white/[0.06] px-2 py-1.5",
+                    c === 0 ? "text-white/80" : "text-white/60",
+                  )}
+                >
+                  {/* An empty cell is written out at ingest, so a blank here is
+                      a real gap in the source rather than a lost value. */}
+                  {cell || "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function FindingRow({ finding }: { finding: FindingView }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
-  const [overriding, setOverriding] = useState(false);
+  /**
+   * Which panel is open, if any.
+   *
+   * There used to be a boolean for "overriding", which meant the note and the
+   * remember checkbox existed only on the override path. Agreeing with a
+   * verdict could therefore never become a standing decision — not because the
+   * checkbox was missed, but because there was no checkbox to miss. The server
+   * had always supported it: `promoteFinding` maps a confirmed "covered" to an
+   * `accepts` decision, a branch nothing could reach.
+   *
+   * Confirming a `partial` and writing down the scope everyone agreed to is a
+   * ruling worth carrying into the next assessment, and it was unreachable.
+   */
+  const [mode, setMode] = useState<"confirm" | "override" | null>(null);
 
   const [chosen, setChosen] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -254,12 +365,21 @@ function FindingRow({ finding }: { finding: FindingView }) {
         note: note.trim() || undefined,
         remember,
       });
-      setOverriding(false);
+      setMode(null);
       setChosen(null);
       setNote("");
       setRemember(false);
       router.refresh();
     });
+
+  const close = () => {
+    setMode(null);
+    setChosen(null);
+    setRemember(false);
+    // Also the note: leaving it behind would attach an abandoned reason to
+    // whatever the reviewer does next.
+    setNote("");
+  };
 
   return (
     <li className="overflow-hidden rounded-xl border border-white/[0.09] bg-white/[0.02]">
@@ -352,7 +472,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                         </span>
                       )}
                     </p>
-                    <p className="text-[12.5px] leading-relaxed text-white/70">{item.excerpt}</p>
+                    <Excerpt item={item} />
                   </div>
 
                   {/*
@@ -434,31 +554,43 @@ function FindingRow({ finding }: { finding: FindingView }) {
               Confirm
             </button>
 
-            {overriding ? (
+            {mode ? (
               /* Choosing a verdict no longer submits on the spot. The reason
-                 for an override is the most valuable thing a reviewer produces
+                 for a review is the most valuable thing a reviewer produces
                  — it is what a standing decision is made of — and a flow that
                  never asked for it was throwing that away. */
               <div className="w-full space-y-3 rounded-lg border border-white/10 bg-ink-950/40 p-3">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="mr-1 text-[11.5px] text-white/40">Correct verdict:</span>
-                  {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
-                    <button
-                      key={verdict}
-                      type="button"
-                      disabled={pending}
-                      aria-pressed={chosen === verdict}
-                      onClick={() => setChosen(verdict)}
-                      className={cn(
-                        "rounded-full border px-2.5 py-1 text-[11.5px] transition-[opacity,box-shadow] hover:opacity-80 disabled:opacity-50",
-                        TONE[VERDICT_META[verdict].tone],
-                        chosen === verdict && "ring-2 ring-white/60",
-                      )}
-                    >
-                      {VERDICT_META[verdict].label}
-                    </button>
-                  ))}
-                </div>
+                {mode === "override" && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="mr-1 text-[11.5px] text-white/40">Correct verdict:</span>
+                    {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
+                      <button
+                        key={verdict}
+                        type="button"
+                        disabled={pending}
+                        aria-pressed={chosen === verdict}
+                        onClick={() => setChosen(verdict)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-[11.5px] transition-[opacity,box-shadow] hover:opacity-80 disabled:opacity-50",
+                          TONE[VERDICT_META[verdict].tone],
+                          chosen === verdict && "ring-2 ring-white/60",
+                        )}
+                      >
+                        {VERDICT_META[verdict].label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {mode === "confirm" && (
+                  <p className="text-[11.5px] text-white/40">
+                    Agreeing with{" "}
+                    <span className="text-white/70">
+                      {VERDICT_META[finding.verdict as Verdict]?.label ?? finding.verdict}
+                    </span>
+                    . Say why, and it can be kept as a standing decision.
+                  </p>
+                )}
 
                 <label className="block">
                   <span className="mb-1 block text-[11.5px] text-white/40">
@@ -503,22 +635,23 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={pending || !chosen}
-                    onClick={() => decide(false, chosen ?? undefined)}
+                    disabled={pending || (mode === "override" && !chosen)}
+                    onClick={() =>
+                      mode === "override"
+                        ? decide(false, chosen ?? undefined)
+                        : decide(true)
+                    }
                     className="rounded-full bg-royal px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
                   >
-                    {remember ? "Save and remember" : "Save override"}
+                    {remember
+                      ? "Save and remember"
+                      : mode === "override"
+                        ? "Save override"
+                        : "Save"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setOverriding(false);
-                      setChosen(null);
-                      setRemember(false);
-                      // Also the note: leaving it behind would attach an
-                      // abandoned reason to whatever the reviewer does next.
-                      setNote("");
-                    }}
+                    onClick={close}
                     className="text-[12px] text-white/35 hover:text-white/70"
                   >
                     cancel
@@ -526,14 +659,28 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setOverriding(true)}
-                className="rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:border-amber-400/40 hover:text-amber-300 disabled:opacity-50"
-              >
-                Override
-              </button>
+              <>
+                {/* Kept beside the bare Confirm rather than replacing it. A
+                    reviewer agreeing with twenty verdicts in a row should still
+                    do it in one click each; this is the door to the register for
+                    the handful that deserve a reason. */}
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setMode("confirm")}
+                  className="rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:border-royal-mid/50 hover:text-royal-soft disabled:opacity-50"
+                >
+                  Confirm with a reason…
+                </button>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setMode("override")}
+                  className="rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:border-amber-400/40 hover:text-amber-300 disabled:opacity-50"
+                >
+                  Override
+                </button>
+              </>
             )}
           </div>
         </div>

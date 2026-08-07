@@ -8,7 +8,13 @@ dependencies = [
     # Postgres. psycopg 3 with the binary wheel, so no local libpq is needed.
     "psycopg[binary,pool]>=3.2",
     # PDF parsing: text with font metadata, table detection, figure extraction.
+    # Also decodes the raster images pulled out of a deck, so the slide path
+    # needs no imaging library of its own.
     "pymupdf>=1.24",
+    # PowerPoint parsing. A deck states its own structure — placeholder roles,
+    # outline depth, speaker notes — and this reads it rather than inferring it
+    # back from typography the way the PDF path has to.
+    "python-pptx>=1.0",
     # Every outbound call — Gemini, embeddings, and storage via the app — goes
     # over plain HTTP rather than through a vendor SDK, so swapping providers is
     # a config change and the dependency list stays short.

@@ -23,6 +23,49 @@ export const runtime = "nodejs";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const PDF_MAGIC = "%PDF-";
+const ZIP_MAGIC = "PK";
+
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+type Format = { mimeType: string; extension: string };
+
+/**
+ * What these bytes actually are, or a reason they can't be ingested.
+ *
+ * Trust the bytes, not the extension or the browser's content type. A PDF says
+ * so in its first five; an Office file is a ZIP, and every Office format shares
+ * that signature — so the distinguishing step is which parts the package
+ * contains. Entry names sit uncompressed in the archive's local headers, which
+ * makes this a substring search rather than a reason to add a zip dependency.
+ *
+ * Word and Excel are named specifically when found. "That doesn't look like a
+ * PDF" is a bad answer to someone who just dropped a .docx and can see
+ * perfectly well what it is.
+ */
+function identify(bytes: Uint8Array): Format | { error: string; status: number } {
+  const head = Buffer.from(bytes.subarray(0, 5)).toString("latin1");
+  if (head === PDF_MAGIC) {
+    return { mimeType: "application/pdf", extension: "pdf" };
+  }
+
+  if (head.startsWith(ZIP_MAGIC)) {
+    const buffer = Buffer.from(bytes);
+    if (buffer.includes("ppt/presentation.xml")) {
+      return { mimeType: PPTX_MIME, extension: "pptx" };
+    }
+    if (buffer.includes("word/document.xml")) {
+      return { error: "Word documents aren't supported yet — PDF and PowerPoint only.", status: 415 };
+    }
+    if (buffer.includes("xl/workbook.xml")) {
+      return { error: "Excel workbooks aren't supported yet — PDF and PowerPoint only.", status: 415 };
+    }
+  }
+
+  return {
+    error: "That doesn't look like a PDF or a PowerPoint file. Only those can be ingested.",
+    status: 415,
+  };
+}
 
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -49,12 +92,9 @@ export async function POST(request: Request) {
 
   const bytes = new Uint8Array(await file.arrayBuffer());
 
-  // Trust the bytes, not the extension or the browser's content type.
-  if (Buffer.from(bytes.subarray(0, 5)).toString("latin1") !== PDF_MAGIC) {
-    return NextResponse.json(
-      { error: "That doesn't look like a PDF. Only PDFs can be ingested." },
-      { status: 415 },
-    );
+  const format = identify(bytes);
+  if ("error" in format) {
+    return NextResponse.json({ error: format.error }, { status: format.status });
   }
 
   const user = session.user as typeof session.user & { company?: string };
@@ -73,14 +113,19 @@ export async function POST(request: Request) {
 
   // The stored key is whatever the backend issues: under UploadThing that is
   // their file key, not the path suggested here.
-  const key = await put(documentKey(organisation.id, hash), bytes, "application/pdf");
+  const key = await put(
+    documentKey(organisation.id, hash, format.extension),
+    bytes,
+    format.mimeType,
+  );
 
   // A readable placeholder until the parser reads the real title off the cover
-  // page. Leading dots and separators are stripped so "Data_Standards.pdf" and
-  // ".sample.pdf" both come out as something a person would recognise.
+  // page — or, for a deck, off the title of slide one. Leading dots and
+  // separators are stripped so "Data_Standards.pdf" and ".sample.pptx" both
+  // come out as something a person would recognise.
   const title =
     file.name
-      .replace(/\.pdf$/i, "")
+      .replace(/\.(pdf|pptx)$/i, "")
       .replace(/[_-]+/g, " ")
       .replace(/\s+/g, " ")
       .replace(/^[.\s]+/, "")
@@ -94,7 +139,7 @@ export async function POST(request: Request) {
         role,
         title: title.slice(0, 500),
         storageKey: key,
-        mimeType: "application/pdf",
+        mimeType: format.mimeType,
         byteSize: bytes.byteLength,
         sha256: hash,
         status: "pending",

@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { resolveActive } from "@/lib/ingest/org";
 import { parseAssessmentInput, type SaveResult } from "@/lib/tech-stack/schema";
+import { renderTechSummary } from "@/lib/tech-stack/summary";
 
 /**
  * Persist the Technology Stack & Architecture Reference for the signed-in user.
@@ -41,6 +43,13 @@ export async function saveAssessment(
   const userId = session.user.id;
   const submitting = value.intent === "submit";
 
+  // The reference belongs to the organisation, so the assessment pipeline can
+  // reach it — a run has an organisation, never a user. `resolveActive` creates
+  // one on first use, which is also what makes this row reachable at all.
+  const organisation = await resolveActive(
+    session.user as typeof session.user & { company?: string },
+  );
+
   const scalars = {
     companyName: value.companyName,
     primaryContact: value.primaryContact,
@@ -52,19 +61,24 @@ export async function saveAssessment(
     primaryCloud: value.primaryCloud,
     workloads: value.workloads,
     additionalNotes: value.additionalNotes,
+    // Rendered here because only the app can resolve catalog ids to labels.
+    summary: renderTechSummary(value),
   };
 
   try {
     const saved = await prisma.$transaction(async (tx) => {
       const assessment = await tx.techAssessment.upsert({
-        where: { userId },
+        where: { organisationId: organisation.id },
         create: {
+          organisationId: organisation.id,
           userId,
           ...scalars,
           status: submitting ? "submitted" : "draft",
           submittedAt: submitting ? new Date() : null,
         },
         update: {
+          // Attribution follows the last edit.
+          userId,
           ...scalars,
           // Submitting is one-way: a client editing an already-submitted
           // reference should not silently drop it back to draft.

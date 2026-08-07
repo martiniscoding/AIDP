@@ -1,9 +1,22 @@
-"""Parse stage — PDF in, structured document out.
+"""Parse stage — a document in, structured document out.
 
-Order matters here. Tables are extracted before figures so their regions can be
-excluded from figure detection (both are drawn with the same vector primitives,
-and a re-rendered table described by a vision model is expensive noise). The ToC
-is read before the body so the body parse has something to be checked against.
+Two source formats, two front halves, one back half. Everything from
+`_Result` onwards — clause extraction, issues, persistence — is format-blind,
+so a new format only has to produce sections and clauses.
+
+**PDF.** Order matters. Tables are extracted before figures so their regions can
+be excluded from figure detection (both are drawn with the same vector
+primitives, and a re-rendered table described by a vision model is expensive
+noise). The ToC is read before the body so the body parse has something to be
+checked against. Structure comes from typography, and a model reads it only when
+the typography said nothing.
+
+**PPTX.** A deck states its own structure — `slides.py` reads the titles,
+outline depth and speaker notes straight out of the file — but stating it is not
+the same as it being usable. Slide titles are not clause headings and a bullet
+is not a statement, so the model pass that is the PDF's last rung is the deck's
+only rung. It gets the format's own tags as hints rather than having to infer
+from nothing.
 
 Everything is written in one transaction together with the job's completion and
 the handoff to chunking, so a crash leaves no half-parsed document behind.
@@ -16,9 +29,9 @@ from psycopg.types.json import Jsonb
 
 from .. import db, logs, queue, storage
 from ..ai import llm
+from ..parsing import ai_structure, furniture, sections, slides, spans, tables, toc
 from ..parsing import clauses as clause_parser
 from ..parsing import figures as figure_parser
-from ..parsing import furniture, sections, spans, tables, toc
 from ..queue import Job
 
 log = logs.get(__name__)
@@ -26,6 +39,29 @@ log = logs.get(__name__)
 # Below this, the file is almost certainly a scan. OCR is a different pipeline
 # and this fails loudly rather than producing an empty document.
 _MIN_TEXT_CHARS = 200
+
+# The same test for a deck, and deliberately far lower. A deck is terse by
+# design — forty slides of bullets can be shorter than two pages of prose — so
+# the PDF's number would reject perfectly readable decks with an error about
+# OCR, which is both wrong and baffling. This asks only whether there is *any*
+# text: a deck of exported images has none. A deck that is merely thin gets
+# parsed, and then answered for by `no_clauses` and `section_empty`, which is
+# where "not enough here to assess against" belongs.
+_MIN_DECK_CHARS = 40
+
+_PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _is_deck(document: dict) -> bool:
+    """Format from the recorded type, with the key as a fallback.
+
+    `mimeType` is set by the upload route from the file's magic bytes, so it is
+    the authority. The extension check covers rows written before decks were
+    supported, which all carry the old hardcoded PDF default.
+    """
+    if (document.get("mimeType") or "") == _PPTX_MIME:
+        return True
+    return str(document.get("storageKey") or "").lower().endswith(".pptx")
 
 
 def handle(job: Job, heartbeat) -> None:
@@ -40,12 +76,15 @@ def handle(job: Job, heartbeat) -> None:
 
     _set_status(job.document_id, "parsing")
     raw = storage.storage().get(document["storageKey"])
-    doc = fitz.open(stream=raw, filetype="pdf")
 
-    try:
-        result = _parse(doc, document, heartbeat)
-    finally:
-        doc.close()
+    if _is_deck(document):
+        result = _parse_deck(raw, document, heartbeat)
+    else:
+        doc = fitz.open(stream=raw, filetype="pdf")
+        try:
+            result = _parse(doc, document, heartbeat)
+        finally:
+            doc.close()
 
     _persist(job, document, result)
 
@@ -61,6 +100,9 @@ class _Result:
         self.tables: dict[int, list] = {}
         self.figures: dict[int, list] = {}
         self.issues: list[dict] = []
+        # True when a model read the structure. Persisted so the app can gate
+        # assessment on a human confirming it.
+        self.structure_inferred = False
 
     def issue(self, severity: str, kind: str, detail: str, *, page=None, ref=None) -> None:
         self.issues.append(
@@ -103,8 +145,41 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         content, profile, document_title=out.title, skip_pages=skip
     )
     if not out.sections:
-        out.issue("high", "no_sections", "No sections were detected in this document.")
-        return out
+        # Nothing in the document's own formatting marked a heading. Ask a model
+        # to read the structure before falling back to treating the whole file
+        # as one blob — it costs one call per 120 lines, once, and only ever
+        # runs on a document that would otherwise be worth nothing.
+        read = ai_structure.structure(content, document_title=out.title)
+        if read.sections:
+            _adopt_structure(
+                out,
+                read,
+                severity="high",
+                detail=(
+                    f"No headings could be detected, so the document's structure was read "
+                    f"by a model rather than parsed: {len(read.sections)} sections and "
+                    f"{sum(len(c) for c in read.clauses.values())} rules. Confirm these "
+                    "before assessing anything against them."
+                ),
+            )
+            _flag_missed_obligations(out)
+            _flag_no_clauses(out, document)
+            return out
+
+    if not out.sections:
+        # Fall back to one section over the whole document rather than giving
+        # up. The issue still fires — this is a degraded parse, not a working
+        # one — but the text becomes searchable instead of the upload failing.
+        out.sections = sections.whole_document(content, document_title=out.title)
+        out.issue(
+            "high",
+            "no_sections",
+            "No headings could be detected, so the whole document has been indexed "
+            "as a single section. It is searchable, but no rules could be located "
+            "in it and it cannot be assessed against until its structure is read.",
+        )
+        if not out.sections:
+            return out
 
     out.profile = sections.detect_profile(out.sections)
     heartbeat()
@@ -156,6 +231,116 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
     _reconcile(out, toc_entries)
+    return out
+
+
+def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
+    """Take a model-read structure, and say so.
+
+    Shared by both formats because the caveats are identical once the structure
+    exists — only how alarming it is differs. On a PDF this is the last rung
+    after typography failed, and worth stopping a reviewer over. On a deck it is
+    the designed path, and a high-severity flag on every single upload would
+    teach reviewers to skim past the one that means something.
+
+    `structure_inferred` is set either way. It gates assessment on a human
+    confirming the clauses, and clauses a model located are exactly what that
+    gate exists for, however routine the route to them was.
+    """
+    out.sections = read.sections
+    out.clauses = read.clauses
+    out.structure_inferred = True
+    out.issue(severity, "structure_inferred", detail)
+
+    for line in read.disputed_lines[:20]:
+        out.issue(
+            "medium",
+            "structure_disputed",
+            f"Two readings of line {line} disagreed about what it is.",
+        )
+    if read.orphan_lines:
+        out.issue(
+            "medium",
+            "structure_orphan_lines",
+            f"{len(read.orphan_lines)} lines before the first heading belong to "
+            "no section and were not indexed as part of any rule.",
+        )
+
+
+def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
+    """A .pptx, read by the model with the file's own tags as hints.
+
+    No typographic pass, no ToC reconciliation and no table extraction stage: a
+    deck has no contents page to check against, and its tables arrive as text
+    from `slides.py` rather than as regions to be detected. What is left is the
+    part that matters — lines in reading order, labelled, grouped into clauses.
+    """
+    out = _Result()
+    deck = slides.read(raw)
+    out.page_count = deck.slide_count
+
+    text_chars = sum(len(line.text) for line in deck.lines)
+    if text_chars < _MIN_DECK_CHARS:
+        raise RuntimeError(
+            f"no usable text in this deck ({text_chars} characters across "
+            f"{deck.slide_count} slides) — a deck of flattened images needs OCR, "
+            "which is not wired up"
+        )
+
+    out.title = deck.title or document["title"]
+    out.profile = "slide-deck"
+    heartbeat()
+
+    read = ai_structure.structure(
+        deck.lines, document_title=out.title, hints=deck.hints
+    )
+    if read.sections:
+        _adopt_structure(
+            out,
+            read,
+            # Medium, not high: this is how every deck is parsed, so the flag
+            # describes the format rather than a fault in this file.
+            severity="medium",
+            detail=(
+                f"A deck states no clause structure of its own, so this one was read "
+                f"by a model: {len(read.sections)} sections and "
+                f"{sum(len(c) for c in read.clauses.values())} rules across "
+                f"{deck.slide_count} slides. Confirm them before assessing against them."
+            ),
+        )
+    else:
+        # Either no model is configured or it found nothing to mark. The text is
+        # still worth indexing — searchable beats absent — but nothing in it can
+        # be assessed against until someone reads its structure.
+        out.sections = sections.whole_document(deck.lines, document_title=out.title)
+        out.issue(
+            "high",
+            "no_sections",
+            "No structure could be read from this deck, so all of its slides have been "
+            "indexed as a single section. It is searchable, but no rules could be "
+            "located in it and it cannot be assessed against.",
+        )
+        if not out.sections:
+            return out
+
+    heartbeat()
+
+    for figure in deck.figures:
+        index = _section_for_page(out.sections, figure.page)
+        out.figures.setdefault(index, []).append(figure)
+
+    if deck.undecodable_images:
+        out.issue(
+            "low",
+            "figure_undecodable",
+            f"{deck.undecodable_images} image(s) are in a vector format this pipeline "
+            "cannot read (usually EMF/WMF, from a drawing pasted out of Office). They "
+            "are not indexed. Re-save them as PNG in the deck to include them.",
+        )
+
+    _flag_missed_obligations(out)
+    _flag_empty_sections(out)
+    _flag_no_clauses(out, document)
     return out
 
 
@@ -560,6 +745,11 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
             UPDATE "document"
                SET "title" = %s, "sensitivity" = %s, "pageCount" = %s,
                    "profile" = %s, "status" = 'chunking', "failureReason" = NULL,
+                   "structureInferred" = %s,
+                   -- A re-parse produces different clauses, so an earlier
+                   -- sign-off no longer describes what is in the database.
+                   -- Confirmation is cleared and has to be given again.
+                   "structureConfirmedAt" = NULL, "structureConfirmedBy" = NULL,
                    "updatedAt" = now()
              WHERE "id" = %s
             """,
@@ -568,6 +758,7 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
                 out.sensitivity,
                 out.page_count,
                 out.profile,
+                out.structure_inferred,
                 job.document_id,
             ),
         )

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { resolveActive } from "@/lib/ingest/org";
 import { loadAssessment } from "@/lib/tech-stack/load";
 import { AssessmentForm } from "./AssessmentForm";
 
@@ -14,11 +15,11 @@ export default async function TechStackPage() {
   if (!session) redirect("/sign-in");
 
   const user = session.user as typeof session.user & { company?: string };
-  const { input, savedAt, status } = await loadAssessment({
-    id: user.id,
-    name: user.name,
-    company: user.company,
-  });
+  const organisation = await resolveActive(user);
+  const { input, savedAt, status } = await loadAssessment(
+    { id: user.id, name: user.name, company: user.company },
+    organisation.id,
+  );
 
   return (
     <>

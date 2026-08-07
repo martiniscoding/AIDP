@@ -16,6 +16,7 @@ type Receipt = {
 };
 
 const MAX_BYTES = 64 * 1024 * 1024;
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -72,10 +73,23 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
 
       for (const file of files) {
         const id = `${file.name}-${file.size}-${Math.random()}`;
-        const isPdf =
-          file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-        if (!isPdf) {
-          rejected.push({ id, name: file.name, size: file.size, state: "error", message: "Not a PDF" });
+        // A cheap first pass so an obvious mistake never costs an upload. The
+        // server decides for real, from the bytes — a renamed file passes here
+        // and is caught there.
+        const name = file.name.toLowerCase();
+        const supported =
+          file.type === "application/pdf" ||
+          file.type === PPTX_MIME ||
+          name.endsWith(".pdf") ||
+          name.endsWith(".pptx");
+        if (!supported) {
+          rejected.push({
+            id,
+            name: file.name,
+            size: file.size,
+            state: "error",
+            message: "Not a PDF or PowerPoint",
+          });
         } else if (file.size > MAX_BYTES) {
           rejected.push({
             id,
@@ -141,7 +155,7 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept={`application/pdf,.pdf,${PPTX_MIME},.pptx`}
         multiple
         className="sr-only"
         onChange={(event) => {
@@ -211,7 +225,7 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
                   : label}
             </span>
             <span className="text-[11.5px] text-white/35">
-              {busy ? "Queued in order" : `PDF · up to ${formatSize(MAX_BYTES)}`}
+              {busy ? "Queued in order" : `PDF or PPTX · up to ${formatSize(MAX_BYTES)}`}
             </span>
           </span>
         </span>

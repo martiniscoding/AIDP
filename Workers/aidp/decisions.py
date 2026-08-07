@@ -33,7 +33,6 @@ import psycopg
 
 from . import db, logs
 from .ai import embeddings
-from .config import get_config
 
 log = logs.get(__name__)
 

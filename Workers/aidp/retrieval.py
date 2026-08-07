@@ -49,7 +49,21 @@ class Candidate:
 
     @property
     def excerpt(self) -> str:
-        body = " ".join(self.text.split())
+        """The passage as a reviewer will read it.
+
+        Prose can have its line breaks collapsed — a PDF wraps mid-sentence and
+        those breaks mean nothing. A table's rows are the opposite: which value
+        sits in which column *is* the content. Collapsing them fuses the last
+        cell of one row onto the first of the next ("Example Table",
+        "CustomerOrders Column"), and the result cannot be untangled afterwards
+        because the join is indistinguishable from a two-word cell.
+        """
+        if self.source_kind in ("table", "table_row"):
+            body = "\n".join(
+                " ".join(line.split()) for line in self.text.splitlines() if line.strip()
+            )
+        else:
+            body = " ".join(self.text.split())
         return body if len(body) <= 700 else body[:700] + "…"
 
 
@@ -67,19 +81,21 @@ WITH dense AS (
 lexical AS (
     SELECT c."id",
            ROW_NUMBER() OVER (
-             ORDER BY ts_rank_cd(to_tsvector('english', c."text"), q.query) DESC
+             ORDER BY ts_rank_cd(
+               aidp_chunk_vector(c."headingPath", c."text"), q.query
+             ) DESC
            ) AS rank
       FROM "chunk" c
-     CROSS JOIN (
-       -- OR, not AND. plainto_tsquery joins every lexeme with '&', and a query
-       -- built from a whole clause carries a dozen of them — requiring all to
-       -- co-occur inside one document returns nothing at all, which is exactly
-       -- what it did: every hit came back dense-only.
-       SELECT replace(plainto_tsquery('english', %(query)s)::text, '&', '|')::tsquery AS query
-     ) q
+     -- Both functions are defined in the migration, not here, because
+     -- src/lib/ingest/retrieval.ts runs the same search over the same index and
+     -- the two had already drifted once. `aidp_search_query` ORs the lexemes
+     -- (a clause AND-ed matches nothing) and drops the corpus-wide filler that
+     -- made the query match 60% of a document; `aidp_chunk_vector` weights the
+     -- heading path above the body and is what the GIN index is built on.
+     CROSS JOIN (SELECT aidp_search_query(%(query)s) AS query) q
      WHERE c."organisationId" = %(org)s
        AND c."documentId" = %(doc)s
-       AND to_tsvector('english', c."text") @@ q.query
+       AND aidp_chunk_vector(c."headingPath", c."text") @@ q.query
      LIMIT %(pool)s
 ),
 fused AS (

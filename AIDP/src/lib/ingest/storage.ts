@@ -35,9 +35,13 @@ export function sha256(bytes: Uint8Array): string {
  * Under `local` this is the path. Under `uploadthing` the service issues its
  * own key on upload and that is what gets stored — this only shapes the
  * filename, so a file listing in their dashboard is legible.
+ *
+ * The extension is passed in rather than assumed. It is not decoration: the
+ * worker reads it as a fallback when deciding which parser to run, for rows
+ * written before `mimeType` carried anything but the PDF default.
  */
-export function documentKey(organisationId: string, hash: string): string {
-  return `documents/${organisationId}/${hash}.pdf`;
+export function documentKey(organisationId: string, hash: string, extension = "pdf"): string {
+  return `documents/${organisationId}/${hash}.${extension}`;
 }
 
 function resolveLocal(key: string): string {

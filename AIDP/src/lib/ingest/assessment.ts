@@ -77,6 +77,29 @@ export async function resolveFramework(organisationId: string): Promise<Framewor
   };
 }
 
+/**
+ * Reference documents whose structure a model read and nobody has confirmed.
+ *
+ * Assessment is blocked while any of these are in the framework. The rules in
+ * them are a proposal: good enough to be worth having, not good enough to
+ * generate findings a client will act on before a person has looked. A warning
+ * would not do — warnings get scrolled past, and the cost here is a confident
+ * report citing clauses nobody has ever read.
+ */
+export async function unconfirmedStructure(organisationId: string) {
+  return prisma.document.findMany({
+    where: {
+      organisationId,
+      role: "reference",
+      status: "ready",
+      structureInferred: true,
+      structureConfirmedAt: null,
+    },
+    select: { id: true, title: true },
+    orderBy: { title: "asc" },
+  });
+}
+
 export async function countClauses(frameworkId: string): Promise<number> {
   return prisma.clause.count({
     where: {

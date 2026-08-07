@@ -81,7 +81,7 @@ Reference: {reference}
 <extracts_from_submitted_document>
 {extracts}
 </extracts_from_submitted_document>
-{precedents}
+{precedents}{technology}
 Choose exactly one verdict:
 
 - "covered"      — the extracts address every requirement in the clause
@@ -106,7 +106,11 @@ Rules that matter more than being decisive:
 3. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 4. confidence is your own certainty in the verdict, 0 to 1.
-5. Standing decisions, where any are given, are this organisation's own settled
+5. Technology context, where given, is background only. It may make a rationale
+   or a recommendation concrete — naming the control this organisation would
+   actually use — but it is never evidence. Never reach a verdict from it: the
+   design either says a thing or it does not, whatever the organisation runs.
+6. Standing decisions, where any are given, are this organisation's own settled
    rulings and outrank your general judgement about what good practice looks
    like. If one resolves the clause, follow it and list its id in
    appliedDecisions. Never list an id you were not given. A decision marked
@@ -189,7 +193,16 @@ class LLM(Protocol):
     ) -> str: ...
     def contextualise(self, document_text: str, chunk_text: str, *, title: str) -> str: ...
     def judge(
-        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+        self,
+        *,
+        reference: str,
+        clause: str,
+        extracts: str,
+        precedents: str = "",
+        technology: str = "",
+    ) -> dict: ...
+    def structure(
+        self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
     ) -> dict: ...
 
 
@@ -213,6 +226,77 @@ def _precedent_block(precedents: str) -> str:
         f"{precedents}\n"
         "</standing_decisions>\n"
     )
+
+
+
+_STRUCTURE_PROMPT = """\
+Below are numbered lines from a standards document whose formatting carries no \
+structure - every line looks the same. Identify what each line is.
+
+Return one marker per line that starts something. Use these roles:
+
+- "heading"     names a topic and starts a new rule. Short, no full stop, often
+                numbered. "Access Control", "3.2 Secure Remote Access".
+- "statement"   the rule itself - a sentence asserting an obligation.
+- "rationale"   why the rule exists.
+- "requirement" a specific testable obligation under the rule, usually one of
+                several, often a bullet.
+- "guidance"    how to implement it. Only when the document plainly separates
+                this from the requirements.
+
+Rules that matter:
+
+1. Only ever return line numbers between {first_line} and {last_line}. Never a
+   number outside that range, and never a line that is not shown.
+2. Mark only the line where something STARTS. A sentence continuing onto the
+   next line needs no marker - the continuation belongs to whatever started it.
+3. Do not mark a line that is a label on its own, like "Requirements:" - the
+   requirements themselves are what get marked.
+4. A table row is not a heading and not a requirement. Leave it unmarked.
+5. A rule constrains what a design must DO. A sentence that describes what the
+   document is, or what it covers, is not a rule. "This document defines the
+   data standards..." and "These standards apply to all systems..." are scope,
+   not obligations - mark the heading and leave them unmarked. Purpose, Scope,
+   Introduction, Definitions and Glossary sections almost never contain rules.
+6. If this window contains no rules at all - a contents page, a glossary, a
+   revision table, front matter - return only the headings and no statements.
+   That is a correct answer and is expected. Do not invent structure that is
+   not there, and do not promote a description to a rule to fill a gap.
+{tags}
+Reply with JSON only:
+{{"markers": [{{"line": 12, "role": "heading"}}, {{"line": 13, "role": "statement"}}]}}
+
+<lines>
+{numbered}
+</lines>"""
+
+_STRUCTURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "markers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "line": {"type": "integer"},
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "heading",
+                            "statement",
+                            "rationale",
+                            "requirement",
+                            "guidance",
+                        ],
+                    },
+                },
+                "required": ["line", "role"],
+                "propertyOrdering": ["line", "role"],
+            },
+        }
+    },
+    "required": ["markers"],
+}
 
 
 _VERDICT_SCHEMA = {
@@ -324,7 +408,13 @@ class GeminiLLM:
 
 
     def judge(
-        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+        self,
+        *,
+        reference: str,
+        clause: str,
+        extracts: str,
+        precedents: str = "",
+        technology: str = "",
     ) -> dict:
         text = self._generate(
             [
@@ -334,6 +424,7 @@ class GeminiLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
+                        technology=technology,
                     )
                 }
             ],
@@ -343,6 +434,29 @@ class GeminiLLM:
         )
         if not text:
             raise RuntimeError("gemini returned an empty verdict")
+        return _parse_json(text)
+
+    def structure(
+        self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
+    ) -> dict:
+        text = self._generate(
+            [
+                {
+                    "text": _STRUCTURE_PROMPT.format(
+                        numbered=numbered,
+                        first_line=first_line,
+                        last_line=last_line,
+                        tags=tags,
+                    )
+                }
+            ],
+            system=None,
+            # Markers are terse, but a dense window can carry a hundred of them.
+            max_tokens=4096,
+            schema=_STRUCTURE_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no structure")
         return _parse_json(text)
 
 
@@ -430,7 +544,13 @@ class AnthropicLLM:
 
 
     def judge(
-        self, *, reference: str, clause: str, extracts: str, precedents: str = ""
+        self,
+        *,
+        reference: str,
+        clause: str,
+        extracts: str,
+        precedents: str = "",
+        technology: str = "",
     ) -> dict:
         data = _post(
             self.BASE,
@@ -447,11 +567,38 @@ class AnthropicLLM:
                             clause=clause,
                             extracts=extracts,
                             precedents=_precedent_block(precedents),
+                            technology=technology,
                         ),
                     },
                     # Prefilling the opening brace is the closest equivalent to
                     # Gemini's structured output: it removes the "Here is the
                     # JSON:" preamble that otherwise breaks parsing.
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def structure(
+        self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
+    ) -> dict:
+        data = _post(
+            self.BASE,
+            self._headers(),
+            {
+                "model": self.model,
+                "max_tokens": 4096,
+                "temperature": 0,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": _STRUCTURE_PROMPT.format(
+                            numbered=numbered,
+                            first_line=first_line,
+                            last_line=last_line,
+                            tags=tags,
+                        ),
+                    },
                     {"role": "assistant", "content": "{"},
                 ],
             },
@@ -520,9 +667,26 @@ def contextualise(document_text: str, chunk_text: str, *, title: str) -> str:
     return client().contextualise(document_text, chunk_text, title=title)
 
 
-def judge(*, reference: str, clause: str, extracts: str, precedents: str = "") -> dict:
+def structure(*, numbered: str, first_line: int, last_line: int, tags: str = "") -> dict:
+    return client().structure(
+        numbered=numbered, first_line=first_line, last_line=last_line, tags=tags
+    )
+
+
+def judge(
+    *,
+    reference: str,
+    clause: str,
+    extracts: str,
+    precedents: str = "",
+    technology: str = "",
+) -> dict:
     return client().judge(
-        reference=reference, clause=clause, extracts=extracts, precedents=precedents
+        reference=reference,
+        clause=clause,
+        extracts=extracts,
+        precedents=precedents,
+        technology=technology,
     )
 
 

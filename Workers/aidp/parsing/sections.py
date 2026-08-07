@@ -152,3 +152,35 @@ def detect_profile(sections: list[Section]) -> str:
     if prose:
         return "mixed"
     return "table-principle"
+
+
+def whole_document(lines: list[Line], *, document_title: str) -> list[Section]:
+    """One section covering everything, for a document with no headings at all.
+
+    The floor beneath every other strategy. Without it, a document whose
+    typography carries no heading styles produces no sections, then no chunks,
+    and the chunk stage fails the upload outright — so a perfectly readable
+    standard becomes worth exactly nothing.
+
+    One section is enough to make the text retrievable. It will rarely yield a
+    clause, so the document cannot be assessed *against*; it can still be
+    searched and cited as reference material, which is a great deal better than
+    a rejected file. The parse stage raises `no_sections` regardless, so nobody
+    mistakes this for a successful parse.
+    """
+    body = [line for line in lines if line.text.strip()]
+    if not body:
+        return []
+
+    return [
+        Section(
+            ordinal=1,
+            number_text=None,
+            title=document_title,
+            depth=1,
+            heading_path=document_title,
+            page_start=body[0].page,
+            page_end=body[-1].page,
+            lines=body,
+        )
+    ]

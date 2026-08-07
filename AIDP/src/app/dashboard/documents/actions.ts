@@ -6,8 +6,10 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { resolveFramework } from "@/lib/ingest/assessment";
+import { resolveFramework, unconfirmedStructure } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
+import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
+import { isOutcome } from "@/lib/ingest/outcomes-vocabulary";
 import { remove } from "@/lib/ingest/storage";
 
 export type ActionResult = { ok: boolean; message: string; runId?: string };
@@ -159,6 +161,22 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
       };
     }
 
+    // A model-read standard is a proposal until a person confirms it. Blocking
+    // here rather than warning: a report citing clauses nobody has checked is
+    // worse than no report, and this is the last point at which it can be
+    // stopped.
+    const unconfirmed = await unconfirmedStructure(document.organisationId);
+    if (unconfirmed.length > 0) {
+      const names = unconfirmed.map((d) => d.title).join(", ");
+      return {
+        ok: false,
+        message:
+          unconfirmed.length === 1
+            ? `The structure of "${names}" was read by a model and has not been confirmed. Open it and confirm the rules before assessing against them.`
+            : `${unconfirmed.length} reference standards had their structure read by a model and are not yet confirmed: ${names}. Confirm them before assessing.`,
+      };
+    }
+
     const framework = await resolveFramework(document.organisationId);
     if (framework.clauseCount === 0) {
       return {
@@ -218,6 +236,98 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
  * never overwritten — `verdict` stays, `reviewerVerdict` sits beside it, so the
  * disagreement remains visible.
  */
+/**
+ * Record that a person has checked a model-read structure.
+ *
+ * Deliberately coarse: one sign-off for the document, not per clause. The
+ * reviewer is confirming that the rules we extracted are the rules their
+ * standard contains — a judgement about the whole reading, not a hundred
+ * separate ones. Anything wrong at that point is fixed by correcting the source
+ * document and reprocessing, which clears this again.
+ */
+export async function confirmStructure(documentId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { organisationId: true, title: true, structureInferred: true },
+    });
+    if (!document) return { ok: false, message: "That document no longer exists." };
+    await requireMembership(user.id, document.organisationId);
+
+    if (!document.structureInferred) {
+      return { ok: false, message: "That document's structure was parsed, not inferred." };
+    }
+
+    await prisma.document.update({
+      where: { id: documentId },
+      data: {
+        structureConfirmedAt: new Date(),
+        structureConfirmedBy: user.name || user.email,
+      },
+    });
+
+    revalidatePath(`/dashboard/documents/${documentId}`);
+    revalidatePath("/dashboard/documents");
+    return { ok: true, message: `Confirmed. "${document.title}" can now be assessed against.` };
+  } catch (error) {
+    if (error instanceof NotAMember) {
+      return { ok: false, message: "You do not have access to that document." };
+    }
+    return { ok: false, message: "Could not confirm that structure." };
+  }
+}
+
+/**
+ * Record what was decided about a submission.
+ *
+ * The end of the loop: the assessment says whether a design meets the standard,
+ * this says what happens to it. Append-only, so an escalation followed by the
+ * board's ruling reads as a sequence rather than the second overwriting the
+ * first.
+ */
+export async function recordOutcome(
+  runId: string,
+  decision: string,
+  note: string,
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (!isOutcome(decision)) {
+      return { ok: false, message: "That is not a decision this system records." };
+    }
+
+    const outcome = await recordRunOutcome(
+      user.id,
+      runId,
+      decision,
+      note,
+      user.name || user.email,
+    );
+
+    const run = await prisma.assessmentRun.findUnique({
+      where: { id: runId },
+      select: { documentId: true },
+    });
+    if (run) revalidatePath(`/dashboard/documents/${run.documentId}`);
+    revalidatePath("/dashboard/documents");
+
+    const said = {
+      approved: "Approved. The decision and the report behind it are on record.",
+      revise: "Sent back for revision.",
+      escalated: "Escalated to the architecture review board.",
+    } as const;
+    return { ok: true, message: said[outcome.decision] };
+  } catch (error) {
+    if (error instanceof OutcomeRefused) return { ok: false, message: error.message };
+    if (error instanceof NotAMember) {
+      return { ok: false, message: "You do not have access to that assessment." };
+    }
+    return { ok: false, message: "Could not record that decision." };
+  }
+}
+
 export async function reviewFinding(
   findingId: string,
   decision: {
@@ -256,12 +366,23 @@ export async function reviewFinding(
     // rather than thrown: losing the reviewer's verdict because an embedding
     // call timed out would be a bad trade.
     let remembered = false;
+    let promotionError: string | null = null;
     if (decision.remember) {
       try {
         await promoteFinding(user.id, findingId, {}, user.name || user.email);
         remembered = true;
-      } catch {
-        remembered = false;
+      } catch (error) {
+        // Swallowed silently once, and it cost a debugging session: the register
+        // sat empty, the reviewer was told to "try again from the register", and
+        // there was no record anywhere of why it had failed. The promotion still
+        // must not take the review down with it — but it has to leave a trace,
+        // and tell the reviewer something they can act on.
+        promotionError = error instanceof Error ? error.message : String(error);
+        console.error("[reviewFinding] could not promote finding to a decision", {
+          findingId,
+          organisationId: finding.run.organisationId,
+          error: promotionError,
+        });
       }
     }
 
@@ -274,7 +395,9 @@ export async function reviewFinding(
       ok: true,
       message: remembered
         ? `${verb}, and added to your decisions.`
-        : `${verb}. It could not be added to your decisions — try again from the register.`,
+        : `${verb}. It could not be added to your decisions: ${
+            promotionError ?? "unknown error"
+          }. The reason is recorded either way — add it from the register.`,
     };
   } catch (error) {
     if (error instanceof NotAMember) {

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, Check, Layers } from "lucide-react";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { auth } from "@/lib/auth";
+import { resolveActive } from "@/lib/ingest/org";
 import {
   BI_REPORTING,
   DATA_SOURCES,
@@ -20,11 +21,11 @@ export default async function DashboardPage() {
   if (!session) redirect("/sign-in");
 
   const user = session.user as typeof session.user & { company?: string };
-  const { input, status } = await loadAssessment({
-    id: user.id,
-    name: user.name,
-    company: user.company,
-  });
+  const organisation = await resolveActive(user);
+  const { input, status } = await loadAssessment(
+    { id: user.id, name: user.name, company: user.company },
+    organisation.id,
+  );
 
   const progress = sectionProgress(input);
   const done = progress.filter((section) => section.done).length;
@@ -46,8 +47,8 @@ export default async function DashboardPage() {
         </h1>
         <p className="mt-2 text-[15px] text-white/50">
           {done === progress.length
-            ? "Your technology reference is complete. Update it whenever your stack changes."
-            : "Start with your technology reference — it shapes every recommendation we make."}
+            ? "Your technology reference is complete. Every assessment is read against it — update it whenever your stack changes."
+            : "Start with your technology reference. Once it is saved, assessments weigh their findings against the platforms you actually run."}
         </p>
       </header>
 

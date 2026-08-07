@@ -9,9 +9,12 @@ import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment"
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
+import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember } from "@/lib/ingest/org";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Figures, type FigureView } from "./Figures";
+import { ConfirmStructure } from "./ConfirmStructure";
+import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
 import { PipelineWatcher } from "../PipelineWatcher";
 
@@ -84,6 +87,24 @@ export default async function DocumentPage({
   // Which of these reviews were already kept as decisions, so the report can
   // say so rather than inviting the same ruling to be recorded twice.
   const decisionsInForce = await countActive(document.organisationId);
+
+  // A decision can only be taken on a finished run, so the history is only
+  // fetched for one.
+  const outcomes: OutcomeView[] =
+    run && run.state === "complete"
+      ? (await historyForRun(run.id)).map((o) => ({
+          id: o.id,
+          decision: o.decision,
+          note: o.note,
+          decidedByName: o.decidedByName,
+          createdAt: o.createdAt.toISOString(),
+          snapshot: o.snapshot,
+        }))
+      : [];
+  const unreviewed = findings.filter((f) => f.reviewerState === "pending").length;
+  const openFindings = findings.filter(
+    (f) => f.verdict === "contradicts" || f.verdict === "absent",
+  ).length;
   const promoted = await promotedFrom(
     document.organisationId,
     findings.map((f) => f.id),
@@ -151,6 +172,17 @@ export default async function DocumentPage({
         </p>
       )}
 
+      {/* Above the statistics on purpose: the counts below are meaningless
+          until someone has agreed the reading that produced them. */}
+      {document.structureInferred && (
+        <ConfirmStructure
+          documentId={document.id}
+          clauseCount={clauses}
+          confirmedAt={document.structureConfirmedAt?.toISOString() ?? null}
+          confirmedBy={document.structureConfirmedBy}
+        />
+      )}
+
       <dl className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Sections" value={document.sections.length} />
         <Stat label="Clauses" value={clauses} />
@@ -165,6 +197,18 @@ export default async function DocumentPage({
           counts={counts}
           findings={findingViews}
           decisionsInForce={decisionsInForce}
+        />
+      )}
+
+      {/* The decision comes after the findings: it is the conclusion drawn from
+          them, and offering it above the evidence invites a decision taken
+          without reading any. */}
+      {assessed && run && run.state === "complete" && (
+        <Decide
+          runId={run.id}
+          history={outcomes}
+          unreviewed={unreviewed}
+          open={openFindings}
         />
       )}
 

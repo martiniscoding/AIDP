@@ -33,11 +33,25 @@ function createPrismaClient() {
 /**
  * Fingerprint of the generated client's schema.
  *
- * `Prisma.ModelName` is generated from schema.prisma, so this string changes
- * the moment a model is added or removed — which is exactly when a cached
- * client goes stale. See the note on `globalForPrisma` below.
+ * Everything here is generated from schema.prisma, so this string changes when
+ * the generated client does — which is exactly when a cached one goes stale.
+ * See the note on `globalForPrisma` below.
+ *
+ * `Prisma.ModelName` alone is not enough: it moves when a model is added or
+ * removed, and sits perfectly still when a field is added to one that already
+ * exists. That is the more common migration by far, and it produced a cached
+ * client that knew `TechAssessment` but not its new `organisationId` — a query
+ * rejected as "Unknown argument" against a column the database really had.
+ *
+ * Each model's `*ScalarFieldEnum` lists its own fields, so folding those in
+ * catches field-level drift too. Relation fields still aren't listed, but a new
+ * relation brings a foreign key or a new model with it, and both show up here.
  */
-const schemaFingerprint = Object.keys(Prisma.ModelName).sort().join(",");
+const schemaFingerprint = Object.entries(Prisma as Record<string, unknown>)
+  .filter(([name]) => name.endsWith("ScalarFieldEnum"))
+  .map(([name, fields]) => `${name}(${Object.keys(fields as object).sort().join(",")})`)
+  .sort()
+  .join(";");
 
 /**
  * One client per process. Next.js reloads modules on every edit in dev, and a

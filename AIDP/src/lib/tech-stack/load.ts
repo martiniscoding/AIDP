@@ -8,15 +8,26 @@ import type { AssessmentInput, PlatformInput } from "./schema";
  * Server-only — it touches Prisma. Both the overview card and the form itself
  * go through here so they can never disagree about completion.
  */
-export async function loadAssessment(user: {
-  id: string;
-  name?: string | null;
-  company?: string | null;
-}): Promise<{ input: AssessmentInput; savedAt: string | null; status: string }> {
-  const record = await prisma.techAssessment.findUnique({
-    where: { userId: user.id },
-    include: { platforms: { orderBy: { sortOrder: "asc" } } },
-  });
+export async function loadAssessment(
+  user: { id: string; name?: string | null; company?: string | null },
+  organisationId?: string,
+): Promise<{ input: AssessmentInput; savedAt: string | null; status: string }> {
+  // Keyed on the organisation. The `userId` fallback is for a reference saved
+  // before this was organisation-scoped by someone who has no membership yet —
+  // it keeps their answers on screen rather than showing them a blank form.
+  const record = organisationId
+    ? ((await prisma.techAssessment.findUnique({
+        where: { organisationId },
+        include: { platforms: { orderBy: { sortOrder: "asc" } } },
+      })) ??
+      (await prisma.techAssessment.findFirst({
+        where: { userId: user.id, organisationId: null },
+        include: { platforms: { orderBy: { sortOrder: "asc" } } },
+      })))
+    : await prisma.techAssessment.findFirst({
+        where: { userId: user.id },
+        include: { platforms: { orderBy: { sortOrder: "asc" } } },
+      });
 
   return {
     input: {

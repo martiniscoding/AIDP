@@ -61,7 +61,9 @@ def _stub_embed(texts, input_type="document"):  # noqa: ARG001
 _scripted: dict[str, dict] = {}
 
 
-def _stub_judge(*, reference: str, clause: str, extracts: str, precedents: str = ""):  # noqa: ARG001
+def _stub_judge(
+    *, reference: str, clause: str, extracts: str, precedents: str = "", technology: str = ""
+):  # noqa: ARG001
     # Longest key first. Matching on substrings otherwise lets one clause name
     # shadow another ("grounded-covered" contains no other key, but the earlier
     # "cited-covered" was a substring of "uncited-covered" and silently returned

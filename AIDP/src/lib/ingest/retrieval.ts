@@ -162,17 +162,21 @@ export async function search(options: SearchOptions): Promise<Hit[]> {
       lexical AS (
         SELECT c."id",
                ROW_NUMBER() OVER (
-                 ORDER BY ts_rank_cd(to_tsvector('english', c."text"), q.query) DESC
+                 ORDER BY ts_rank_cd(
+                   aidp_chunk_vector(c."headingPath", c."text"), q.query
+                 ) DESC
                ) AS rank
           FROM "chunk" c
-         CROSS JOIN (
-           -- OR, not AND. plainto_tsquery joins every lexeme with '&', so a
-           -- long question requires all of them to co-occur in one chunk and
-           -- matches nothing. Kept in step with Workers/aidp/retrieval.py.
-           SELECT replace(plainto_tsquery('english', ${query})::text, '&', '|')::tsquery AS query
-         ) q
+         -- Defined in migration 20260807090000_lexical_weighting, and shared
+         -- with Workers/aidp/retrieval.py rather than restated here — these two
+         -- queries drifted apart once already. aidp_search_query ORs the
+         -- lexemes and strips corpus-wide filler ('data', 'must', 'standard');
+         -- aidp_chunk_vector weights the heading path above the body and is
+         -- the expression chunk_fts_idx is built on, so it must match exactly
+         -- or the index goes unused.
+         CROSS JOIN (SELECT aidp_search_query(${query}) AS query) q
          WHERE c."organisationId" = ${organisationId}
-           AND to_tsvector('english', c."text") @@ q.query
+           AND aidp_chunk_vector(c."headingPath", c."text") @@ q.query
            ${documentFilter}
            ${sensitivityFilter}
          LIMIT ${pool}

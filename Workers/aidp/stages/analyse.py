@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from psycopg.types.json import Jsonb
 
-from .. import db, decisions, logs, queue, retrieval
+from .. import db, decisions, logs, queue, retrieval, techstack
 from ..ai import llm
 from ..config import get_config
 from ..queue import Job
@@ -75,6 +75,9 @@ def handle(job: Job, heartbeat) -> None:
         if run is None:
             raise RuntimeError(f"assessment run {run_id} no longer exists")
         clauses = _framework_clauses(conn, run["frameworkId"])
+        # Once per run: the same string for every clause, so fetching it inside
+        # the loop would be a hundred round trips for one row.
+        technology = techstack.for_organisation(conn, run["organisationId"])
         done = {
             r["clauseId"]
             for r in db.query(
@@ -97,11 +100,19 @@ def handle(job: Job, heartbeat) -> None:
         pending=len(pending),
     )
 
+    if technology:
+        logs.info(log, "technology reference in scope", runId=run_id, chars=len(technology))
+
     for index, clause in enumerate(pending, start=1):
-        _assess_one(run, clause)
+        _assess_one(run, clause, technology)
         heartbeat()
-        if index % 5 == 0 or index == len(pending):
-            _progress(run_id, len(done) + index)
+        # Every clause, not every fifth. A clause takes around fifteen seconds,
+        # so batching the write held the progress bar still for over a minute at
+        # a time — long enough that a run in perfect health reads as a hung one,
+        # which is what a progress bar exists to rule out. The cost is one small
+        # UPDATE per clause against a row already in cache, spaced fifteen
+        # seconds apart; the model call beside it dwarfs it.
+        _progress(run_id, len(done) + index)
 
     _complete(job, run_id)
 
@@ -131,7 +142,7 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
     )
 
 
-def _assess_one(run: dict, clause: dict) -> None:
+def _assess_one(run: dict, clause: dict, technology: str = "") -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
@@ -187,6 +198,7 @@ def _assess_one(run: dict, clause: dict) -> None:
             clause=_render_clause(clause),
             extracts=_render_extracts(candidates),
             precedents=decisions.render(precedents),
+            technology=techstack.render(technology),
         )
     except Exception as exc:  # noqa: BLE001 — one clause must not sink the run
         logs.warn(log, "judge failed for clause", clauseId=clause["id"], error=str(exc)[:200])

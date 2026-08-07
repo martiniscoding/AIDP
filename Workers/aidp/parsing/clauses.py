@@ -24,18 +24,37 @@ from dataclasses import dataclass, field
 
 from .sections import Section
 
+# The label set has to match `_CLAUSE_LABEL` in sections.py, which already knew
+# about singular forms and about "Implications" — the word TOGAF actually
+# specifies for this field. This module did not, so a TOGAF-worded document
+# produced a clause with no requirements at all and the obligations silently
+# absorbed into the rationale: a clause that looks extracted and is missing its
+# testable half.
 _LABELS = {
-    "statement": re.compile(r"\bStatement\s*:?\s*", re.IGNORECASE),
-    "rationale": re.compile(r"\bRationale\s*:?\s*", re.IGNORECASE),
-    "requirements": re.compile(r"\bRequirements\s*:?\s*", re.IGNORECASE),
-    "guidance": re.compile(
-        r"\bApplicable\s+Patterns?\s*(?:/|and)?\s*(?:Technology\s+)?Guidance\s*:?\s*",
-        re.IGNORECASE,
+    "statement": re.compile(r"^\s*Statements?\s*:?\s*", re.IGNORECASE | re.MULTILINE),
+    "rationale": re.compile(r"^\s*Rationales?\s*:?\s*", re.IGNORECASE | re.MULTILINE),
+    # "Implications" is TOGAF's own term for this field; both land here.
+    "requirements": re.compile(
+        r"^\s*(?:Requirements?|Implications?)\s*:?\s*", re.IGNORECASE | re.MULTILINE
     ),
+    "guidance": re.compile(
+        r"^\s*Applicable\s+Patterns?\s*(?:/|and)?\s*(?:Technology\s+)?Guidance\s*:?\s*",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    # Recognised only so it acts as a boundary. Nothing reads this field — the
+    # point is that a trailing note stops being swallowed by the field above it.
+    "note": re.compile(r"^\s*Notes?\s*:", re.IGNORECASE | re.MULTILINE),
 }
 
 # Word emits bullets as their own glyph; some exports fall back to a hyphen.
 _BULLET = re.compile(r"^\s*(?:[•▪◦‣·»–—-]|\(?[a-z0-9]{1,3}[.)])\s+")
+
+# ...and some put the glyph on a line of its own, with the text on the next one.
+# PyMuPDF reports those as two lines, so the bullet arrives with no text after it
+# and `_BULLET` — which requires trailing whitespace — never matches. Every
+# requirement in the document then glues onto its predecessor as a continuation,
+# and a clause that states four separate obligations is stored as one.
+_BULLET_ALONE = re.compile(r"^\s*[•▪◦‣·»–—-]\s*$")
 
 
 @dataclass
@@ -78,12 +97,23 @@ def _bullets(block: str) -> list[str]:
     match at retrieval time.
     """
     items: list[str] = []
+    # Set when a glyph arrived alone: the next line with text opens a new item
+    # rather than continuing the previous one.
+    opening = False
+
     for raw in block.splitlines():
         line = raw.strip()
         if not line:
             continue
+        if _BULLET_ALONE.match(line):
+            opening = True
+            continue
         if _BULLET.match(line):
             items.append(_BULLET.sub("", line).strip())
+            opening = False
+        elif opening:
+            items.append(line)
+            opening = False
         elif items:
             items[-1] = f"{items[-1]} {line}".strip()
         else:

@@ -38,14 +38,18 @@ model User {
   sessions Session[]
   accounts Account[]
 
-  // One tech-stack assessment per account. See TechAssessment below.
-  assessment TechAssessment?
+  // Technology references this person has saved. Scoped to the organisation
+  // now, so one account can be the last editor of several.
+  assessment TechAssessment[]
 
   // Which customer organisations this person can see. Consultants span several.
   memberships Membership[]
 
   // Standing decisions this person has ruled on.
   decisions Decision[]
+
+  // Submissions this person has approved, sent back, or escalated.
+  outcomes SubmissionOutcome[]
 
   @@map("user")
 }
@@ -121,8 +125,22 @@ model Verification {
 model TechAssessment {
   id String @id @default(cuid())
 
-  // One assessment per user; the form upserts against this.
-  userId String @unique
+  /// One reference per *organisation*, not per person.
+  ///
+  /// It was keyed to the user originally, which put it out of reach of the
+  /// assessment pipeline: runs belong to an organisation, so "whose stack
+  /// applies to this run?" had no answer when two consultants shared a customer.
+  ///
+  /// Nullable because a person can fill this in before they have touched
+  /// anything that creates an organisation. Postgres permits many NULLs under a
+  /// unique index, so those rows coexist; they simply never reach an
+  /// assessment, which is correct — a stack belonging to no organisation cannot
+  /// describe one.
+  organisationId String?       @unique
+  organisation   Organisation? @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Who last saved it. Attribution only — no longer identity.
+  userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // 1 — Client information. Seeded from the sign-up record on first open, then
@@ -143,6 +161,16 @@ model TechAssessment {
 
   // 5 — Additional references and specific needs
   additionalNotes String @default("")
+
+  /// The reference rendered for the assessment prompt, written on every save.
+  ///
+  /// Denormalised because the option catalog is TypeScript
+  /// (src/lib/tech-stack/catalog.ts) and the worker is Python: the database
+  /// holds ids like "synapse", and only the app can turn those into "Azure
+  /// Synapse Analytics". Duplicating the catalog in the worker would be a
+  /// second copy to keep in step for no gain — same reasoning as `label` on
+  /// TechPlatformPreference below.
+  summary String @default("")
 
   // "draft" until the client presses Submit; they can still edit afterwards,
   // so this records intent rather than locking the row.
@@ -215,6 +243,8 @@ model Organisation {
   frameworks  Framework[]
   runs        AssessmentRun[]
   decisions   Decision[]
+  techStack   TechAssessment?
+  outcomes    SubmissionOutcome[]
 
   @@map("organisation")
 }
@@ -268,6 +298,18 @@ model Document {
   pageCount Int?
   // "prose-clause" | "table-principle" | "mixed" — detected, not declared.
   profile   String?
+
+  /// True when this document's structure was read by a model rather than parsed
+  /// from its own formatting — see Workers/aidp/parsing/ai_structure.py.
+  ///
+  /// A model reading a shapeless document is inference, however good it is. The
+  /// rules it produces are a proposal, and a framework built from an unreviewed
+  /// proposal would generate confident findings against clauses nobody has ever
+  /// checked. So this gates rather than warns: `startAssessment` refuses while
+  /// any reference document in the framework is inferred and unconfirmed.
+  structureInferred    Boolean   @default(false)
+  structureConfirmedAt DateTime?
+  structureConfirmedBy String?
 
   // "pending" | "parsing" | "chunking" | "embedding" | "ready" | "failed"
   status        String  @default("pending")
@@ -631,6 +673,7 @@ model AssessmentRun {
   completedAt DateTime?
 
   findings Finding[]
+  outcomes SubmissionOutcome[]
 
   @@index([organisationId, state])
   @@index([documentId])
@@ -765,4 +808,54 @@ model Decision {
   @@index([organisationId, status])
   @@index([organisationId, clauseRef])
   @@map("decision")
+}
+
+
+/// What was decided about a submission once its report was read.
+///
+/// The assessment answers "does this design meet the standard?". This answers
+/// "what happens now?", and it is the row a governance audit actually asks for:
+/// who accepted this design, when, and on what basis.
+///
+/// Append-only. An escalation is followed by the board's own decision, and a
+/// revised submission gets a new run with its own outcome, so the history is a
+/// sequence rather than a field to overwrite. The most recent row for a run is
+/// the current position.
+model SubmissionOutcome {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  runId String
+  run   AssessmentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  /// Denormalised so a document's decision history is one query, and so it
+  /// still reads correctly if the run is ever re-pointed.
+  documentId String
+
+  // "approved" | "revise" | "escalated"
+  decision String
+  /// Why. Required for revise and escalated — an instruction with no stated
+  /// basis is not an instruction, and a board asked to rule needs the question.
+  note     String @default("")
+
+  /// The report as it stood when this was decided: verdict counts, how many
+  /// findings were still unreviewed, the total. Captured because findings stay
+  /// editable afterwards, and "approved while three contradictions were
+  /// outstanding" is exactly what an audit needs to be able to see later.
+  snapshot Json @default("{}")
+
+  decidedById String?
+  decidedBy   User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+  /// Kept beside the relation so a decision still names its author after the
+  /// account is gone.
+  decidedByName String @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId, createdAt])
+  @@index([documentId, createdAt])
+  @@index([runId])
+  @@map("submission_outcome")
 }
