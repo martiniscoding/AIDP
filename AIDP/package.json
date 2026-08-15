@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.18"
+    "node": ">=22.18 <23"
   },
   "scripts": {
     "predev": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bootstrap-env.mts && prisma generate",
