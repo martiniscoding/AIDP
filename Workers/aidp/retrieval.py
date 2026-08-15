@@ -90,8 +90,15 @@ lexical AS (
      -- src/lib/ingest/retrieval.ts runs the same search over the same index and
      -- the two had already drifted once. `aidp_search_query` ORs the lexemes
      -- (a clause AND-ed matches nothing) and drops the corpus-wide filler that
-     -- made the query match 60% of a document; `aidp_chunk_vector` weights the
+     -- made the query match most of a document; `aidp_chunk_vector` weights the
      -- heading path above the body and is what the GIN index is built on.
+     --
+     -- Never write a percent sign anywhere in this string, comments included.
+     -- psycopg scans the whole statement for placeholders, so a stray one
+     -- either fails as a truncated placeholder or, worse, parses as a real
+     -- named one with no matching parameter. Both fail at execute time rather
+     -- than at import, so a comment can break retrieval in production. Spell
+     -- the word out instead.
      CROSS JOIN (SELECT aidp_search_query(%(query)s) AS query) q
      WHERE c."organisationId" = %(org)s
        AND c."documentId" = %(doc)s
