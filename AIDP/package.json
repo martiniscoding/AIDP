@@ -2,6 +2,9 @@
   "name": "dexter",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "predev": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bootstrap-env.mts && prisma generate",
     "dev": "next dev",

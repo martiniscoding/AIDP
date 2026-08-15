@@ -12,8 +12,16 @@ import { Prisma, PrismaClient } from "../../generated/prisma/client";
  * Better Auth uses transactions when it creates a user and their account row
  * together.
  *
- * Node 22+ (and Vercel's Node runtime) expose a global WebSocket, so no
- * `neonConfig.webSocketConstructor` shim is needed here.
+ * Node 22+ exposes a global WebSocket, so no `neonConfig.webSocketConstructor`
+ * shim is needed here — but that makes the Node version a hard requirement
+ * rather than a preference, which is why `engines` pins it in package.json.
+ *
+ * On Node 20 there is no global WebSocket and the adapter fails with a bare
+ * `ErrorEvent`: no message, no stack, because it is a DOM-style event and not
+ * an Error. Better Auth then logs that empty object and the failure looks like
+ * an auth problem when every query is in fact failing. If this ever needs to
+ * run on an older runtime, add `ws` and assign `neonConfig.webSocketConstructor`
+ * rather than unpinning.
  */
 
 function createPrismaClient() {
