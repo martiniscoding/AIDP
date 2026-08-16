@@ -49,16 +49,24 @@ export async function verifyWorkspace(company: string): Promise<WorkspaceCheck> 
     return { ok: false, message: "Could not sign you in." };
   }
 
+  // An operator signs in to their console, full stop.
+  //
+  // Decided here, before any workspace is looked up, because the answer must
+  // not depend on what memberships happen to exist. It did once: a stray
+  // membership on the operator's account made `requireAccess` succeed, which
+  // sent the sign-in down the customer path and demanded a company name the
+  // account does not have — locking the operator out with an error about a
+  // field that could never be right for them.
+  //
+  // An operator who also runs a workspace reaches it from the console's own
+  // navigation, which is a click, rather than through a rule that has to guess
+  // which of their two roles they meant.
+  if (user.isPlatformAdmin) return { ok: true, redirectTo: "/admin" };
+
   let access;
   try {
     access = await requireAccess();
   } catch (error) {
-    // A platform operator has no workspace, by design — see `admit`. That is
-    // the shape of the account, not a failed sign-in, and treating it as one
-    // locked the operator out of the product entirely: the refusal signed them
-    // straight back out of a session their password had just earned.
-    if (user.isPlatformAdmin) return { ok: true, redirectTo: "/admin" };
-
     await signOut();
     if (error instanceof NoAccess) return { ok: false, message: error.message };
     return { ok: false, message: "Could not sign you in." };

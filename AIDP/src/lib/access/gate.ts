@@ -211,6 +211,21 @@ export async function admit(user: {
   }
 
   // Nobody's employee — they are registering their own company.
+  //
+  // Instrumented because an operator reached this line in a browser while
+  // refusing to under curl, and no amount of reading explained it. Founding a
+  // workspace is rare and irreversible, so it is worth one log line saying who
+  // it was for and what the guard above saw.
+  console.info(
+    "[access] founding an organisation",
+    JSON.stringify({
+      userId: user.id,
+      email: user.email,
+      isPlatformAdmin: user.isPlatformAdmin ?? null,
+      company: user.company,
+      rosterRowsForEmail: rosters.length,
+    }),
+  );
   const organisation = await resolveActive(user);
   await prisma.rosterEntry.upsert({
     where: { organisationId_email: { organisationId: organisation.id, email } },
