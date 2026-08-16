@@ -94,6 +94,21 @@ export async function resolveActive(user: {
   const existing = await listForUser(user.id);
   if (existing.length > 0) return existing[0]!;
 
+  // A platform operator must never have a workspace conjured for them. The gate
+  // refuses this in `admit` before ever calling here, but the check is repeated
+  // at the point of creation because that is the only place it cannot be
+  // routed around — and getting it wrong is not recoverable by the next
+  // request. It has already happened once: a stale build served an older
+  // `admit`, and the operator's first visit to a dashboard put an organisation
+  // named after them into the customer list, indistinguishable from a real one.
+  const operator = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { isPlatformAdmin: true },
+  });
+  if (operator?.isPlatformAdmin) {
+    throw new NotAMember();
+  }
+
   const name = (user.company || user.name || "My organisation").trim();
   let slug = slugify(name);
 
