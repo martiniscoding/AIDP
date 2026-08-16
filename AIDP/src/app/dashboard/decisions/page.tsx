@@ -1,10 +1,7 @@
-import { headers } from "next/headers";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Gavel } from "lucide-react";
-import { auth } from "@/lib/auth";
 import { listDecisions } from "@/lib/ingest/decisions";
-import { resolveActive } from "@/lib/ingest/org";
+import { requireAccess } from "@/lib/access/gate";
 import { DecisionRegister } from "./DecisionRegister";
 
 export const dynamic = "force-dynamic";
@@ -12,11 +9,12 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Decisions" };
 
 export default async function DecisionsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/sign-in");
-
-  const user = session.user as typeof session.user & { company?: string };
-  const organisation = await resolveActive(user);
+  // `requireAccess` rather than a session lookup. A page renders concurrently
+  // with its layout, so the layout's refusal cannot be relied on to have run
+  // first — and `resolveActive` *creates* an organisation for anyone without
+  // one, which would hand a workspace to somebody an administrator had
+  // deliberately not admitted.
+  const { user, organisation } = await requireAccess();
   const decisions = await listDecisions(user.id, organisation.id);
 
   const active = decisions.filter((d) => d.status === "active");

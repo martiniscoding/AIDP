@@ -1,11 +1,8 @@
 import Link from "next/link";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { AlertTriangle, ArrowRight, BookMarked, FileSearch } from "lucide-react";
-import { auth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { listDocuments, PIPELINE, STATUS_LABEL, isTerminal } from "@/lib/ingest/documents";
-import { resolveActive } from "@/lib/ingest/org";
+import { requireAccess } from "@/lib/access/gate";
 import { PipelineWatcher } from "./PipelineWatcher";
 import { ReadyTick, UploadZone } from "./UploadZone";
 
@@ -14,11 +11,12 @@ export const dynamic = "force-dynamic";
 type Doc = Awaited<ReturnType<typeof listDocuments>>[number];
 
 export default async function DocumentsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/sign-in");
-
-  const user = session.user as typeof session.user & { company?: string };
-  const organisation = await resolveActive(user);
+  // `requireAccess` rather than a session lookup. A page renders concurrently
+  // with its layout, so the layout's refusal cannot be relied on to have run
+  // first — and `resolveActive` *creates* an organisation for anyone without
+  // one, which would hand a workspace to somebody an administrator had
+  // deliberately not admitted.
+  const { user, organisation } = await requireAccess();
   const documents = await listDocuments(user.id, organisation.id);
 
   const references = documents.filter((d) => d.role !== "assessed");

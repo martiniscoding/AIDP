@@ -29,6 +29,18 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  /// Operator of the platform, not a customer — see src/lib/access/platform.ts.
+  ///
+  /// A column rather than a check against an environment variable, because the
+  /// admin console has to *list* administrators and an env var cannot be
+  /// joined. `PLATFORM_ADMIN_EMAILS` still exists, but only to promote a
+  /// matching account on sign-in: it bootstraps the first administrator on a
+  /// fresh database and is never consulted afterwards.
+  ///
+  /// This grants sight of every organisation's people and spend. It grants no
+  /// sight of their documents — see the note on the admin queries.
+  isPlatformAdmin Boolean @default(false)
+
   // Collected at sign-up. Required in the app, so required here — see
   // `additionalFields` in src/lib/auth-options.ts for the matching declaration.
   company String
@@ -50,6 +62,17 @@ model User {
 
   // Submissions this person has approved, sent back, or escalated.
   outcomes SubmissionOutcome[]
+
+  // Their place on a customer's roster. A consultant working for two customers
+  // appears on two, which is why this is a list and not a single row.
+  rosterEntries RosterEntry[]
+
+  // Documents they put into the system. Drives cost attribution: the model
+  // spend of a run lands on whoever submitted the work.
+  uploads Document[]
+
+  // Model spend attributed to them.
+  usage TokenUsage[]
 
   @@map("user")
 }
@@ -245,6 +268,8 @@ model Organisation {
   decisions   Decision[]
   techStack   TechAssessment?
   outcomes    SubmissionOutcome[]
+  roster      RosterEntry[]
+  usage       TokenUsage[]
 
   @@map("organisation")
 }
@@ -257,8 +282,15 @@ model Membership {
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  // "owner" | "consultant" | "viewer"
-  role String @default("consultant")
+  /// "owner"  — the customer's own administrator. Registered the organisation,
+  ///            controls who else gets in, sees the spend. There is always at
+  ///            least one, and the last one cannot be removed.
+  /// "member" — an employee the owner admitted. Works in the product.
+  ///
+  /// "consultant" and "viewer" predate this and are treated as "member"
+  /// everywhere; see ROLES in src/lib/access/roles.ts, which is the only place
+  /// that decides what a role may do.
+  role String @default("member")
 
   createdAt DateTime @default(now())
 
@@ -267,11 +299,153 @@ model Membership {
   @@map("membership")
 }
 
+/// Who a customer has admitted to their organisation.
+///
+/// Membership says a person *has* access. This says whether they are *supposed
+/// to* — and it is the row the owner actually manages. The two are deliberately
+/// separate, because the useful states here exist before an account does: an
+/// owner uploads a staff spreadsheet, gets two hundred people they have never
+/// granted anything to, and picks a dozen. Those rows have no `userId` and must
+/// not confer access; making them memberships would have admitted the entire
+/// payroll the moment the file was parsed.
+///
+/// So this is the authority on admission and `Membership` is its consequence.
+/// `status` moves imported -> allowed -> active, or sideways to revoked, and
+/// `syncMembership` in src/lib/access/roster.ts is the single place that turns
+/// a status into a membership. Revoking deletes the membership and the person's
+/// sessions; the row stays, because "was admitted in March, revoked in June" is
+/// the question an audit asks and a deleted row cannot answer it.
+model RosterEntry {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Lower-cased on every write. This is the identity — an employee is a
+  /// mailbox until they register, and matching has to survive "A.Patel@" versus
+  /// "a.patel@" arriving from two different spreadsheets.
+  email String
+
+  /// From the spreadsheet, and only ever a label. Once the person registers,
+  /// their account name is what the UI shows: they are the authority on their
+  /// own name, not whatever HR typed.
+  name       String @default("")
+  jobTitle   String @default("")
+  department String @default("")
+
+  /// "imported" — loaded from a file or typed in. No access whatsoever.
+  /// "allowed"  — admitted, but has not signed in yet. May register.
+  /// "active"   — admitted and holding an account.
+  /// "revoked"  — admission withdrawn. Kept for the record, never deleted.
+  status String @default("imported")
+
+  /// The membership role to grant on admission. See Membership.role.
+  role String @default("member")
+
+  /// "manual" | "import" | "signup" — how the row came to exist. An owner
+  /// looking at a list of two hundred names needs to know which they typed.
+  source String @default("manual")
+
+  /// Set once the person registers, which is also what makes them "active".
+  /// Null for everyone who has been admitted but has not signed up yet.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Attribution for the two decisions that matter, denormalised beside the ids
+  /// for the same reason as Decision.decidedByName: the record has to keep
+  /// naming the person after their account is gone.
+  allowedAt     DateTime?
+  allowedById   String?
+  allowedByName String    @default("")
+  revokedAt     DateTime?
+  revokedById   String?
+  revokedByName String    @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One row per mailbox per organisation. Re-importing the same spreadsheet
+  /// updates the rows it already created instead of duplicating them, which is
+  /// what makes a second upload safe.
+  @@unique([organisationId, email])
+  @@index([organisationId, status])
+  @@map("roster_entry")
+}
+
+/// Model spend, one row per provider call.
+///
+/// Written by the workers (Workers/aidp/usage.py) and by the app, against the
+/// same table, because the two both call models and an owner asking "what has
+/// this cost us?" does not care which process made the request.
+///
+/// Attributed to a person through `userId`, which is copied from
+/// `Document.uploadedById` at the moment the job runs. Whoever submitted the
+/// work owns its cost — the alternative is a bill attributed to nobody, which
+/// is exactly the number an owner cannot act on.
+///
+/// One row per call rather than a running total per job. A total is a number
+/// that can only ever be wrong in ways nobody can reconstruct; rows can be
+/// grouped into any total later, and a run of a hundred clauses writing a
+/// hundred rows costs nothing next to the hundred model calls it just made.
+model TokenUsage {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Null when the work cannot be traced to a person — a document uploaded
+  /// before this column existed, or an account since deleted. Counted in the
+  /// organisation's total either way, and shown as unattributed rather than
+  /// quietly dropped.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Deliberately not foreign keys. Usage outlives the thing that caused it:
+  /// deleting a document must not erase the record of what it cost, or the
+  /// month's spend changes retrospectively every time someone tidies up.
+  documentId String?
+  runId      String?
+
+  /// "parse" | "chunk" | "embed" | "analyse" | "app"
+  stage String
+  /// "llm" | "embedding"
+  kind  String
+
+  provider String
+  model    String
+
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+  totalTokens  Int @default(0)
+
+  /// True when the provider returned no usage figures and these were derived
+  /// from input size — every embedding endpoint here does that. Flagged rather
+  /// than blended in, so a spend figure can say how much of itself is a guess.
+  estimated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId, createdAt])
+  @@index([organisationId, userId])
+  @@index([documentId])
+  @@map("token_usage")
+}
+
 model Document {
   id String @id @default(cuid())
 
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Who submitted it. Nullable because the column arrived after the first
+  /// documents did, and because the account may since have been deleted.
+  ///
+  /// This is what makes per-person spend possible: a worker running a job knows
+  /// the document, and the document knows the person. `onDelete: SetNull` so
+  /// removing an employee does not take their organisation's documents with
+  /// them — the work belongs to the customer, not to the individual.
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
   // "reference" — a standards document; stops after embed.
   // "assessed"  — a design submitted for review; continues into analyse.
@@ -786,11 +960,11 @@ model Decision {
   effectiveFrom DateTime  @default(now())
   expiresAt     DateTime?
 
-  decidedById String?
-  decidedBy   User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedById   String?
+  decidedBy     User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
   /// Kept beside the relation so the register still attributes a decision after
   /// the person who made it has left and their row is gone.
-  decidedByName String @default("")
+  decidedByName String  @default("")
 
   /// pgvector, written by raw SQL exactly like Embedding.vector — Prisma has no
   /// native type for it. Embedded as a *passage*, because clause queries are
@@ -809,7 +983,6 @@ model Decision {
   @@index([organisationId, clauseRef])
   @@map("decision")
 }
-
 
 /// What was decided about a submission once its report was read.
 ///
@@ -846,11 +1019,11 @@ model SubmissionOutcome {
   /// outstanding" is exactly what an audit needs to be able to see later.
   snapshot Json @default("{}")
 
-  decidedById String?
-  decidedBy   User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedById   String?
+  decidedBy     User?   @relation(fields: [decidedById], references: [id], onDelete: SetNull)
   /// Kept beside the relation so a decision still names its author after the
   /// account is gone.
-  decidedByName String @default("")
+  decidedByName String  @default("")
 
   createdAt DateTime @default(now())
 

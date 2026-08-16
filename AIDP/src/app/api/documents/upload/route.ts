@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { resolveActive } from "@/lib/ingest/org";
+import { NoAccess, requireAccess, type Access } from "@/lib/access/gate";
 import { documentKey, put, sha256 } from "@/lib/ingest/storage";
 
 /**
@@ -68,9 +66,17 @@ function identify(bytes: Uint8Array): Format | { error: string; status: number }
 }
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) {
-    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  // `requireAccess` rather than a bare session check: a revoked employee may
+  // still be holding a valid cookie, and this endpoint writes to the customer's
+  // corpus. It also resolves the organisation, replacing `resolveActive` here.
+  let access: Access;
+  try {
+    access = await requireAccess();
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof NoAccess ? error.message : "Not signed in." },
+      { status: 401 },
+    );
   }
 
   const form = await request.formData();
@@ -97,8 +103,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: format.error }, { status: format.status });
   }
 
-  const user = session.user as typeof session.user & { company?: string };
-  const organisation = await resolveActive(user);
+  const organisation = access.organisation;
   const hash = sha256(bytes);
 
   // Content-addressed idempotency. Re-uploading the same bytes resolves to the
@@ -143,6 +148,9 @@ export async function POST(request: Request) {
         byteSize: bytes.byteLength,
         sha256: hash,
         status: "pending",
+        // Whoever submits the work owns what it costs to process. The workers
+        // read this back to attribute model spend — see Workers/aidp/usage.py.
+        uploadedById: access.user.id,
       },
       select: { id: true, title: true, status: true },
     });

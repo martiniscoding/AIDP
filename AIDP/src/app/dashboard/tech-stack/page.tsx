@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { resolveActive } from "@/lib/ingest/org";
+import { requireAccess } from "@/lib/access/gate";
 import { loadAssessment } from "@/lib/tech-stack/load";
 import { AssessmentForm } from "./AssessmentForm";
 
@@ -11,11 +8,12 @@ export const metadata: Metadata = {
 };
 
 export default async function TechStackPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/sign-in");
-
-  const user = session.user as typeof session.user & { company?: string };
-  const organisation = await resolveActive(user);
+  // `requireAccess` rather than a session lookup. A page renders concurrently
+  // with its layout, so the layout's refusal cannot be relied on to have run
+  // first — and `resolveActive` *creates* an organisation for anyone without
+  // one, which would hand a workspace to somebody an administrator had
+  // deliberately not admitted.
+  const { user, organisation } = await requireAccess();
   const { input, savedAt, status } = await loadAssessment(
     { id: user.id, name: user.name, company: user.company },
     organisation.id,

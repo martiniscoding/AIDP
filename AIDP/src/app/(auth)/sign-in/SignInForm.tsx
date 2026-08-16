@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Lock, Mail } from "lucide-react";
+import { ArrowRight, Building2, Lock, Mail } from "lucide-react";
 import { AuthCard, FormError } from "@/components/auth/AuthCard";
 import { validateEmail } from "@/components/auth/validation";
 import { useFieldErrors } from "@/components/auth/useFieldErrors";
@@ -11,12 +11,14 @@ import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { AFTER_AUTH_REDIRECT, signIn } from "@/lib/auth-client";
+import { verifyWorkspace } from "../actions";
 
 export function SignInForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { errors, validate, clear } = useFieldErrors<"email" | "password">();
+  const [company, setCompany] = useState("");
+  const { errors, validate, clear } = useFieldErrors<"email" | "password" | "company">();
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -28,29 +30,59 @@ export function SignInForm() {
       // Deliberately not length-checking on sign-in: an existing password
       // that predates the current rule should still get a real attempt.
       password: password ? undefined : "Enter your password.",
+      // Company is checked on the server, not here. A platform operator has no
+      // company and leaves it blank, and this form cannot tell which kind of
+      // account is signing in until the password has been verified.
     });
     if (!passes) return;
 
     setFormError(null);
     setPending(true);
 
-    const { error } = await signIn.email({
-      email: email.trim(),
-      password,
-    });
+    // Everything below is wrapped, because anything that throws instead of
+    // returning leaves the button spinning forever with nothing said. A Server
+    // Action can reject for reasons that have nothing to do with the caller —
+    // a dropped connection, a database waking up, or a stale action id in a
+    // browser tab that has been open across a redeploy — and "it just spins" is
+    // the least diagnosable failure a sign-in form can have.
+    try {
+      const { error } = await signIn.email({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
+      if (error) {
+        setFormError(
+          error.status === 401 || error.status === 403
+            ? "That email and password combination doesn't match an account."
+            : (error.message ?? "Could not sign you in."),
+        );
+        return;
+      }
+
+      // The password was right. Whether they are still admitted, and whether
+      // this is the workspace they named, are separate questions — see
+      // actions.ts. A failure there has already signed them back out.
+      const check = await verifyWorkspace(company);
+      if (!check.ok) {
+        setFormError(check.message ?? "Could not sign you in.");
+        return;
+      }
+
+      // Where they belong depends on what kind of account it is: a customer
+      // lands on their dashboard, an operator on the console.
+      router.push(check.redirectTo ?? AFTER_AUTH_REDIRECT);
+      router.refresh();
+    } catch {
       setFormError(
-        error.status === 401 || error.status === 403
-          ? "That email and password combination doesn't match an account."
-          : (error.message ?? "Could not sign you in."),
+        "Something went wrong reaching the server. Check your connection and try again.",
       );
+    } finally {
+      // Runs on the success path too. Navigation is already under way by then,
+      // and re-enabling a button on a page being replaced is harmless — whereas
+      // leaving it disabled after a failure strands the user.
       setPending(false);
-      return;
     }
-
-    router.push(AFTER_AUTH_REDIRECT);
-    router.refresh();
   };
 
   return (
@@ -77,6 +109,20 @@ export function SignInForm() {
           onChange={(e) => {
             setEmail(e.target.value);
             clear("email");
+          }}
+        />
+
+        <Field
+          label="Company"
+          name="company"
+          autoComplete="organization"
+          placeholder="Your company's name"
+          icon={<Building2 size={16} />}
+          value={company}
+          error={errors.company}
+          onChange={(e) => {
+            setCompany(e.target.value);
+            clear("company");
           }}
         />
 

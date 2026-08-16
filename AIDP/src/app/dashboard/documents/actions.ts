@@ -2,9 +2,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { resolveFramework, unconfirmedStructure } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
@@ -15,13 +14,15 @@ import { remove } from "@/lib/ingest/storage";
 export type ActionResult = { ok: boolean; message: string; runId?: string };
 
 /**
- * Server Actions accept direct POSTs, so the session check in each of these is
- * the access control — not a duplicate of the page's redirect.
+ * Server Actions accept direct POSTs, so the check in each of these is the
+ * access control — not a duplicate of the page's redirect.
+ *
+ * `requireAccess` asks whether the caller is still admitted to their workspace,
+ * which a session lookup does not: a revoked employee's password is still
+ * correct, and their cookie is still well-formed.
  */
 async function requireUser() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) throw new NotAMember();
-  return session.user;
+  return (await requireAccess()).user;
 }
 
 /**
@@ -67,7 +68,7 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
       message: `Deleted "${document.title}" and ${removed} stored file${removed === 1 ? "" : "s"}.`,
     };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that document." };
     }
     return { ok: false, message: "Could not delete that document." };
@@ -114,7 +115,7 @@ export async function reprocessDocument(documentId: string): Promise<ActionResul
     revalidatePath(`/dashboard/documents/${documentId}`);
     return { ok: true, message: `Re-queued "${document.title}".` };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that document." };
     }
     return { ok: false, message: "Could not re-queue that document." };
@@ -215,7 +216,7 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
       runId,
     };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that document." };
     }
     // Both the live-run index and the live-job index surface as a unique
@@ -272,7 +273,7 @@ export async function confirmStructure(documentId: string): Promise<ActionResult
     revalidatePath("/dashboard/documents");
     return { ok: true, message: `Confirmed. "${document.title}" can now be assessed against.` };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that document." };
     }
     return { ok: false, message: "Could not confirm that structure." };
@@ -321,7 +322,7 @@ export async function recordOutcome(
     return { ok: true, message: said[outcome.decision] };
   } catch (error) {
     if (error instanceof OutcomeRefused) return { ok: false, message: error.message };
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that assessment." };
     }
     return { ok: false, message: "Could not record that decision." };
@@ -400,7 +401,7 @@ export async function reviewFinding(
           }. The reason is recorded either way — add it from the register.`,
     };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that finding." };
     }
     return { ok: false, message: "Could not record that decision." };
@@ -532,7 +533,7 @@ export async function reviewFigure(
             : "Rejected. This figure is no longer searchable.",
     };
   } catch (error) {
-    if (error instanceof NotAMember) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
       return { ok: false, message: "You do not have access to that figure." };
     }
     return { ok: false, message: "Could not record that decision." };

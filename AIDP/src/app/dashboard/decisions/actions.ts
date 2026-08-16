@@ -1,10 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { NotAMember } from "@/lib/ingest/org";
-import { resolveActive } from "@/lib/ingest/org";
 import {
   createDecision,
   embedPending,
@@ -17,15 +15,22 @@ import { DECISION_EFFECTS, type DecisionEffect } from "@/lib/ingest/decision-eff
 export type DecisionActionResult = { ok: boolean; message: string };
 
 /**
- * Server Actions accept direct POSTs, so the session check in each of these is
- * the access control — not a duplicate of the page's redirect.
+ * Server Actions accept direct POSTs, so the check in each of these is the
+ * access control — not a duplicate of the page's redirect.
+ *
+ * `requireAccess` rather than a session lookup: it asks whether the caller is
+ * still admitted, and it resolves the organisation from their membership. The
+ * older `resolveActive` *creates* an organisation for anyone without one, which
+ * on a direct POST would have handed a workspace to somebody an administrator
+ * had deliberately not admitted.
  */
 async function context() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) throw new NotAMember();
-  const user = session.user as typeof session.user & { company?: string };
-  const organisation = await resolveActive(user);
-  return { user, organisationId: organisation.id, name: user.name || user.email };
+  const access = await requireAccess();
+  return {
+    user: access.user,
+    organisationId: access.organisation.id,
+    name: access.user.name || access.user.email,
+  };
 }
 
 function readEffect(value: FormDataEntryValue | null): DecisionEffect {
@@ -79,7 +84,12 @@ export async function recordDecision(form: FormData): Promise<DecisionActionResu
         : "Decision recorded, but it could not be indexed for matching — it will only match on its clause reference until you retry.",
     };
   } catch (error) {
-    if (error instanceof NotAMember) return { ok: false, message: "You do not have access." };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      // Two kinds of refusal reach here: NoAccess from the gate (not
+      // admitted, or revoked) and NotAMember from a library call that
+      // re-checks the tenant boundary for itself.
+      return { ok: false, message: error.message };
+    }
     return { ok: false, message: "Could not record that decision." };
   }
 }
@@ -100,7 +110,12 @@ export async function reviseDecision(
     revalidatePath("/dashboard/decisions");
     return { ok: true, message: "Revised. The previous version is kept for past reports." };
   } catch (error) {
-    if (error instanceof NotAMember) return { ok: false, message: "You do not have access." };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      // Two kinds of refusal reach here: NoAccess from the gate (not
+      // admitted, or revoked) and NotAMember from a library call that
+      // re-checks the tenant boundary for itself.
+      return { ok: false, message: error.message };
+    }
     return { ok: false, message: "Could not revise that decision." };
   }
 }
@@ -112,7 +127,12 @@ export async function retireDecision(decisionId: string): Promise<DecisionAction
     revalidatePath("/dashboard/decisions");
     return { ok: true, message: "Retired. It will not be applied again." };
   } catch (error) {
-    if (error instanceof NotAMember) return { ok: false, message: "You do not have access." };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      // Two kinds of refusal reach here: NoAccess from the gate (not
+      // admitted, or revoked) and NotAMember from a library call that
+      // re-checks the tenant boundary for itself.
+      return { ok: false, message: error.message };
+    }
     return { ok: false, message: "Could not retire that decision." };
   }
 }
@@ -124,7 +144,12 @@ export async function reinstateDecision(decisionId: string): Promise<DecisionAct
     revalidatePath("/dashboard/decisions");
     return { ok: true, message: "Back in force." };
   } catch (error) {
-    if (error instanceof NotAMember) return { ok: false, message: "You do not have access." };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      // Two kinds of refusal reach here: NoAccess from the gate (not
+      // admitted, or revoked) and NotAMember from a library call that
+      // re-checks the tenant boundary for itself.
+      return { ok: false, message: error.message };
+    }
     return { ok: false, message: "Could not reinstate that decision." };
   }
 }
@@ -143,7 +168,12 @@ export async function retryIndexing(): Promise<DecisionActionResult> {
           : `Indexed ${done}, ${failed} still failing — check the embedding key and quota.`,
     };
   } catch (error) {
-    if (error instanceof NotAMember) return { ok: false, message: "You do not have access." };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      // Two kinds of refusal reach here: NoAccess from the gate (not
+      // admitted, or revoked) and NotAMember from a library call that
+      // re-checks the tenant boundary for itself.
+      return { ok: false, message: error.message };
+    }
     return { ok: false, message: "Could not index those decisions." };
   }
 }

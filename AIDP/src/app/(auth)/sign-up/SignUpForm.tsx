@@ -75,24 +75,34 @@ export function SignUpForm() {
     setFormError(null);
     setPending(true);
 
-    const { error } = await signUp.email({
-      name: name.trim(),
-      email: email.trim(),
-      password,
-      company: company.trim(),
-      country,
-      phone: phone.trim(),
-    });
+    // Wrapped for the same reason as the sign-in form: a rejected promise here
+    // would leave the button spinning with nothing said, which is the least
+    // diagnosable way for a sign-up to fail.
+    try {
+      const { error } = await signUp.email({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        company: company.trim(),
+        country,
+        phone: phone.trim(),
+      });
 
-    if (error) {
-      setFormError(error.message ?? "Could not create your account.");
+      if (error) {
+        setFormError(error.message ?? "Could not create your account.");
+        return;
+      }
+
+      // autoSignIn is on, so a session already exists by this point.
+      router.push(AFTER_AUTH_REDIRECT);
+      router.refresh();
+    } catch {
+      setFormError(
+        "Something went wrong reaching the server. Check your connection and try again.",
+      );
+    } finally {
       setPending(false);
-      return;
     }
-
-    // autoSignIn is on, so a session already exists by this point.
-    router.push(AFTER_AUTH_REDIRECT);
-    router.refresh();
   };
 
   return (

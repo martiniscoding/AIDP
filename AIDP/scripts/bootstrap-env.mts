@@ -49,6 +49,17 @@ const REQUIRED: Entry[] = [
       "# `vercel env pull .env.local` if the project is linked. See .env.example.",
     ],
   },
+  {
+    key: "PLATFORM_ADMIN_EMAILS",
+    // Empty is the correct default: on a fresh database nobody should hold the
+    // operator console until someone deliberately names themselves.
+    value: () => "",
+    comment: [
+      "# Comma-separated emails that get the operator console at /admin.",
+      "# Bootstrap only — an account listed here is promoted on its next",
+      "# sign-in, and the database column is the authority afterwards.",
+    ],
+  },
 ];
 
 const HEADER = [

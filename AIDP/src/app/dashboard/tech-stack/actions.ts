@@ -1,10 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { resolveActive } from "@/lib/ingest/org";
+import { NoAccess, requireAccess, type Access } from "@/lib/access/gate";
 import { parseAssessmentInput, type SaveResult } from "@/lib/tech-stack/schema";
 import { renderTechSummary } from "@/lib/tech-stack/summary";
 
@@ -20,12 +18,16 @@ export async function saveAssessment(
   raw: unknown,
 ): Promise<SaveResult> {
   // Server Actions accept direct POSTs, so this check is the access control,
-  // not a duplicate of the page's redirect.
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) {
+  // not a duplicate of the page's redirect. It also asks whether the caller is
+  // still admitted, which a session lookup alone does not.
+  let access: Access;
+  try {
+    access = await requireAccess();
+  } catch (error) {
     return {
       ok: false,
-      message: "Your session expired. Sign in again to save.",
+      message:
+        error instanceof NoAccess ? error.message : "Your session expired. Sign in again to save.",
       errors: {},
     };
   }
@@ -40,15 +42,12 @@ export async function saveAssessment(
     };
   }
 
-  const userId = session.user.id;
+  const userId = access.user.id;
   const submitting = value.intent === "submit";
 
   // The reference belongs to the organisation, so the assessment pipeline can
-  // reach it — a run has an organisation, never a user. `resolveActive` creates
-  // one on first use, which is also what makes this row reachable at all.
-  const organisation = await resolveActive(
-    session.user as typeof session.user & { company?: string },
-  );
+  // reach it — a run has an organisation, never a user.
+  const organisation = access.organisation;
 
   const scalars = {
     companyName: value.companyName,
