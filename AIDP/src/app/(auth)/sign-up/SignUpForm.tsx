@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Building2,
@@ -46,7 +45,6 @@ type FieldName =
   | "password";
 
 export function SignUpForm() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [company, setCompany] = useState("");
@@ -94,8 +92,10 @@ export function SignUpForm() {
       }
 
       // autoSignIn is on, so a session already exists by this point.
-      router.push(AFTER_AUTH_REDIRECT);
-      router.refresh();
+      // A full page load, for the same reason as the sign-in form: the tab's
+      // cached payloads were all fetched as a different client.
+      window.location.assign(AFTER_AUTH_REDIRECT);
+      return;
     } catch {
       setFormError(
         "Something went wrong reaching the server. Check your connection and try again.",

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowRight, Building2, Lock, Mail } from "lucide-react";
 import { AuthCard, FormError } from "@/components/auth/AuthCard";
 import { validateEmail } from "@/components/auth/validation";
@@ -14,7 +13,6 @@ import { AFTER_AUTH_REDIRECT, signIn } from "@/lib/auth-client";
 import { verifyWorkspace } from "../actions";
 
 export function SignInForm() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [company, setCompany] = useState("");
@@ -71,8 +69,16 @@ export function SignInForm() {
 
       // Where they belong depends on what kind of account it is: a customer
       // lands on their dashboard, an operator on the console.
-      router.push(check.redirectTo ?? AFTER_AUTH_REDIRECT);
-      router.refresh();
+      //
+      // A full page load rather than router.push. Signing in changes who the
+      // client is, and every cached RSC payload and JS chunk in the tab was
+      // fetched as somebody else — or, across a redeploy, by a build that no
+      // longer exists. A client-side navigation keeps all of it and has to be
+      // trusted to invalidate the right parts; a document load cannot get that
+      // wrong. It costs one extra round trip on the one navigation per session
+      // where correctness matters most.
+      window.location.assign(check.redirectTo ?? AFTER_AUTH_REDIRECT);
+      return;
     } catch {
       setFormError(
         "Something went wrong reaching the server. Check your connection and try again.",
