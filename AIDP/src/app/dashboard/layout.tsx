@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { ShieldAlert } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
-import { NoAccess, currentUser, requireAccess, type Access } from "@/lib/access/gate";
+import { requireWorkspace } from "@/lib/access/gate";
 import { SignOutButton } from "./SignOutButton";
 
 /**
@@ -23,20 +21,10 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  let access: Access;
-  try {
-    access = await requireAccess();
-  } catch (error) {
-    if (!(error instanceof NoAccess)) throw error;
-    // Someone with no session at all belongs at sign-in. Someone signed in but
-    // not admitted needs to be told why, or they will keep trying.
-    const user = await currentUser();
-    if (!user) redirect("/sign-in");
-    // A platform operator has no workspace by design, and their console is one
-    // click away — sending them there beats a refusal they can do nothing about.
-    if (user.isPlatformAdmin) redirect("/admin");
-    return <Denied message={error.message} />;
-  }
+  // Redirects rather than throws — see requireWorkspace. Nothing on the render
+  // path raises any more, so a layout and its page cannot disagree about what
+  // happens to a caller who is not admitted.
+  const access = await requireWorkspace();
 
   const { user, organisation, isOwner } = access;
   const initials =
@@ -107,28 +95,3 @@ export default async function DashboardLayout({
   );
 }
 
-/**
- * Signed in, not admitted.
- *
- * Deliberately a dead end with a sign-out button and no navigation: there is
- * nothing here for them until an administrator acts, and offering links they
- * cannot follow reads as a broken product rather than a closed door.
- */
-function Denied({ message }: { message: string }) {
-  return (
-    <div className="grid min-h-svh place-items-center px-6">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.025] p-8 text-center">
-        <span className="mx-auto mb-5 grid size-12 place-items-center rounded-xl border border-amber-400/25 bg-amber-400/10 text-amber-300">
-          <ShieldAlert size={22} strokeWidth={1.8} />
-        </span>
-        <h1 className="font-display text-[20px] font-semibold tracking-tight text-white">
-          No access to this workspace
-        </h1>
-        <p className="mt-2.5 text-[13.5px] leading-relaxed text-white/50">{message}</p>
-        <div className="mt-6 flex items-center justify-center gap-3">
-          <SignOutButton />
-        </div>
-      </div>
-    </div>
-  );
-}

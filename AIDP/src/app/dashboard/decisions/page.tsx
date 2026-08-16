@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Gavel } from "lucide-react";
 import { listDecisions } from "@/lib/ingest/decisions";
-import { requireAccess } from "@/lib/access/gate";
+import { requireWorkspace } from "@/lib/access/gate";
 import { DecisionRegister } from "./DecisionRegister";
 
 export const dynamic = "force-dynamic";
@@ -9,12 +9,11 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Decisions" };
 
 export default async function DecisionsPage() {
-  // `requireAccess` rather than a session lookup. A page renders concurrently
-  // with its layout, so the layout's refusal cannot be relied on to have run
-  // first — and `resolveActive` *creates* an organisation for anyone without
-  // one, which would hand a workspace to somebody an administrator had
-  // deliberately not admitted.
-  const { user, organisation } = await requireAccess();
+  // `requireWorkspace` rather than a session lookup, and rather than the
+  // throwing `requireAccess`: a page renders concurrently with its layout, so
+  // two thrown refusals race each other. This one redirects instead, so the
+  // outcome is the same every time.
+  const { user, organisation } = await requireWorkspace();
   const decisions = await listDecisions(user.id, organisation.id);
 
   const active = decisions.filter((d) => d.status === "active");

@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveActive, type OrganisationSummary } from "@/lib/ingest/org";
@@ -254,6 +255,36 @@ export async function requireAccess(): Promise<Access> {
     role: outcome.role,
     isOwner: outcome.role === OWNER,
   };
+}
+
+/**
+ * Access for a page or layout, resolved to a destination rather than an error.
+ *
+ * `requireAccess` throws, which is right for a Server Action and wrong here. A
+ * page renders concurrently with its layout, so when both call it and both
+ * throw, the outcome is a race between the layout's redirect and the page's
+ * error — the same request can redirect or blow up depending on which settles
+ * first. That is exactly the bug that let an operator land on a dashboard.
+ *
+ * So nothing on the render path throws any more. Everyone who cannot work in a
+ * workspace is *sent* somewhere they can: an operator to their console,
+ * everybody else to a page that explains why. Pages and layouts use this;
+ * Server Actions keep `requireAccess`, because a POST has no destination.
+ */
+export async function requireWorkspace(): Promise<Access> {
+  try {
+    return await requireAccess();
+  } catch (error) {
+    if (!(error instanceof NoAccess)) throw error;
+
+    const user = await currentUser();
+    if (!user) redirect("/sign-in");
+    // An operator has no workspace by design, and their console is one hop
+    // away. Sending them there beats a refusal they can do nothing about.
+    if (user.isPlatformAdmin) redirect("/admin");
+
+    redirect(`/no-access?reason=${encodeURIComponent(error.denial.reason)}`);
+  }
 }
 
 /** As `requireAccess`, and refuses anyone who is not this customer's own
