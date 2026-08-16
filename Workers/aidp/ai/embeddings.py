@@ -26,7 +26,7 @@ from typing import Literal, Protocol
 
 import httpx
 
-from .. import logs
+from .. import logs, usage
 from ..config import get_config
 
 log = logs.get(__name__)
@@ -184,6 +184,7 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
     a mismatch means the column and the model have diverged, and every insert
     after this point would fail with a less obvious message.
     """
+    cfg = get_config()
     prov = provider()
     out: list[list[float]] = []
     for start in range(0, len(texts), BATCH_SIZE):
@@ -195,6 +196,18 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
                 f"vector({prov.dims}). Set EMBEDDING_DIMS to match, or migrate the column."
             )
         out.extend(vectors)
+
+        # None of these three endpoints reports token counts, so the figure is
+        # derived from input size and flagged as an estimate. Recorded per batch
+        # rather than per text: one row for ninety-six strings is the same
+        # number in the total and a ninety-sixth of the writes.
+        usage.record(
+            kind="embedding",
+            provider=cfg.embedding_provider.lower(),
+            model=prov.model,
+            input_tokens=sum(usage.estimate_tokens(text) for text in batch),
+            estimated=True,
+        )
         logs.info(log, "embedded batch", count=len(batch), done=len(out), total=len(texts))
     return out
 

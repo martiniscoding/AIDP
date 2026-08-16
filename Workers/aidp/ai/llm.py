@@ -32,7 +32,7 @@ from typing import Protocol
 
 import httpx
 
-from .. import logs
+from .. import logs, usage
 from ..config import get_config
 
 log = logs.get(__name__)
@@ -368,6 +368,19 @@ class GeminiLLM:
             {"x-goog-api-key": self.api_key, "content-type": "application/json"},
             payload,
         )
+
+        # Recorded here rather than in each of the three callers: this is the
+        # single point every Gemini request passes through, so there is no way
+        # to add a fourth kind of call and forget to account for it.
+        prompt_tokens, output_tokens = usage.from_gemini(data)
+        usage.record(
+            kind="llm",
+            provider="gemini",
+            model=self.model,
+            input_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+        )
+
         candidates = data.get("candidates") or []
         if not candidates:
             # Usually a safety block or an empty completion; treat as "nothing
@@ -476,6 +489,25 @@ class AnthropicLLM:
             "content-type": "application/json",
         }
 
+    def _send(self, payload: dict) -> dict:
+        """Post, and account for it.
+
+        Every Anthropic request goes through here for the same reason the Gemini
+        client records inside `_generate` — so that adding a fifth kind of call
+        cannot quietly stop being counted. The model comes off the payload
+        rather than `self.model` because `contextualise` uses the fast one.
+        """
+        data = _post(self.BASE, self._headers(), payload)
+        input_tokens, output_tokens = usage.from_anthropic(data)
+        usage.record(
+            kind="llm",
+            provider="anthropic",
+            model=str(payload.get("model") or self.model),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        return data
+
     @staticmethod
     def _text_of(data: dict) -> str:
         return "".join(
@@ -486,9 +518,7 @@ class AnthropicLLM:
         where = f"Location in document: {heading_path}"
         if caption:
             where += f"\nCaption as printed: {caption}"
-        data = _post(
-            self.BASE,
-            self._headers(),
+        data = self._send(
             {
                 "model": self.model,
                 "max_tokens": 1200,
@@ -528,9 +558,7 @@ class AnthropicLLM:
         if len(doc) > 4000:
             system[0]["cache_control"] = {"type": "ephemeral"}
 
-        data = _post(
-            self.BASE,
-            self._headers(),
+        data = self._send(
             {
                 "model": self.fast_model,
                 "max_tokens": 200,
@@ -552,9 +580,7 @@ class AnthropicLLM:
         precedents: str = "",
         technology: str = "",
     ) -> dict:
-        data = _post(
-            self.BASE,
-            self._headers(),
+        data = self._send(
             {
                 "model": self.model,
                 "max_tokens": 700,
@@ -582,9 +608,7 @@ class AnthropicLLM:
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
     ) -> dict:
-        data = _post(
-            self.BASE,
-            self._headers(),
+        data = self._send(
             {
                 "model": self.model,
                 "max_tokens": 4096,

@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import db, logs, queue
+from . import db, logs, queue, usage
 from .config import get_config
 from .stages import analyse as analyse_stage
 from .stages import chunk as chunk_stage
@@ -107,6 +107,19 @@ def main() -> int:
 
         backoff.reset()
         logs.bind(correlation_id=job.correlation_id, document_id=job.document_id)
+
+        # Bound once per job so the provider clients can account for what they
+        # spend without every AI function taking a bookkeeping argument. See
+        # the module docstring in usage.py. Resolving the uploader costs one
+        # indexed lookup per job, not one per model call.
+        usage.bind(
+            usage.for_job(
+                job.organisation_id,
+                job.stage,
+                job.document_id,
+                job.payload.get("runId"),
+            )
+        )
         started = time.monotonic()
 
         def heartbeat(job_id: str = job.id) -> None:
@@ -132,6 +145,7 @@ def main() -> int:
                     _mark_document_failed(job.document_id, reason)
         finally:
             logs.bind(correlation_id=None, document_id=None)
+            usage.bind(None)
 
     db.close()
     logs.info(log, "worker stopped", stage=cfg.stage)
