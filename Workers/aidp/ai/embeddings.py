@@ -26,7 +26,7 @@ from typing import Literal, Protocol
 
 import httpx
 
-from .. import logs, usage
+from .. import cache, logs, usage
 from ..config import get_config
 
 log = logs.get(__name__)
@@ -180,27 +180,63 @@ def provider() -> EmbeddingProvider:
 def embed_all(texts: list[str], input_type: InputType = "document") -> list[list[float]]:
     """Embed in batches, preserving input order.
 
+    Anything already in the cache is served from there and never reaches the
+    provider. `embed(text)` is a pure function, so a stored vector is not a
+    stale answer — it is the identical answer, and paying for it twice buys
+    nothing. See aidp/cache.py for how the key is built.
+
+    Two kinds of waste this removes. A revised standard re-uploaded after a
+    small edit re-embeds every chunk, when almost all of them are unchanged.
+    And every assessment run embeds the same hundred-odd clause queries again,
+    because the framework did not move between runs.
+
     The width of the first vector is checked against the configured dimension:
     a mismatch means the column and the model have diverged, and every insert
     after this point would fail with a less obvious message.
     """
+    if not texts:
+        return []
+
     cfg = get_config()
     prov = provider()
-    out: list[list[float]] = []
-    for start in range(0, len(texts), BATCH_SIZE):
-        batch = texts[start : start + BATCH_SIZE]
+
+    organisation_id = cache.organisation()
+    keys = [cache.embedding_key(text, prov.model, input_type, prov.dims) for text in texts]
+    stored = cache.get_embeddings(organisation_id, keys) if organisation_id else {}
+
+    # What is left to buy, each distinct text once. A document that repeats a
+    # line, or a batch holding the same clause twice, should pay once — the
+    # provider has no idea they are the same request.
+    pending_keys: list[str] = []
+    pending_texts: list[str] = []
+    queued: set[str] = set()
+    for text, key in zip(texts, keys):
+        if key in stored or key in queued:
+            continue
+        queued.add(key)
+        pending_keys.append(key)
+        pending_texts.append(text)
+
+    fresh: dict[str, list[float]] = {}
+    for start in range(0, len(pending_texts), BATCH_SIZE):
+        batch = pending_texts[start : start + BATCH_SIZE]
+        batch_keys = pending_keys[start : start + BATCH_SIZE]
         vectors = prov.embed(batch, input_type)
         if vectors and len(vectors[0]) != prov.dims:
             raise RuntimeError(
                 f"{prov.model} returned {len(vectors[0])}-dim vectors but the column is "
                 f"vector({prov.dims}). Set EMBEDDING_DIMS to match, or migrate the column."
             )
-        out.extend(vectors)
+        fresh.update(zip(batch_keys, vectors))
 
+        # Recorded only for what was actually sent, so a cached run costs
+        # nothing on the People page — which is true, and is the number an
+        # administrator is looking at.
+        #
         # None of these three endpoints reports token counts, so the figure is
-        # derived from input size and flagged as an estimate. Recorded per batch
-        # rather than per text: one row for ninety-six strings is the same
-        # number in the total and a ninety-sixth of the writes.
+        # derived from input size and flagged as an estimate. Per batch rather
+        # than per text: one row for ninety-six strings is the same number in
+        # the total and a ninety-sixth of the writes.
         usage.record(
             kind="embedding",
             provider=cfg.embedding_provider.lower(),
@@ -208,8 +244,32 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
             input_tokens=sum(usage.estimate_tokens(text) for text in batch),
             estimated=True,
         )
-        logs.info(log, "embedded batch", count=len(batch), done=len(out), total=len(texts))
-    return out
+
+        if organisation_id:
+            cache.put_embeddings(
+                organisation_id,
+                [
+                    (key, prov.model, vector, usage.estimate_tokens(text))
+                    for key, vector, text in zip(batch_keys, vectors, batch)
+                ],
+            )
+
+        logs.info(
+            log, "embedded batch", count=len(batch), done=len(fresh), total=len(pending_texts)
+        )
+
+    if stored:
+        logs.info(
+            log,
+            "embeddings served from cache",
+            hits=len(texts) - len(pending_texts),
+            calls=len(pending_texts),
+            total=len(texts),
+        )
+
+    # Back into the caller's order, cached and fresh alike, with repeats
+    # resolving to the same vector.
+    return [stored[key] if key in stored else fresh[key] for key in keys]
 
 
 def to_pgvector(vector: list[float]) -> str:

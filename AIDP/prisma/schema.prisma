@@ -270,6 +270,7 @@ model Organisation {
   outcomes    SubmissionOutcome[]
   roster      RosterEntry[]
   usage       TokenUsage[]
+  aiCache     AiCache[]
 
   @@map("organisation")
 }
@@ -1031,4 +1032,71 @@ model SubmissionOutcome {
   @@index([documentId, createdAt])
   @@index([runId])
   @@map("submission_outcome")
+}
+
+/// Answers we have already paid a provider for.
+///
+/// Every expensive AI call in this pipeline is a function of its inputs, so the
+/// same inputs need only be paid for once. `fingerprint` is a hash of *every*
+/// input that can change the output — see Workers/aidp/cache.py, which is the
+/// only place keys are built, precisely so that "what does this depend on?" has
+/// exactly one answer.
+///
+/// Getting that key right is the whole design. A key that misses something is
+/// not a slow cache, it is a cache that returns a confidently wrong answer, and
+/// in a compliance tool that is worse than no cache at all. So the rule is to
+/// under-normalise: the fingerprint covers the exact bytes sent to the
+/// provider, with no whitespace folding or cleverness. A text that differs by a
+/// space misses and costs a fraction of a penny; a false hit costs correctness.
+///
+/// Scoped per organisation. A cache keyed on customer text is otherwise a
+/// channel through which one customer could learn another holds a document
+/// containing an exact passage. These are Internal-Use documents held by us as
+/// a vendor, and the hit rate lost to tenant isolation is not worth that.
+///
+/// `kind` is here so the same table takes figure descriptions, chunk preambles
+/// and clause verdicts later without a migration. Only embeddings use it today,
+/// and only embeddings are risk-free — a verdict depends on the submitted
+/// design as well as the standard, and reusing one has to be recorded on the
+/// finding or the audit trail starts lying.
+model AiCache {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// "embedding" today. "figure" | "preamble" | "verdict" later.
+  kind String
+
+  /// sha256 over every input the answer depends on, including the model name —
+  /// so the day a provider retires a model, every entry it produced stops
+  /// matching instead of being served from under the new one.
+  fingerprint String
+
+  /// Denormalised out of the fingerprint for diagnostics: the hash cannot be
+  /// read, and "which model produced this row" is the first question asked of a
+  /// cache that looks wrong.
+  model String
+
+  /// Embeddings live in a pgvector column rather than JSON: 1024 floats are 4KB
+  /// here and roughly 20KB as JSON text, and this table grows per distinct
+  /// passage per customer.
+  vector Unsupported("vector(1024)")?
+
+  /// Everything that is not a vector — a figure description, a verdict object.
+  payload Json?
+
+  /// What this answer cost to produce the first time. Kept so the saving is
+  /// reportable: hits multiplied by this is the bill that was never sent.
+  costTokens Int @default(0)
+
+  /// Reuse count and recency, for reporting and for evicting what nobody wants.
+  hits       Int      @default(0)
+  lastUsedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@unique([organisationId, kind, fingerprint])
+  @@index([organisationId, lastUsedAt])
+  @@map("ai_cache")
 }
