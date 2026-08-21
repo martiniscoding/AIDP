@@ -95,16 +95,19 @@ UPDATE "ai_cache"
    AND "fingerprint" = ANY(%(keys)s)
 """
 
-_INSERT = """
+_INSERT_HEAD = """
 INSERT INTO "ai_cache" (
     "id", "organisationId", "kind", "fingerprint", "model",
     "vector", "costTokens", "hits", "lastUsedAt", "createdAt"
-) VALUES (
-    %(id)s, %(org)s, %(kind)s, %(fp)s, %(model)s,
-    %(vec)s::vector, %(cost)s, 0, %(now)s, %(now)s
-)
-ON CONFLICT ("organisationId", "kind", "fingerprint") DO NOTHING
+) VALUES
 """
+
+# One row of the statement above. Written as a batch rather than a statement
+# per vector: an embed batch is up to ninety-six of these, and against Neon
+# each round trip costs more than the insert itself.
+_INSERT_ROW = "(%s, %s, %s, %s, %s, %s::vector, %s, 0, %s, %s)"
+
+_INSERT_TAIL = ' ON CONFLICT ("organisationId", "kind", "fingerprint") DO NOTHING'
 
 
 def organisation() -> str | None:
@@ -135,7 +138,14 @@ def get_embeddings(organisation_id: str, keys: list[str]) -> dict[str, list[floa
                 _SELECT,
                 {"org": organisation_id, "kind": EMBEDDING, "keys": keys},
             )
-            found = {row["fingerprint"]: _parse_vector(row["vector"]) for row in rows}
+            found: dict[str, list[float]] = {}
+            for row in rows:
+                try:
+                    found[row["fingerprint"]] = _parse_vector(row["vector"])
+                except ValueError:
+                    # One unreadable row should cost one re-embed, not the
+                    # whole batch's worth of hits.
+                    logs.warn(log, "skipping unreadable cache row", key=row["fingerprint"][:12])
             if found:
                 # Recency and reuse count, for reporting the saving and for
                 # evicting what nobody wants. Best effort — a failed bump must
@@ -168,22 +178,35 @@ def put_embeddings(
     """
     if not entries:
         return
+
+    # The caller already sends each key once, but a repeated key would collide
+    # with its own statement rather than with a stored row, and ON CONFLICT is
+    # not the guard for that. Deduplicate here so the batch is safe whoever
+    # calls it.
+    unique: dict[str, tuple[str, str, list[float], int]] = {}
+    for entry in entries:
+        unique.setdefault(entry[0], entry)
+
+    now = db.now()
+    params: list[object] = []
+    for key, model, vector, cost in unique.values():
+        params.extend(
+            (
+                db.new_id(),
+                organisation_id,
+                EMBEDDING,
+                key,
+                model,
+                "[" + ",".join(f"{v:.7g}" for v in vector) + "]",
+                cost,
+                now,
+                now,
+            )
+        )
+
+    sql = _INSERT_HEAD + ",".join([_INSERT_ROW] * len(unique)) + _INSERT_TAIL
     try:
         with db.connection() as conn:
-            for key, model, vector, cost in entries:
-                db.execute(
-                    conn,
-                    _INSERT,
-                    {
-                        "id": db.new_id(),
-                        "org": organisation_id,
-                        "kind": EMBEDDING,
-                        "fp": key,
-                        "model": model,
-                        "vec": "[" + ",".join(f"{v:.7g}" for v in vector) + "]",
-                        "cost": cost,
-                        "now": db.now(),
-                    },
-                )
+            db.execute(conn, sql, params)
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         logs.warn(log, "cache write failed, continuing", error=str(exc)[:200])

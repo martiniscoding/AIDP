@@ -133,6 +133,10 @@ class VoyageProvider:
             {"model": self.model, "input": texts, "input_type": input_type},
         )
         ordered = sorted(data["data"], key=lambda d: d["index"])
+        if len(ordered) != len(texts):
+            raise RuntimeError(
+                f"{self.model} returned {len(ordered)} embeddings for {len(texts)} inputs"
+            )
         return [d["embedding"] for d in ordered]
 
 
@@ -156,6 +160,10 @@ class OpenAIProvider:
             payload,
         )
         ordered = sorted(data["data"], key=lambda d: d["index"])
+        if len(ordered) != len(texts):
+            raise RuntimeError(
+                f"{self.model} returned {len(ordered)} embeddings for {len(texts)} inputs"
+            )
         return [d["embedding"] for d in ordered]
 
 
@@ -210,7 +218,7 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
     pending_keys: list[str] = []
     pending_texts: list[str] = []
     queued: set[str] = set()
-    for text, key in zip(texts, keys):
+    for text, key in zip(texts, keys, strict=True):
         if key in stored or key in queued:
             continue
         queued.add(key)
@@ -227,7 +235,7 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
                 f"{prov.model} returned {len(vectors[0])}-dim vectors but the column is "
                 f"vector({prov.dims}). Set EMBEDDING_DIMS to match, or migrate the column."
             )
-        fresh.update(zip(batch_keys, vectors))
+        fresh.update(zip(batch_keys, vectors, strict=True))
 
         # Recorded only for what was actually sent, so a cached run costs
         # nothing on the People page — which is true, and is the number an
@@ -250,7 +258,7 @@ def embed_all(texts: list[str], input_type: InputType = "document") -> list[list
                 organisation_id,
                 [
                     (key, prov.model, vector, usage.estimate_tokens(text))
-                    for key, vector, text in zip(batch_keys, vectors, batch)
+                    for key, vector, text in zip(batch_keys, vectors, batch, strict=True)
                 ],
             )
 
