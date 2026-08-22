@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
-import { cn } from "@/lib/cn";
 import { requireWorkspace } from "@/lib/access/gate";
 import { SignOutButton } from "./SignOutButton";
 
@@ -36,13 +35,12 @@ export default async function DashboardLayout({
       .map((part) => part[0]!.toUpperCase())
       .join("") || "?";
 
-  // `cta` is the one entry that starts something rather than going somewhere,
-  // so it is styled as an action. Profile is not in this list: it lives on the
-  // account block at the right, which is where people look for it.
+  // Destinations only — starting a project belongs on the projects page, next
+  // to the list it adds to. Profile is not in this list either: it lives on
+  // the account block at the right, which is where people look for it.
   const links = [
     { href: "/dashboard", label: "Home" },
     { href: "/dashboard/documents", label: "Reference Library" },
-    { href: "/dashboard/projects?new=1", label: "Create Project", cta: true },
     { href: "/dashboard/projects", label: "My Projects" },
     { href: "/dashboard/decisions", label: "Decisions" },
     ...(isOwner
@@ -64,12 +62,7 @@ export default async function DashboardLayout({
               <Link
                 key={link.href}
                 href={link.href}
-                className={cn(
-                  "whitespace-nowrap rounded-full px-2.5 py-1.5 text-[13px] transition-colors",
-                  link.cta
-                    ? "bg-royal-light font-medium text-deep hover:bg-white"
-                    : "text-white/70 hover:bg-white/10 hover:text-white",
-                )}
+                className="whitespace-nowrap rounded-full px-2.5 py-1.5 text-[13px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
               >
                 {link.label}
               </Link>
