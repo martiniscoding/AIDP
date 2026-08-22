@@ -12,18 +12,18 @@
  * replacing something that looked nothing like it.
  */
 function Bar({ className }: { className?: string }) {
-  return <div className={`rounded-full bg-white/[0.07] ${className}`} />;
+  return <div className={`rounded-full bg-canvas-sunk ${className}`} />;
 }
 
 export default function AuthLoading() {
   return (
     <div className="w-full max-w-[440px]">
       {/* Decorative: the announcement below is what reaches assistive tech. */}
-      <div aria-hidden="true" className="edge-light relative overflow-hidden rounded-2xl border border-white/[0.09] bg-white/[0.035] p-7 shadow-[0_1px_0_0_rgba(255,255,255,0.05)_inset,0_50px_120px_-60px_rgba(124,58,237,0.85),0_20px_60px_-40px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:p-9">
+      <div aria-hidden="true" className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(60,50,40,0.10),0_18px_50px_-24px_rgba(60,50,40,0.20),0_40px_90px_-60px_rgba(124,58,237,0.35)] backdrop-blur-2xl sm:p-9">
         <div className="animate-pulse">
           {/* Tab switch */}
-          <div className="mb-7 grid grid-cols-2 gap-1 rounded-full border border-white/10 bg-ink-950/40 p-1">
-            <div className="h-9 rounded-full bg-white/[0.08]" />
+          <div className="mb-7 grid grid-cols-2 gap-1 rounded-full border border-line bg-canvas-sunk p-1">
+            <div className="h-9 rounded-full bg-canvas-sunk" />
             <div className="h-9 rounded-full" />
           </div>
 
@@ -35,11 +35,11 @@ export default function AuthLoading() {
           <div className="mt-8 flex flex-col gap-4">
             <div>
               <Bar className="h-3 w-24" />
-              <div className="mt-2 h-11 rounded-xl border border-white/[0.08] bg-white/[0.03]" />
+              <div className="mt-2 h-11 rounded-xl border border-line bg-card" />
             </div>
             <div>
               <Bar className="h-3 w-20" />
-              <div className="mt-2 h-11 rounded-xl border border-white/[0.08] bg-white/[0.03]" />
+              <div className="mt-2 h-11 rounded-xl border border-line bg-card" />
             </div>
             <div className="mt-1 h-13 rounded-full bg-royal/40" />
           </div>

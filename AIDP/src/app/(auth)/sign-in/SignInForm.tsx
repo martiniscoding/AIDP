@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Building2, Lock, Mail } from "lucide-react";
+import { ArrowRight, Lock, Mail } from "lucide-react";
 import { AuthCard, FormError } from "@/components/auth/AuthCard";
 import { validateEmail } from "@/components/auth/validation";
 import { useFieldErrors } from "@/components/auth/useFieldErrors";
@@ -15,8 +15,7 @@ import { verifyWorkspace } from "../actions";
 export function SignInForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [company, setCompany] = useState("");
-  const { errors, validate, clear } = useFieldErrors<"email" | "password" | "company">();
+  const { errors, validate, clear } = useFieldErrors<"email" | "password">();
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -28,9 +27,6 @@ export function SignInForm() {
       // Deliberately not length-checking on sign-in: an existing password
       // that predates the current rule should still get a real attempt.
       password: password ? undefined : "Enter your password.",
-      // Company is checked on the server, not here. A platform operator has no
-      // company and leaves it blank, and this form cannot tell which kind of
-      // account is signing in until the password has been verified.
     });
     if (!passes) return;
 
@@ -58,10 +54,10 @@ export function SignInForm() {
         return;
       }
 
-      // The password was right. Whether they are still admitted, and whether
-      // this is the workspace they named, are separate questions — see
+      // The password was right. Whether they are still admitted, and which
+      // workspace their email belongs to, are separate questions — see
       // actions.ts. A failure there has already signed them back out.
-      const check = await verifyWorkspace(company);
+      const check = await verifyWorkspace();
       if (!check.ok) {
         setFormError(check.message ?? "Could not sign you in.");
         return;
@@ -119,20 +115,6 @@ export function SignInForm() {
         />
 
         <Field
-          label="Company"
-          name="company"
-          autoComplete="organization"
-          placeholder="Your company's name"
-          icon={<Building2 size={16} />}
-          value={company}
-          error={errors.company}
-          onChange={(e) => {
-            setCompany(e.target.value);
-            clear("company");
-          }}
-        />
-
-        <Field
           label="Password"
           name="password"
           type="password"
@@ -148,7 +130,7 @@ export function SignInForm() {
           labelAction={
             <Link
               href="/forgot-password"
-              className="text-[12.5px] text-white/45 underline-offset-4 transition-colors hover:text-white/80 hover:underline"
+              className="text-[12.5px] text-ink/66 underline-offset-4 transition-colors hover:text-ink/84 hover:underline"
             >
               Forgot password?
             </Link>

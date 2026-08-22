@@ -12,8 +12,8 @@ import { motion } from "framer-motion";
  */
 
 const VIEW = "0 0 220 170";
-const STRUCTURE = "rgba(255,255,255,0.16)";
-const STRUCTURE_SOFT = "rgba(255,255,255,0.09)";
+const STRUCTURE = "rgba(26,20,48,0.16)";
+const STRUCTURE_SOFT = "rgba(26,20,48,0.09)";
 
 function Defs({ id }: { id: string }) {
   return (
@@ -71,7 +71,7 @@ export function SubmitVisual() {
             rx="6"
             stroke={i === 1 ? "url(#v1-g)" : STRUCTURE}
             strokeWidth="1.25"
-            fill="rgba(255,255,255,0.02)"
+            fill="rgba(26,20,48,0.03)"
           />
           <path
             d={`M${48 + i * 46} ${40 + i * 8}h28M${48 + i * 46} ${48 + i * 8}h20M${48 + i * 46} ${56 + i * 8}h24`}
@@ -91,7 +91,7 @@ export function SubmitVisual() {
         rx="10"
         stroke="url(#v1-g)"
         strokeWidth="1.25"
-        fill="rgba(255,255,255,0.03)"
+        fill="rgba(26,20,48,0.038)"
       />
       <motion.path
         d="M110 96v-14"
@@ -108,10 +108,10 @@ export function SubmitVisual() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <rect x="48" y="117" width="34" height="12" rx="6" fill="rgba(255,255,255,0.1)" />
+      <rect x="48" y="117" width="34" height="12" rx="6" fill="rgba(26,20,48,0.1)" />
       {/* Focal: the chosen assessment type */}
       <rect x="88" y="117" width="52" height="12" rx="6" fill="url(#v1-p)" />
-      <rect x="146" y="117" width="26" height="12" rx="6" fill="rgba(255,255,255,0.1)" />
+      <rect x="146" y="117" width="26" height="12" rx="6" fill="rgba(26,20,48,0.1)" />
     </svg>
   );
 }
@@ -140,7 +140,7 @@ export function AutofillVisual() {
         rx="12"
         stroke={STRUCTURE}
         strokeWidth="1.25"
-        fill="rgba(255,255,255,0.02)"
+        fill="rgba(26,20,48,0.03)"
       />
 
       {ROWS.map((row, i) => (
@@ -151,7 +151,7 @@ export function AutofillVisual() {
             width={row.label}
             height="7"
             rx="3.5"
-            fill="rgba(255,255,255,0.14)"
+            fill="rgba(26,20,48,0.14)"
           />
           <rect
             x="42"
@@ -159,7 +159,7 @@ export function AutofillVisual() {
             width={row.w}
             height="9"
             rx="4.5"
-            fill="rgba(255,255,255,0.05)"
+            fill="rgba(26,20,48,0.05)"
           />
           <motion.rect
             x="42"
@@ -282,7 +282,7 @@ export function ParseEmbedVisual() {
         rx="10"
         stroke={STRUCTURE}
         strokeWidth="1.25"
-        fill="rgba(255,255,255,0.02)"
+        fill="rgba(26,20,48,0.03)"
       />
       {Array.from({ length: 24 }).map((_, i) => {
         const col = i % 4;
@@ -354,7 +354,7 @@ export function RetrieveVisual() {
             cx={n.x}
             cy={n.y}
             r={n.hit ? 5 : 3.2}
-            fill={n.hit ? "url(#v4-g)" : "rgba(255,255,255,0.18)"}
+            fill={n.hit ? "url(#v4-g)" : "rgba(26,20,48,0.18)"}
           />
         </g>
       ))}
@@ -407,7 +407,7 @@ export function AssessVisual() {
             rx="9"
             stroke="url(#v5-g)"
             strokeWidth="1.25"
-            fill="rgba(255,255,255,0.03)"
+            fill="rgba(26,20,48,0.038)"
           />
           {[0, 1, 2, 3].map((i) => (
             <motion.rect
@@ -427,7 +427,9 @@ export function AssessVisual() {
             cx="78"
             cy={lane.y + 19}
             r="3.5"
-            fill="#ffffff"
+            // The lane head. Literal white here was left over from the dark
+            // build — on the white card this visual sits on it was invisible.
+            fill="#6d28d9"
             animate={{ opacity: [0.4, 1, 0.4] }}
             transition={loop(2.6, laneIndex * 0.5)}
           />
@@ -459,7 +461,7 @@ export function ReportVisual() {
       {/* Compliance gauge */}
       <path
         d="M44 100a66 66 0 0 1 132 0"
-        stroke="rgba(255,255,255,0.1)"
+        stroke="rgba(26,20,48,0.1)"
         strokeWidth="7"
         strokeLinecap="round"
       />
@@ -489,7 +491,7 @@ export function ReportVisual() {
             width="96"
             height="7"
             rx="3.5"
-            fill="rgba(255,255,255,0.06)"
+            fill="rgba(26,20,48,0.06)"
           />
           <motion.rect
             x="62"
@@ -515,7 +517,7 @@ export function ReportVisual() {
         x="110"
         y="94"
         textAnchor="middle"
-        className="fill-white font-display"
+        className="fill-ink font-display"
         style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.03em" }}
       >
         86

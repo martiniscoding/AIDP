@@ -21,9 +21,9 @@ import {
 } from "./actions";
 
 const TONE: Record<"good" | "bad" | "neutral", string> = {
-  good: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  bad: "border-rose-400/30 bg-rose-400/[0.08] text-rose-300",
-  neutral: "border-white/15 bg-white/[0.05] text-white/60",
+  good: "border-ok-line bg-ok-tint text-ok",
+  bad: "border-danger-line bg-danger-tint text-danger",
+  neutral: "border-line bg-card text-ink/72",
 };
 
 function formatDate(value: Date | string): string {
@@ -67,9 +67,9 @@ export function DecisionRegister({
   return (
     <div className="space-y-4">
       {unindexed > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3">
-          <AlertTriangle size={15} className="shrink-0 text-amber-400/85" />
-          <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-amber-100/80">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warn-line bg-warn-tint px-4 py-3">
+          <AlertTriangle size={15} className="shrink-0 text-warn" />
+          <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-warn">
             {unindexed} decision{unindexed === 1 ? "" : "s"} could not be indexed for
             matching. {unindexed === 1 ? "It" : "They"} will only be applied to the exact
             clause referenced, not to related ones.
@@ -78,7 +78,7 @@ export function DecisionRegister({
             type="button"
             disabled={pending}
             onClick={() => run(() => retryIndexing())}
-            className="shrink-0 rounded-full border border-amber-400/40 px-3 py-1 text-[12px] text-amber-200 transition-colors hover:bg-amber-400/10 disabled:opacity-50"
+            className="shrink-0 rounded-full border border-warn-line px-3 py-1 text-[12px] text-warn transition-colors hover:bg-warn-tint disabled:opacity-50"
           >
             Retry
           </button>
@@ -94,12 +94,12 @@ export function DecisionRegister({
             className={cn(
               "rounded-full border px-3 py-1.5 text-[12.5px] transition-colors",
               filter === status
-                ? "border-white/30 bg-white/[0.09] text-white"
-                : "border-white/10 text-white/45 hover:border-white/22 hover:text-white/80",
+                ? "border-line-strong bg-canvas-sunk text-ink"
+                : "border-line text-ink/66 hover:border-line-strong hover:text-ink/84",
             )}
           >
             {STATUS_META[status].label}
-            <span className="ml-1.5 tabular-nums text-white/35">{counts[status]}</span>
+            <span className="ml-1.5 tabular-nums text-ink/62">{counts[status]}</span>
           </button>
         ))}
 
@@ -117,7 +117,7 @@ export function DecisionRegister({
       </div>
 
       {message && (
-        <p role="status" className="text-[12.5px] text-white/55">
+        <p role="status" className="text-[12.5px] text-ink/70">
           {message}
         </p>
       )}
@@ -131,7 +131,7 @@ export function DecisionRegister({
       )}
 
       {shown.length === 0 && !composing ? (
-        <p className="rounded-xl border border-white/[0.07] bg-white/[0.015] px-4 py-8 text-center text-[13px] text-white/35">
+        <p className="rounded-xl border border-line bg-card px-4 py-8 text-center text-[13px] text-ink/62">
           {filter ? `No ${STATUS_META[filter].label.toLowerCase()} decisions.` : "Nothing here yet."}
         </p>
       ) : (
@@ -186,7 +186,7 @@ function DecisionCard({
   return (
     <article
       className={cn(
-        "rounded-xl border border-white/[0.09] bg-white/[0.02] p-4",
+        "rounded-xl border border-line bg-card p-4",
         !inForce && "opacity-60",
       )}
     >
@@ -201,9 +201,9 @@ function DecisionCard({
         </span>
 
         <div className="min-w-0 flex-1">
-          <h3 className="text-[14px] font-medium text-white/90">{decision.title}</h3>
+          <h3 className="text-[14px] font-medium text-ink/92">{decision.title}</h3>
           {decision.clauseRef && (
-            <p className="mt-0.5 font-mono text-[11.5px] text-white/35">
+            <p className="mt-0.5 font-mono text-[11.5px] text-ink/62">
               {decision.clauseRef}
               {decision.clauseTitle ? ` · ${decision.clauseTitle}` : ""}
             </p>
@@ -211,28 +211,28 @@ function DecisionCard({
         </div>
 
         {!inForce && (
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-white/40">
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink/64">
             {STATUS_META[decision.status as DecisionStatus]?.label ?? decision.status}
           </span>
         )}
       </div>
 
-      <p className="mt-2.5 text-[13px] leading-relaxed text-white/70">{decision.statement}</p>
+      <p className="mt-2.5 text-[13px] leading-relaxed text-ink/78">{decision.statement}</p>
 
       {decision.rationale && decision.rationale !== decision.statement && (
-        <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/40">
+        <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink/64">
           {decision.rationale}
         </p>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-white/35">
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-ink/62">
         <span>{decision.decidedByName || "Unattributed"}</span>
         <span>·</span>
         <span>{formatDate(decision.effectiveFrom)}</span>
         {decision.expiresAt && (
           <>
             <span>·</span>
-            <span className="inline-flex items-center gap-1 text-amber-300/70">
+            <span className="inline-flex items-center gap-1 text-warn">
               <Clock size={11} />
               until {formatDate(decision.expiresAt)}
             </span>
@@ -243,7 +243,7 @@ function DecisionCard({
             <span>·</span>
             <a
               href={`/dashboard/documents/${decision.sourceDocumentId}`}
-              className="underline decoration-white/20 underline-offset-2 transition-colors hover:text-white/70"
+              className="underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/78"
             >
               from a review
             </a>
@@ -252,7 +252,7 @@ function DecisionCard({
         {!decision.hasVector && inForce && (
           <>
             <span>·</span>
-            <span className="text-amber-300/70">clause match only</span>
+            <span className="text-warn">clause match only</span>
           </>
         )}
 
@@ -263,7 +263,7 @@ function DecisionCard({
                 type="button"
                 disabled={pending}
                 onClick={onRevise}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-white/80 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-ink/84 disabled:opacity-50"
               >
                 <RotateCcw size={11} />
                 Revise
@@ -272,7 +272,7 @@ function DecisionCard({
                 type="button"
                 disabled={pending}
                 onClick={onRetire}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-amber-300 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-warn disabled:opacity-50"
               >
                 <Ban size={11} />
                 Retire
@@ -283,7 +283,7 @@ function DecisionCard({
               type="button"
               disabled={pending}
               onClick={onReinstate}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-white/80 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:text-ink/84 disabled:opacity-50"
             >
               <Undo2 size={11} />
               Reinstate
@@ -358,7 +358,7 @@ function DecisionForm({
       </Field>
 
       <div>
-        <span className="mb-1.5 block text-[11.5px] text-white/40">
+        <span className="mb-1.5 block text-[11.5px] text-ink/64">
           How should an assessment treat it?
         </span>
         <div className="flex flex-wrap gap-1.5">
@@ -373,7 +373,7 @@ function DecisionForm({
                 className={cn(
                   "rounded-lg border px-2.5 py-1.5 text-left text-[11.5px] transition-[box-shadow,opacity]",
                   TONE[meta.tone],
-                  effect === option ? "ring-2 ring-white/50" : "opacity-60 hover:opacity-90",
+                  effect === option ? "ring-2 ring-line-strong" : "opacity-60 hover:opacity-90",
                 )}
               >
                 <span className="block font-medium">{meta.label}</span>
@@ -381,7 +381,7 @@ function DecisionForm({
             );
           })}
         </div>
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-white/35">
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink/62">
           {EFFECT_META[effect].blurb}
         </p>
       </div>
@@ -417,7 +417,7 @@ function DecisionForm({
         <button
           type="button"
           onClick={onCancel}
-          className="text-[12.5px] text-white/35 transition-colors hover:text-white/70"
+          className="text-[12.5px] text-ink/62 transition-colors hover:text-ink/78"
         >
           cancel
         </button>
@@ -427,7 +427,7 @@ function DecisionForm({
 }
 
 const INPUT =
-  "w-full rounded-lg border border-white/12 bg-ink-950/50 px-2.5 py-2 text-[13px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid";
+  "w-full rounded-lg border border-line bg-canvas-sunk px-2.5 py-2 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid";
 
 function Field({
   label,
@@ -440,9 +440,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11.5px] text-white/40">
+      <span className="mb-1 block text-[11.5px] text-ink/64">
         {label}
-        {hint ? <span className="ml-1.5 text-white/25">{hint}</span> : null}
+        {hint ? <span className="ml-1.5 text-ink/58">{hint}</span> : null}
       </span>
       {children}
     </label>

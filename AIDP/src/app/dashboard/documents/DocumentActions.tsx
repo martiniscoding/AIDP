@@ -38,16 +38,16 @@ export function DocumentActions({
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {message && <span className="text-[12px] text-white/45">{message}</span>}
+      {message && <span className="text-[12px] text-ink/66">{message}</span>}
 
       <button
         type="button"
         disabled={pending}
         onClick={() => run(() => reprocessDocument(documentId))}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5",
-          "text-[12.5px] text-white/60 transition-colors",
-          "hover:border-white/25 hover:text-white disabled:opacity-50",
+          "inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5",
+          "text-[12.5px] text-ink/72 transition-colors",
+          "hover:border-line-strong hover:text-ink disabled:opacity-50",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
         )}
       >
@@ -56,22 +56,22 @@ export function DocumentActions({
       </button>
 
       {confirming ? (
-        <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/30 bg-amber-400/[0.07] px-3 py-1.5 text-[12.5px]">
-          <span className="text-white/70">
+        <span className="inline-flex items-center gap-2 rounded-full border border-warn-line bg-warn-tint px-3 py-1.5 text-[12.5px]">
+          <span className="text-ink/78">
             Delete “{title}” with its clauses and vectors?
           </span>
           <button
             type="button"
             disabled={pending}
             onClick={() => run(() => deleteDocument(documentId), redirectAfterDelete)}
-            className="font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200 disabled:opacity-50"
+            className="font-medium text-warn underline underline-offset-2 hover:text-danger disabled:opacity-50"
           >
             Delete
           </button>
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="text-white/45 hover:text-white/70"
+            className="text-ink/66 hover:text-ink/78"
           >
             Cancel
           </button>
@@ -82,9 +82,9 @@ export function DocumentActions({
           disabled={pending}
           onClick={() => setConfirming(true)}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5",
-            "text-[12.5px] text-white/50 transition-colors",
-            "hover:border-amber-400/40 hover:text-amber-300 disabled:opacity-50",
+            "inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5",
+            "text-[12.5px] text-ink/68 transition-colors",
+            "hover:border-warn-line hover:text-danger disabled:opacity-50",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           )}
         >

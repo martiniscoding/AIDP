@@ -35,7 +35,7 @@ export default function AuthLayout({
           <Logo className="lg:invisible" />
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-[13px] text-white/55 backdrop-blur-md transition-colors hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-card px-3.5 py-1.5 text-[13px] text-ink/70 backdrop-blur-md transition-colors hover:border-line-strong hover:bg-canvas-sunk hover:text-ink"
           >
             <ArrowLeft size={15} aria-hidden="true" />
             Back to site
@@ -50,9 +50,9 @@ export default function AuthLayout({
           <ShieldCheck
             size={14}
             aria-hidden="true"
-            className="shrink-0 text-white/25"
+            className="shrink-0 text-ink/58"
           />
-          <p className="text-[12.5px] text-white/35">
+          <p className="text-[12.5px] text-ink/62">
             Every action on your account is logged for audit.
           </p>
         </footer>

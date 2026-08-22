@@ -38,7 +38,7 @@ export function Nav() {
       className={cn(
         "fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter] duration-500",
         scrolled || open
-          ? "border-b border-white/[0.07] bg-ink-900/70 backdrop-blur-xl"
+          ? "border-b border-line bg-canvas/80 backdrop-blur-xl"
           : "border-b border-transparent bg-transparent",
       )}
     >
@@ -53,7 +53,7 @@ export function Nav() {
             <li key={link.href}>
               <a
                 href={link.href}
-                className="rounded-full px-3.5 py-2 text-[13.5px] text-white/60 transition-colors duration-200 hover:bg-white/[0.06] hover:text-white"
+                className="rounded-full px-3.5 py-2 text-[13.5px] text-ink/72 transition-colors duration-200 hover:bg-canvas-sunk hover:text-ink"
               >
                 {link.label}
               </a>
@@ -76,7 +76,7 @@ export function Nav() {
           aria-expanded={open}
           aria-controls="mobile-menu"
           aria-label={open ? "Close menu" : "Open menu"}
-          className="grid size-10 place-items-center rounded-full border border-white/10 text-white/75 transition-colors hover:bg-white/[0.06] hover:text-white md:hidden"
+          className="grid size-10 place-items-center rounded-full border border-line text-ink/80 transition-colors hover:bg-canvas-sunk hover:text-ink md:hidden"
         >
           {open ? <X size={18} /> : <Menu size={18} />}
         </button>
@@ -90,7 +90,7 @@ export function Nav() {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden border-t border-white/[0.07] md:hidden"
+            className="overflow-hidden border-t border-line md:hidden"
           >
             <ul className="flex flex-col gap-1 px-5 py-4">
               {LINKS.map((link) => (
@@ -98,7 +98,7 @@ export function Nav() {
                   <a
                     href={link.href}
                     onClick={() => setOpen(false)}
-                    className="block rounded-xl px-3 py-2.5 text-[15px] text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+                    className="block rounded-xl px-3 py-2.5 text-[15px] text-ink/78 transition-colors hover:bg-canvas-sunk hover:text-ink"
                   >
                     {link.label}
                   </a>

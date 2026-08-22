@@ -67,14 +67,14 @@ export function KnowledgeGraph() {
             width="108"
             height="36"
             rx="9"
-            stroke="rgba(255,255,255,0.16)"
+            stroke="rgba(26,20,48,0.16)"
             strokeWidth="1.25"
-            fill="rgba(255,255,255,0.025)"
+            fill="rgba(26,20,48,0.032)"
           />
           <text
             x="26"
             y={source.y + 4}
-            className="fill-white/55"
+            className="fill-ink/45"
             style={{ fontSize: 11, letterSpacing: "0.01em" }}
           >
             {source.label}
@@ -84,7 +84,7 @@ export function KnowledgeGraph() {
           {/* Feed line into the hub */}
           <path
             d={`M116 ${source.y} C 168 ${source.y}, 176 96, 226 96`}
-            stroke="rgba(255,255,255,0.12)"
+            stroke="rgba(26,20,48,0.12)"
             strokeWidth="1.25"
           />
           {/* Ingest pulse. SMIL rather than Framer here — motion along an
@@ -166,7 +166,7 @@ export function KnowledgeGraph() {
         y1="96"
         x2="300"
         y2="96"
-        stroke="rgba(255,255,255,0.16)"
+        stroke="rgba(26,20,48,0.16)"
         strokeWidth="1.25"
       />
       {NODES.map((node, i) => (

@@ -54,15 +54,22 @@ export function StatsStrip() {
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
         <div
           data-path-anchor
-          className="edge-light relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.02] px-6 py-12 backdrop-blur-xl sm:px-10 sm:py-14"
+          className="relative overflow-hidden rounded-2xl bg-deep px-6 py-12 shadow-pop sm:px-10 sm:py-14"
         >
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                "radial-gradient(70% 100% at 50% 0%, rgba(124,58,237,0.12), transparent 70%)",
+                "radial-gradient(70% 100% at 50% 0%, rgba(139,92,246,0.38), transparent 70%)",
             }}
+          />
+          {/* Hairline along the top edge. On a deep block the light comes from
+              above, which is the one place `edge-light` cannot help — that
+              utility draws an ink crease for the light surfaces. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-[12%] top-0 h-px bg-linear-to-r from-transparent via-white/30 to-transparent"
           />
           <dl className="relative grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
             {STATS.map((stat, i) => (
@@ -74,9 +81,9 @@ export function StatsStrip() {
                       className={cn(
                         "font-display text-5xl font-medium tracking-[-0.05em] tabular-nums sm:text-[3.5rem]",
                         stat.muted
-                          ? "text-white/30"
+                          ? "text-white/45"
                           : stat.accent
-                            ? "text-accent"
+                            ? "text-royal-light"
                             : "text-white",
                       )}
                     >
@@ -85,8 +92,8 @@ export function StatsStrip() {
                     <span
                       className={
                         stat.muted
-                          ? "font-display text-lg text-white/25"
-                          : "font-display text-lg text-white/45"
+                          ? "font-display text-lg text-white/40"
+                          : "font-display text-lg text-white/60"
                       }
                     >
                       {stat.unit}
@@ -94,7 +101,7 @@ export function StatsStrip() {
                   </dd>
                   <p
                     aria-hidden="true"
-                    className="max-w-[15rem] text-[13.5px] leading-relaxed text-white/45 text-pretty"
+                    className="max-w-[15rem] text-[13.5px] leading-relaxed text-white/65 text-pretty"
                   >
                     {stat.label}
                   </p>

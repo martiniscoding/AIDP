@@ -26,6 +26,12 @@ const Navbar1 = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
+  // Unscrolled means the capsule is over the hero, which is the page's one
+  // deep block; scrolled means it is over the light body. It carries its own
+  // colour scheme for each, because a 60%-white pill over deep violet washes
+  // to a muddy lavender and takes its ink label down with it.
+  const onDeep = !scrolled;
+
   const toggleMenu = () => setIsOpen((v) => !v);
   const closeMenu = () => setIsOpen(false);
 
@@ -61,9 +67,9 @@ const Navbar1 = () => {
         className={cn(
           "pointer-events-auto relative z-10 flex h-14 w-full max-w-3xl items-center justify-between gap-4 rounded-full border py-2 pr-2 pl-5",
           "backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-500",
-          scrolled
-            ? "border-white/[0.12] bg-ink-900/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.95)]"
-            : "border-white/[0.08] bg-ink-900/55 shadow-[0_12px_40px_-28px_rgba(0,0,0,0.9)]",
+          onDeep
+            ? "border-white/20 bg-white/10 shadow-none"
+            : "border-line bg-card/85 shadow-card-hover",
         )}
       >
         <a
@@ -78,9 +84,14 @@ const Navbar1 = () => {
             whileHover={{ rotate: 8 }}
             transition={{ duration: 0.3 }}
           >
-            <LogoMark className="h-7 w-7" />
+            <LogoMark className="h-7 w-7" tone={onDeep ? "light" : "ink"} />
           </motion.span>
-          <span className="font-display text-[16px] font-semibold tracking-tight text-white">
+          <span
+            className={cn(
+              "font-display text-[16px] font-semibold tracking-tight",
+              onDeep ? "text-white" : "text-ink",
+            )}
+          >
             Dexter
           </span>
         </a>
@@ -94,7 +105,12 @@ const Navbar1 = () => {
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 + i * 0.05 }}
-              className="rounded-full px-3 py-2 text-[13.5px] text-white/60 transition-colors duration-200 hover:bg-white/[0.06] hover:text-white"
+              className={cn(
+                "rounded-full px-3 py-2 text-[13.5px] transition-colors duration-200",
+                onDeep
+                  ? "text-white/80 hover:bg-white/15 hover:text-white"
+                  : "text-ink/72 hover:bg-canvas-sunk hover:text-ink",
+              )}
             >
               {link.label}
             </motion.a>
@@ -108,7 +124,14 @@ const Navbar1 = () => {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.3, delay: 0.25 }}
         >
-          <ButtonLink href="/sign-in" variant="ghost" size="sm">
+          <ButtonLink
+            href="/sign-in"
+            variant="ghost"
+            size="sm"
+            className={
+              onDeep ? "text-white/85 hover:bg-white/15 hover:text-white" : undefined
+            }
+          >
             Sign in
           </ButtonLink>
           <ButtonLink href="/sign-up" size="sm">
@@ -124,7 +147,12 @@ const Navbar1 = () => {
           aria-expanded={isOpen}
           aria-controls="mobile-menu"
           aria-label="Open menu"
-          className="grid size-10 place-items-center rounded-full border border-white/10 text-white/75 transition-colors hover:bg-white/[0.06] hover:text-white md:hidden"
+          className={cn(
+            "grid size-10 place-items-center rounded-full border transition-colors md:hidden",
+            onDeep
+              ? "border-white/25 text-white/85 hover:bg-white/15 hover:text-white"
+              : "border-line text-ink/80 hover:bg-canvas-sunk hover:text-ink",
+          )}
         >
           <Menu className="h-5 w-5" />
         </motion.button>
@@ -135,7 +163,7 @@ const Navbar1 = () => {
         {isOpen ? (
           <motion.div
             id="mobile-menu"
-            className="pointer-events-auto fixed inset-0 z-50 bg-ink-950/95 px-6 pt-24 backdrop-blur-xl md:hidden"
+            className="pointer-events-auto fixed inset-0 z-50 bg-canvas/95 px-6 pt-24 backdrop-blur-xl md:hidden"
             initial={{ opacity: 0, x: "100%" }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: "100%" }}
@@ -149,7 +177,7 @@ const Navbar1 = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.15 }}
-              className="absolute top-7 right-6 grid size-10 place-items-center rounded-full border border-white/10 text-white/75 transition-colors hover:bg-white/[0.06] hover:text-white"
+              className="absolute top-7 right-6 grid size-10 place-items-center rounded-full border border-line text-ink/80 transition-colors hover:bg-canvas-sunk hover:text-ink"
             >
               <X className="h-5 w-5" />
             </motion.button>
@@ -164,7 +192,7 @@ const Navbar1 = () => {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
                   transition={{ delay: 0.1 + i * 0.07 }}
-                  className="text-[17px] font-medium text-white/80 transition-colors hover:text-white"
+                  className="text-[17px] font-medium text-ink/84 transition-colors hover:text-ink"
                 >
                   {link.label}
                 </motion.a>

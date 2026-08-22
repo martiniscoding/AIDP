@@ -33,14 +33,14 @@ export default async function NoAccessPage({
 
   return (
     <div className="grid min-h-svh place-items-center px-6">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.025] p-8 text-center">
-        <span className="mx-auto mb-5 grid size-12 place-items-center rounded-xl border border-amber-400/25 bg-amber-400/10 text-amber-300">
+      <div className="w-full max-w-md rounded-2xl border border-line bg-card shadow-card p-8 text-center">
+        <span className="mx-auto mb-5 grid size-12 place-items-center rounded-xl border border-warn-line bg-warn-tint text-warn">
           <ShieldAlert size={22} strokeWidth={1.8} />
         </span>
-        <h1 className="font-display text-[20px] font-semibold tracking-tight text-white">
+        <h1 className="font-display text-[20px] font-semibold tracking-tight text-ink">
           No access to this workspace
         </h1>
-        <p className="mt-2.5 text-[13.5px] leading-relaxed text-white/50">{message}</p>
+        <p className="mt-2.5 text-[13.5px] leading-relaxed text-ink/68">{message}</p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <SignOutButton />
         </div>

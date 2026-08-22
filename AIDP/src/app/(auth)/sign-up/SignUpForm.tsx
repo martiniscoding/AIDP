@@ -30,10 +30,10 @@ import { COUNTRIES } from "@/lib/countries";
 import { AFTER_AUTH_REDIRECT, signUp } from "@/lib/auth-client";
 
 const STRENGTH_STYLES = [
-  "bg-white/15",
-  "bg-rose-400/70",
-  "bg-amber-300/80",
-  "bg-emerald-400/80",
+  "bg-ink/15",
+  "bg-danger",
+  "bg-warn",
+  "bg-ok",
 ] as const;
 
 type FieldName =
@@ -214,12 +214,12 @@ export function SignUpForm() {
                     className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
                       strength.score >= step
                         ? STRENGTH_STYLES[strength.score]
-                        : "bg-white/10"
+                        : "bg-canvas-sunk"
                     }`}
                   />
                 ))}
               </div>
-              <span className="min-w-14 text-right text-[12px] text-white/45">
+              <span className="min-w-14 text-right text-[12px] text-ink/66">
                 {strength.label || `${MIN_PASSWORD_LENGTH}+ characters`}
               </span>
             </div>

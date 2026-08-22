@@ -53,10 +53,10 @@ export type RunView = {
 } | null;
 
 const TONE: Record<string, string> = {
-  bad: "border-red-400/30 bg-red-400/[0.07] text-red-300",
-  warn: "border-amber-400/30 bg-amber-400/[0.07] text-amber-300",
-  unknown: "border-white/15 bg-white/[0.05] text-white/60",
-  good: "border-royal-mid/30 bg-royal/12 text-royal-soft",
+  bad: "border-danger-line bg-danger-tint text-danger",
+  warn: "border-warn-line bg-warn-tint text-warn",
+  unknown: "border-line bg-card text-ink/72",
+  good: "border-royal-mid/30 bg-royal/8 text-royal",
 };
 
 /**
@@ -110,10 +110,10 @@ export function Assessment({
     <section className="mb-10">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+          <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
             Assessment
           </h2>
-          <p className="mt-1 text-[12.5px] text-white/40">
+          <p className="mt-1 text-[12.5px] text-ink/64">
             {run
               ? `${run.frameworkName} v${run.frameworkVersion}` +
                 (run.model ? ` · ${run.model}` : "")
@@ -123,7 +123,7 @@ export function Assessment({
                 {" · "}
                 <a
                   href="/dashboard/decisions"
-                  className="text-royal-soft underline decoration-royal-soft/30 underline-offset-2 hover:text-white"
+                  className="text-royal underline decoration-royal/40 underline-offset-2 hover:text-ink"
                 >
                   {decisionsInForce} standing decision
                   {decisionsInForce === 1 ? "" : "s"} in force
@@ -139,7 +139,7 @@ export function Assessment({
           disabled={pending || inFlight}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors",
-            "border-royal-mid/40 bg-royal/15 text-white hover:bg-royal/25",
+            "border-royal/40 bg-royal-tint text-royal-deep hover:bg-royal/15",
             "disabled:cursor-not-allowed disabled:opacity-55",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           )}
@@ -159,17 +159,17 @@ export function Assessment({
         </button>
       </div>
 
-      {message && <p className="mb-3 text-[12.5px] text-white/50">{message}</p>}
+      {message && <p className="mb-3 text-[12.5px] text-ink/68">{message}</p>}
 
       {run?.failureReason && (
-        <p className="mb-4 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-[13px] text-amber-200/90">
+        <p className="mb-4 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
           {run.failureReason}
         </p>
       )}
 
       {inFlight && (
-        <div className="mb-4 rounded-xl border border-white/[0.09] bg-white/[0.02] px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-[12.5px] text-white/55">
+        <div className="mb-4 rounded-xl border border-line bg-card px-4 py-3">
+          <div className="mb-2 flex items-center justify-between text-[12.5px] text-ink/70">
             <span>
               {queued
                 ? "Queued — waiting for an analysis worker to pick this up."
@@ -184,7 +184,7 @@ export function Assessment({
           {/* No bar while queued. A bar at 0% claims work has started and is
               going slowly; the truth is that nothing has begun. */}
           {assessing && (
-            <div className="h-1 overflow-hidden rounded-full bg-white/10">
+            <div className="h-1 overflow-hidden rounded-full bg-canvas-sunk">
               <div
                 className="h-full rounded-full bg-royal-mid transition-[width] duration-700"
                 style={{
@@ -215,7 +215,7 @@ export function Assessment({
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] transition-opacity",
                     TONE[meta.tone],
                     count === 0 && "opacity-35",
-                    active && "ring-2 ring-white/30",
+                    active && "ring-2 ring-line-strong",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
                   )}
                 >
@@ -226,7 +226,7 @@ export function Assessment({
             })}
           </div>
 
-          <p className="mb-3 text-[12px] text-white/35">
+          <p className="mb-3 text-[12px] text-ink/62">
             {reviewed} of {findings.length} reviewed
             {filter && (
               <>
@@ -234,7 +234,7 @@ export function Assessment({
                 <button
                   type="button"
                   onClick={() => setFilter(null)}
-                  className="text-royal-soft hover:text-white"
+                  className="text-royal hover:text-ink"
                 >
                   clear filter
                 </button>
@@ -251,7 +251,7 @@ export function Assessment({
       )}
 
       {run && findings.length === 0 && !inFlight && (
-        <p className="rounded-xl border border-white/10 bg-white/[0.015] px-5 py-8 text-center text-[13.5px] text-white/40">
+        <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
           No findings recorded. The run may have failed before it reached a clause.
         </p>
       )}
@@ -283,7 +283,7 @@ function Excerpt({ item }: { item: EvidenceItem }) {
 
   if (!isTable) {
     return (
-      <p className="text-[12.5px] leading-relaxed whitespace-pre-wrap text-white/70">
+      <p className="text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/78">
         {item.excerpt}
       </p>
     );
@@ -300,7 +300,7 @@ function Excerpt({ item }: { item: EvidenceItem }) {
               <th
                 key={i}
                 scope="col"
-                className="border-b border-white/12 px-2 py-1.5 text-left font-medium text-white/55"
+                className="border-b border-line px-2 py-1.5 text-left font-medium text-ink/70"
               >
                 {cell}
               </th>
@@ -314,8 +314,8 @@ function Excerpt({ item }: { item: EvidenceItem }) {
                 <td
                   key={c}
                   className={cn(
-                    "border-b border-white/[0.06] px-2 py-1.5",
-                    c === 0 ? "text-white/80" : "text-white/60",
+                    "border-b border-line px-2 py-1.5",
+                    c === 0 ? "text-ink/84" : "text-ink/72",
                   )}
                 >
                   {/* An empty cell is written out at ingest, so a blank here is
@@ -382,12 +382,12 @@ function FindingRow({ finding }: { finding: FindingView }) {
   };
 
   return (
-    <li className="overflow-hidden rounded-xl border border-white/[0.09] bg-white/[0.02]">
+    <li className="overflow-hidden rounded-xl border border-line bg-card">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
       >
         <span
           className={cn(
@@ -409,24 +409,24 @@ function FindingRow({ finding }: { finding: FindingView }) {
 
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-mono text-[11.5px] text-white/35">{finding.clauseRef}</span>
-            <span className="text-[13.5px] text-white/85">{finding.clauseTitle}</span>
+            <span className="font-mono text-[11.5px] text-ink/62">{finding.clauseRef}</span>
+            <span className="text-[13.5px] text-ink/88">{finding.clauseTitle}</span>
           </span>
           {finding.rationale && (
-            <span className="mt-1 block text-[12.5px] leading-relaxed text-white/45">
+            <span className="mt-1 block text-[12.5px] leading-relaxed text-ink/66">
               {finding.rationale}
             </span>
           )}
         </span>
 
-        <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-white/30">
+        <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-ink/62">
           {decided && (
             <span
               className={cn(
                 "rounded px-1.5 py-0.5",
                 finding.reviewerState === "overridden"
-                  ? "bg-amber-400/15 text-amber-300/85"
-                  : "bg-white/[0.07] text-white/50",
+                  ? "bg-warn-tint text-warn"
+                  : "bg-canvas-sunk text-ink/68",
               )}
             >
               {finding.reviewerState === "overridden"
@@ -443,10 +443,10 @@ function FindingRow({ finding }: { finding: FindingView }) {
       </button>
 
       {open && (
-        <div className="border-t border-white/[0.07] px-4 py-3.5">
+        <div className="border-t border-line px-4 py-3.5">
           {finding.clauseStatement && (
-            <p className="mb-3 text-[13px] leading-relaxed text-white/60">
-              <span className="text-white/35">Requires: </span>
+            <p className="mb-3 text-[13px] leading-relaxed text-ink/72">
+              <span className="text-ink/62">Requires: </span>
               {finding.clauseStatement}
             </p>
           )}
@@ -456,16 +456,16 @@ function FindingRow({ finding }: { finding: FindingView }) {
               {finding.evidence.map((item) => (
                 <li
                   key={item.chunkId}
-                  className="overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.02]"
+                  className="overflow-hidden rounded-lg border border-line bg-card"
                 >
                   <div className="px-3 py-2.5">
-                    <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-white/35">
+                    <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-ink/62">
                       <span>{item.headingPath}</span>
                       {item.page != null && <span>· page {item.page}</span>}
                       {item.figureId && (
                         <span
                           title="A model's reading of a diagram, not text from the page"
-                          className="inline-flex items-center gap-1 rounded border border-amber-400/25 px-1.5 py-px text-[10.5px] text-amber-300/85"
+                          className="inline-flex items-center gap-1 rounded border border-warn-line px-1.5 py-px text-[10.5px] text-warn"
                         >
                           <Sparkles size={9} />
                           model-described diagram
@@ -481,7 +481,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                     reviewing every figure speculatively at ingest.
                   */}
                   {item.figureId && (
-                    <div className="border-t border-white/[0.07] bg-white p-2">
+                    <div className="border-t border-line bg-white p-2">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={`/api/figures/${item.figureId}`}
@@ -494,7 +494,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
               ))}
             </ul>
           ) : (
-            <p className="mb-3 text-[12.5px] text-white/35">
+            <p className="mb-3 text-[12.5px] text-ink/62">
               No passage in the submitted document was cited for this finding.
             </p>
           )}
@@ -504,7 +504,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
               changes how much a reviewer needs to look at the verdict at all. */}
           {finding.appliedDecisions.length > 0 && (
             <div className="mb-3 rounded-lg border border-royal-mid/25 bg-royal/[0.07] px-3 py-2.5">
-              <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-royal-soft">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-royal">
                 <Sparkles size={11} />
                 Judged with {finding.appliedDecisions.length} standing decision
                 {finding.appliedDecisions.length === 1 ? "" : "s"}
@@ -513,9 +513,9 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 {finding.appliedDecisions.map((decision) => (
                   <li
                     key={decision.id}
-                    className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-white/70"
+                    className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-ink/78"
                   >
-                    <span className="text-white/35">
+                    <span className="text-ink/62">
                       {EFFECT_META[decision.effect].label}:
                     </span>
                     {decision.title}
@@ -524,7 +524,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
               </ul>
               <a
                 href="/dashboard/decisions"
-                className="mt-1.5 inline-block text-[11.5px] text-white/35 underline decoration-white/20 underline-offset-2 transition-colors hover:text-white/70"
+                className="mt-1.5 inline-block text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/78"
               >
                 Open the decisions register
               </a>
@@ -532,11 +532,11 @@ function FindingRow({ finding }: { finding: FindingView }) {
           )}
 
           {finding.reviewerNote && (
-            <p className="mb-3 text-[12.5px] text-white/50">
-              <span className="text-white/35">Note: </span>
+            <p className="mb-3 text-[12.5px] text-ink/68">
+              <span className="text-ink/62">Note: </span>
               {finding.reviewerNote}
               {finding.promotedDecisionId && (
-                <span className="ml-2 rounded bg-royal/20 px-1.5 py-0.5 text-[11px] text-royal-soft">
+                <span className="ml-2 rounded bg-royal/8 px-1.5 py-0.5 text-[11px] text-royal">
                   kept as a decision
                 </span>
               )}
@@ -548,7 +548,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
               type="button"
               disabled={pending}
               onClick={() => decide(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/60 transition-colors hover:border-white/28 hover:text-white disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/72 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
             >
               <Check size={12} />
               Confirm
@@ -559,10 +559,10 @@ function FindingRow({ finding }: { finding: FindingView }) {
                  for a review is the most valuable thing a reviewer produces
                  — it is what a standing decision is made of — and a flow that
                  never asked for it was throwing that away. */
-              <div className="w-full space-y-3 rounded-lg border border-white/10 bg-ink-950/40 p-3">
+              <div className="w-full space-y-3 rounded-lg border border-line bg-canvas-sunk p-3">
                 {mode === "override" && (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="mr-1 text-[11.5px] text-white/40">Correct verdict:</span>
+                    <span className="mr-1 text-[11.5px] text-ink/64">Correct verdict:</span>
                     {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
                       <button
                         key={verdict}
@@ -573,7 +573,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                         className={cn(
                           "rounded-full border px-2.5 py-1 text-[11.5px] transition-[opacity,box-shadow] hover:opacity-80 disabled:opacity-50",
                           TONE[VERDICT_META[verdict].tone],
-                          chosen === verdict && "ring-2 ring-white/60",
+                          chosen === verdict && "ring-2 ring-line-strong",
                         )}
                       >
                         {VERDICT_META[verdict].label}
@@ -583,9 +583,9 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 )}
 
                 {mode === "confirm" && (
-                  <p className="text-[11.5px] text-white/40">
+                  <p className="text-[11.5px] text-ink/64">
                     Agreeing with{" "}
-                    <span className="text-white/70">
+                    <span className="text-ink/78">
                       {VERDICT_META[finding.verdict as Verdict]?.label ?? finding.verdict}
                     </span>
                     . Say why, and it can be kept as a standing decision.
@@ -593,7 +593,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 )}
 
                 <label className="block">
-                  <span className="mb-1 block text-[11.5px] text-white/40">
+                  <span className="mb-1 block text-[11.5px] text-ink/64">
                     Why? This becomes the decision if you keep it.
                   </span>
                   <textarea
@@ -601,7 +601,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                     onChange={(event) => setNote(event.target.value)}
                     rows={2}
                     placeholder="e.g. KMS-managed keys in eu-west-1 satisfy this clause."
-                    className="w-full resize-y rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+                    className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[12.5px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
                   />
                 </label>
 
@@ -610,7 +610,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                     "flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
                     remember
                       ? "border-royal-mid/40 bg-royal/[0.10]"
-                      : "border-white/10 hover:border-white/20",
+                      : "border-line hover:border-line-strong",
                   )}
                 >
                   <input
@@ -621,10 +621,10 @@ function FindingRow({ finding }: { finding: FindingView }) {
                     className="mt-0.5 size-3.5 shrink-0 accent-royal-mid disabled:opacity-40"
                   />
                   <span className="min-w-0">
-                    <span className="block text-[12.5px] text-white/85">
+                    <span className="block text-[12.5px] text-ink/88">
                       Remember this for future assessments
                     </span>
-                    <span className="block text-[11.5px] leading-relaxed text-white/40">
+                    <span className="block text-[11.5px] leading-relaxed text-ink/64">
                       {note.trim()
                         ? "Every later assessment of this clause will be judged with this decision in front of it."
                         : "Add a reason first — a decision with no stated basis is not one worth keeping."}
@@ -652,7 +652,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                   <button
                     type="button"
                     onClick={close}
-                    className="text-[12px] text-white/35 hover:text-white/70"
+                    className="text-[12px] text-ink/62 hover:text-ink/78"
                   >
                     cancel
                   </button>
@@ -668,7 +668,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                   type="button"
                   disabled={pending}
                   onClick={() => setMode("confirm")}
-                  className="rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:border-royal-mid/50 hover:text-royal-soft disabled:opacity-50"
+                  className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
                 >
                   Confirm with a reason…
                 </button>
@@ -676,7 +676,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
                   type="button"
                   disabled={pending}
                   onClick={() => setMode("override")}
-                  className="rounded-full border border-white/12 px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:border-amber-400/40 hover:text-amber-300 disabled:opacity-50"
+                  className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-warn-line hover:text-warn disabled:opacity-50"
                 >
                   Override
                 </button>

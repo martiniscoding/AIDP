@@ -351,15 +351,16 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
           <path
             ref={pathRef}
             d={d}
-            stroke="rgba(255,255,255,0.075)"
+            stroke="rgba(26,20,48,0.09)"
             strokeWidth={1.5}
             strokeLinecap="round"
           />
 
-          {/* Lit portion, bright white. The halo is three stacked strokes rather
-              than a Gaussian blur — a filter region spanning the full page height
-              is expensive to rasterise, and layered strokes are indistinguishable
-              on a 2px line against near-black. */}
+          {/* Lit portion, in the accent — this line runs almost entirely over
+              the light body, where white was invisible. The halo is three
+              stacked strokes rather than a Gaussian blur: a filter region
+              spanning the full page height is expensive to rasterise, and
+              layered strokes are indistinguishable on a 2px line. */}
           {[
             { width: 10, opacity: 0.09 },
             { width: 5, opacity: 0.2 },
@@ -369,7 +370,7 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
               key={layer.width}
               d={d}
               pathLength={1}
-              stroke="#ffffff"
+              stroke="#6d28d9"
               strokeWidth={layer.width}
               strokeLinecap="round"
               strokeDasharray={1}
@@ -390,9 +391,9 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
         />
         <circle cx={size.w / 2} cy={startY} r={2.5} fill="#ffffff" />
 
-        {/* The playhead — white core, and the proximity halo is the one place
-            the accent appears on the line, so passing a step reads as an
-            event rather than just a brighter dot. */}
+        {/* The playhead — violet core against the light body, with a lighter
+            proximity halo, so passing a step reads as an event rather than
+            just a brighter dot. */}
         <motion.circle
           cx={nodeX}
           cy={nodeY}
@@ -405,7 +406,7 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
           cx={nodeX}
           cy={nodeY}
           r={9}
-          fill="#ffffff"
+          fill="#7c3aed"
           filter="url(#node-glow)"
           opacity={0.7}
         />
@@ -413,11 +414,11 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
           cx={nodeX}
           cy={nodeY}
           r={4.5}
-          fill="#ffffff"
+          fill="#6d28d9"
           animate={reduced ? { opacity: 1 } : { opacity: [0.8, 1, 0.8] }}
           transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
         />
-        <motion.circle cx={nodeX} cy={nodeY} r={2} fill="#ffffff" />
+        <motion.circle cx={nodeX} cy={nodeY} r={2} fill="#4c1d95" />
       </svg>
 
       <div

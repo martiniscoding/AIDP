@@ -98,19 +98,19 @@ export function WorkflowSection() {
                   y={0}
                   duration={0.95}
                 >
-                  <div className="step-card relative rounded-xl border border-white/[0.1] bg-white/[0.025] p-7 backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-700 sm:p-8">
+                  <div className="step-card relative rounded-xl border border-line bg-card p-7 backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-700 sm:p-8">
                     <div className="flex items-center gap-3">
-                      <span className="step-index grid size-8 place-items-center rounded-md border border-white/15 font-display text-[12px] font-medium tabular-nums text-white/70 transition-colors duration-700">
+                      <span className="step-index grid size-8 place-items-center rounded-md border border-line font-display text-[12px] font-medium tabular-nums text-ink/78 transition-colors duration-700">
                         {String(i + 1).padStart(2, "0")}
                       </span>
-                      <span className="text-[11px] uppercase tracking-[0.18em] text-white/30">
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-ink/62">
                         {step.meta}
                       </span>
                     </div>
-                    <h3 className="mt-6 font-display text-[26px] font-medium tracking-[-0.03em] text-white">
+                    <h3 className="mt-6 font-display text-[26px] font-medium tracking-[-0.03em] text-ink">
                       {step.title}
                     </h3>
-                    <p className="mt-3 text-[14.5px] leading-[1.65] text-white/60 text-pretty">
+                    <p className="mt-3 text-[14.5px] leading-[1.65] text-ink/72 text-pretty">
                       {step.body}
                     </p>
                   </div>
@@ -147,7 +147,7 @@ export function WorkflowSection() {
                       delay={0.1}
                       duration={0.95}
                     >
-                      <div className="step-visual relative h-full w-full rounded-xl border border-white/[0.1] bg-white/[0.025] p-3 transition-[border-color,box-shadow,transform] duration-700">
+                      <div className="step-visual relative h-full w-full rounded-xl border border-line bg-card p-3 transition-[border-color,box-shadow,transform] duration-700">
                         <Visual />
                       </div>
                     </Reveal>
@@ -161,7 +161,7 @@ export function WorkflowSection() {
         {/* Where the six stages land */}
         <div className="mt-28 sm:mt-36">
           <Reveal>
-            <p className="mx-auto max-w-xl text-center text-[15px] leading-relaxed text-white/50 text-pretty">
+            <p className="mx-auto max-w-xl text-center text-[15px] leading-relaxed text-ink/68 text-pretty">
               The report is a decision point, not a verdict. Every assessment
               ends in one of three recorded outcomes.
             </p>
@@ -173,16 +173,16 @@ export function WorkflowSection() {
           >
             {OUTCOMES.map((outcome, i) => (
               <Reveal key={outcome.title} delay={i * 0.08}>
-                <div className="h-full rounded-xl border border-white/[0.1] bg-white/[0.025] p-6 backdrop-blur-md">
+                <div className="h-full rounded-xl border border-line bg-card p-6 backdrop-blur-md">
                   <outcome.icon
                     size={18}
-                    className="text-white/70"
+                    className="text-ink/78"
                     aria-hidden="true"
                   />
-                  <h4 className="mt-4 font-display text-[15px] font-semibold text-white">
+                  <h4 className="mt-4 font-display text-[15px] font-semibold text-ink">
                     {outcome.title}
                   </h4>
-                  <p className="mt-2 text-[13.5px] leading-relaxed text-white/50">
+                  <p className="mt-2 text-[13.5px] leading-relaxed text-ink/68">
                     {outcome.body}
                   </p>
                 </div>

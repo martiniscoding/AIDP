@@ -31,12 +31,12 @@ const COLUMNS = [
 
 export function Footer() {
   return (
-    <footer className="relative border-t border-white/[0.07]">
+    <footer className="relative border-t border-line">
       <div className="mx-auto max-w-[1280px] px-5 py-16 sm:px-8 sm:py-20">
         <div className="grid gap-12 lg:grid-cols-12">
           <div className="lg:col-span-5">
             <Logo />
-            <p className="mt-5 max-w-xs text-[14px] leading-relaxed text-white/45 text-pretty">
+            <p className="mt-5 max-w-xs text-[14px] leading-relaxed text-ink/66 text-pretty">
               AI-native enterprise architecture governance. Automated
               assessment, grounded in your own principles and prior decisions.
             </p>
@@ -45,7 +45,7 @@ export function Footer() {
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:col-span-6 lg:col-start-7">
             {COLUMNS.map((column) => (
               <nav key={column.title} aria-label={column.title}>
-                <h2 className="text-[12px] font-medium uppercase tracking-[0.16em] text-white/35">
+                <h2 className="text-[12px] font-medium uppercase tracking-[0.16em] text-ink/62">
                   {column.title}
                 </h2>
                 <ul className="mt-4 flex flex-col gap-2.5">
@@ -54,14 +54,14 @@ export function Footer() {
                       {link.href.startsWith("#") ? (
                         <a
                           href={link.href}
-                          className="text-[14px] text-white/55 transition-colors hover:text-white"
+                          className="text-[14px] text-ink/70 transition-colors hover:text-ink"
                         >
                           {link.label}
                         </a>
                       ) : (
                         <Link
                           href={link.href}
-                          className="text-[14px] text-white/55 transition-colors hover:text-white"
+                          className="text-[14px] text-ink/70 transition-colors hover:text-ink"
                         >
                           {link.label}
                         </Link>
@@ -74,11 +74,11 @@ export function Footer() {
           </div>
         </div>
 
-        <div className="mt-14 flex flex-col gap-3 border-t border-white/[0.07] pt-7 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] text-white/35">
+        <div className="mt-14 flex flex-col gap-3 border-t border-line pt-7 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] text-ink/62">
             © {new Date().getFullYear()} Dexter. All rights reserved.
           </p>
-          <p className="text-[13px] text-white/35">
+          <p className="text-[13px] text-ink/62">
             Architecture reviews in days, not weeks.
           </p>
         </div>

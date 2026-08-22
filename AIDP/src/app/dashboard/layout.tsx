@@ -37,24 +37,30 @@ export default async function DashboardLayout({
 
   const links = [
     { href: "/dashboard", label: "Overview" },
-    { href: "/dashboard/tech-stack", label: "Technology reference" },
+    { href: "/dashboard/projects", label: "Projects" },
     { href: "/dashboard/documents", label: "Standards library" },
     { href: "/dashboard/decisions", label: "Decisions" },
-    ...(isOwner ? [{ href: "/dashboard/people", label: "People" }] : []),
+    ...(isOwner
+      ? [
+          { href: "/dashboard/activity", label: "Activity" },
+          { href: "/dashboard/people", label: "People" },
+          { href: "/dashboard/profile", label: "Profile" },
+        ]
+      : []),
   ];
 
   return (
     <div className="min-h-svh">
-      <header className="sticky top-0 z-50 border-b border-white/[0.08] bg-ink-900/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-6">
-          <Logo href="/dashboard" />
+          <Logo tone="light" href="/dashboard" />
 
           <nav className="hidden items-center gap-1 sm:flex">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="rounded-full px-3 py-1.5 text-[13.5px] text-white/55 transition-colors hover:bg-white/[0.06] hover:text-white"
+                className="rounded-full px-3 py-1.5 text-[13.5px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
               >
                 {link.label}
               </Link>
@@ -62,7 +68,7 @@ export default async function DashboardLayout({
             {user.isPlatformAdmin && (
               <Link
                 href="/admin"
-                className="ml-1 rounded-full border border-royal-mid/35 bg-royal/[0.12] px-3 py-1.5 text-[13.5px] text-royal-soft transition-colors hover:bg-royal/20"
+                className="ml-1 rounded-full border border-royal-light/40 bg-white/10 px-3 py-1.5 text-[13.5px] text-royal-light transition-colors hover:bg-white/20"
               >
                 Admin
               </Link>
@@ -71,17 +77,17 @@ export default async function DashboardLayout({
 
           <div className="ml-auto flex items-center gap-3">
             <div className="hidden text-right sm:block">
-              <p className="text-[13px] leading-tight text-white/85">
+              <p className="text-[13px] leading-tight text-white/88">
                 {user.name || user.email}
               </p>
-              <p className="text-[11.5px] leading-tight text-white/35">
+              <p className="text-[11.5px] leading-tight text-white/55">
                 {organisation.name}
                 {isOwner ? " · Administrator" : ""}
               </p>
             </div>
             <span
               aria-hidden="true"
-              className="grid size-9 place-items-center rounded-full border border-white/15 bg-white/[0.06] text-[12px] font-semibold text-white/80"
+              className="grid size-9 place-items-center rounded-full border border-white/20 bg-white/10 text-[12px] font-semibold text-white/85"
             >
               {initials}
             </span>

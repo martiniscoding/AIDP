@@ -28,25 +28,29 @@ function formatSize(bytes: number): string {
 }
 
 /**
- * Where the glow comes from says which group you are dropping into.
+ * Where the wash comes from says which group you are dropping into.
  *
- * Reference standards are the yardstick, so their light falls from above;
+ * Reference standards are the yardstick, so their field falls from above;
  * submissions are held up to be measured, so theirs rises from below. The hue
  * is the same royal accent in both — the palette carries one accent on purpose,
  * and a second colour would read as a status rather than a category.
+ *
+ * On paper these are pigment rather than light, so they run at roughly half
+ * the alpha the dark build used and the lit edge is the *deep* violet: a pale
+ * one had nothing to brighten against.
  */
 const FIELD: Record<Role, { wash: string; ring: string; ringActive: string }> = {
   reference: {
-    wash: "radial-gradient(120% 130% at 50% -10%, rgba(124,58,237,0.30), rgba(109,40,217,0.10) 45%, transparent 72%)",
-    ring: "linear-gradient(160deg, rgba(167,139,250,0.34), rgba(255,255,255,0.05) 44%, transparent 72%)",
+    wash: "radial-gradient(120% 130% at 50% -10%, rgba(124,58,237,0.14), rgba(109,40,217,0.05) 45%, transparent 72%)",
+    ring: "linear-gradient(160deg, rgba(124,58,237,0.34), rgba(26,20,48,0.06) 44%, transparent 72%)",
     ringActive:
-      "linear-gradient(160deg, rgba(196,181,253,0.95), rgba(139,92,246,0.55) 50%, rgba(167,139,250,0.35))",
+      "linear-gradient(160deg, rgba(109,40,217,0.95), rgba(124,58,237,0.55) 50%, rgba(167,139,250,0.45))",
   },
   assessed: {
-    wash: "radial-gradient(120% 130% at 50% 110%, rgba(124,58,237,0.26), rgba(109,40,217,0.08) 45%, transparent 72%)",
-    ring: "linear-gradient(20deg, rgba(167,139,250,0.32), rgba(255,255,255,0.05) 44%, transparent 72%)",
+    wash: "radial-gradient(120% 130% at 50% 110%, rgba(124,58,237,0.12), rgba(109,40,217,0.04) 45%, transparent 72%)",
+    ring: "linear-gradient(20deg, rgba(124,58,237,0.32), rgba(26,20,48,0.06) 44%, transparent 72%)",
     ringActive:
-      "linear-gradient(20deg, rgba(196,181,253,0.95), rgba(139,92,246,0.55) 50%, rgba(167,139,250,0.35))",
+      "linear-gradient(20deg, rgba(109,40,217,0.95), rgba(124,58,237,0.55) 50%, rgba(167,139,250,0.45))",
   },
 };
 
@@ -59,7 +63,17 @@ const FIELD: Record<Role, { wash: string; ring: string; ringActive: string }> = 
  * appears where they expect. Two zones, each labelled with what belongs in it,
  * removes the mode entirely: you drop into the group you mean.
  */
-export function UploadZone({ role, label }: { role: Role; label: string }) {
+export function UploadZone({
+  role,
+  label,
+  projectId,
+}: {
+  role: Role;
+  label: string;
+  /** Required for a design: it belongs to a piece of work. Standards are
+   *  organisation-wide and pass nothing. */
+  projectId?: string;
+}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -118,6 +132,7 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
         const body = new FormData();
         body.append("file", file);
         body.append("role", role);
+        if (projectId) body.append("projectId", projectId);
 
         const settle = (state: Receipt["state"], message?: string) =>
           setReceipts((prev) =>
@@ -141,7 +156,7 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
 
       startTransition(() => router.refresh());
     },
-    [role, router],
+    [role, projectId, router],
   );
 
   const pending = receipts.filter((r) => r.state === "uploading").length;
@@ -184,12 +199,12 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
         }
         className={cn(
           "ring-gradient group relative block w-full overflow-hidden rounded-xl",
-          "bg-ink-950/40 px-4 py-7 text-center",
+          "bg-canvas-sunk px-4 py-7 text-center",
           "transition-[box-shadow,transform,background-color] duration-300",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           armed
-            ? "bg-royal/[0.07] shadow-[0_0_0_1px_rgba(139,92,246,0.10),0_26px_70px_-40px_rgba(139,92,246,0.85)]"
-            : "hover:bg-white/[0.02] hover:shadow-[0_20px_60px_-46px_rgba(139,92,246,0.7)]",
+            ? "bg-royal/[0.07] shadow-[0_0_0_1px_rgba(124,58,237,0.18),0_18px_44px_-24px_rgba(109,40,217,0.40)]"
+            : "hover:bg-card hover:shadow-[0_16px_40px_-26px_rgba(109,40,217,0.30)]",
         )}
       >
         {/* Light field. Drifts continuously but slowly, and lifts on contact —
@@ -217,14 +232,14 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
           <SheetStack armed={armed} />
 
           <span className="flex flex-col items-center gap-1">
-            <span className="text-[13.5px] font-medium text-white/85">
+            <span className="text-[13.5px] font-medium text-ink/88">
               {dragging
                 ? "Drop to upload"
                 : busy
                   ? `Uploading ${pending} file${pending === 1 ? "" : "s"}`
                   : label}
             </span>
-            <span className="text-[11.5px] text-white/35">
+            <span className="text-[11.5px] text-ink/62">
               {busy ? "Queued in order" : `PDF or PPTX · up to ${formatSize(MAX_BYTES)}`}
             </span>
           </span>
@@ -239,21 +254,21 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
               className={cn(
                 "ring-gradient relative overflow-hidden rounded-lg px-2.5 py-2 text-[12px]",
                 r.state === "error"
-                  ? "bg-amber-400/[0.06] [--ring:linear-gradient(120deg,rgba(251,191,36,0.5),rgba(251,191,36,0.12)_60%,transparent)]"
-                  : "bg-white/[0.02]",
+                  ? "bg-warn-tint [--ring:linear-gradient(120deg,rgba(180,83,9,0.45),rgba(180,83,9,0.10)_60%,transparent)]"
+                  : "bg-card",
               )}
             >
               <span className="flex items-center gap-2">
                 {r.state === "error" ? (
-                  <TriangleAlert size={12} className="shrink-0 text-amber-400/85" />
+                  <TriangleAlert size={12} className="shrink-0 text-warn" />
                 ) : (
                   <PageGlyph muted={r.state !== "uploading"} />
                 )}
-                <span className="min-w-0 flex-1 truncate text-white/70">{r.name}</span>
+                <span className="min-w-0 flex-1 truncate text-ink/78">{r.name}</span>
                 <span
                   className={cn(
                     "shrink-0 tabular-nums",
-                    r.state === "error" ? "text-amber-300/85" : "text-white/35",
+                    r.state === "error" ? "text-warn" : "text-ink/62",
                   )}
                 >
                   {r.message ?? formatSize(r.size)}
@@ -262,7 +277,7 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
                   type="button"
                   onClick={() => setReceipts((p) => p.filter((x) => x.id !== r.id))}
                   aria-label={`Dismiss ${r.name}`}
-                  className="shrink-0 rounded text-white/25 transition-colors hover:text-white/70"
+                  className="shrink-0 rounded text-ink/58 transition-colors hover:text-ink/78"
                 >
                   <X size={12} />
                 </button>
@@ -273,9 +288,9 @@ export function UploadZone({ role, label }: { role: Role; label: string }) {
               {r.state === "uploading" && (
                 <span
                   aria-hidden="true"
-                  className="absolute inset-x-0 bottom-0 block h-px overflow-hidden bg-white/[0.06]"
+                  className="absolute inset-x-0 bottom-0 block h-px overflow-hidden bg-canvas-sunk"
                 >
-                  <span className="rail-slide block h-full w-1/4 bg-linear-to-r from-transparent via-royal-soft to-transparent" />
+                  <span className="rail-slide block h-full w-1/4 bg-linear-to-r from-transparent via-royal to-transparent" />
                 </span>
               )}
             </li>
@@ -303,28 +318,28 @@ function SheetStack({ armed }: { armed: boolean }) {
       <span
         className={cn(
           sheet,
-          "border-white/10 bg-white/[0.03]",
+          "border-line bg-card",
           armed ? "-translate-x-2.5 -rotate-12" : "-translate-x-1 -rotate-6 group-hover:-translate-x-2 group-hover:-rotate-[9deg]",
         )}
       />
       <span
         className={cn(
           sheet,
-          "border-white/12 bg-white/[0.04]",
+          "border-line bg-card",
           armed ? "translate-x-2.5 rotate-12" : "translate-x-1 rotate-6 group-hover:translate-x-2 group-hover:rotate-[9deg]",
         )}
       />
       <span
         className={cn(
           sheet,
-          "border-white/20 bg-linear-to-b from-white/[0.14] to-white/[0.04] backdrop-blur-sm",
-          armed && "border-royal-soft/70 shadow-[0_0_22px_-4px_rgba(167,139,250,0.9)]",
+          "border-line bg-linear-to-b from-card to-canvas-sunk shadow-card",
+          armed && "border-royal/70 shadow-[0_0_18px_-3px_rgba(109,40,217,0.45)]",
         )}
       >
         {/* Ruled lines, so the sheet reads as a document rather than a card. */}
-        <span className="absolute inset-x-1.5 top-2 h-px bg-white/25" />
-        <span className="absolute inset-x-1.5 top-3.5 h-px bg-white/18" />
-        <span className="absolute inset-x-1.5 top-5 h-px bg-white/12" />
+        <span className="absolute inset-x-1.5 top-2 h-px bg-ink/25" />
+        <span className="absolute inset-x-1.5 top-3.5 h-px bg-ink/18" />
+        <span className="absolute inset-x-1.5 top-5 h-px bg-ink/12" />
       </span>
     </span>
   );
@@ -337,8 +352,8 @@ function PageGlyph({ muted }: { muted: boolean }) {
       className={cn(
         "block size-3 shrink-0 rounded-[2px] border",
         muted
-          ? "border-white/20 bg-white/[0.05]"
-          : "border-royal-soft/60 bg-linear-to-b from-royal-soft/40 to-transparent",
+          ? "border-line bg-card"
+          : "border-royal/50 bg-linear-to-b from-royal-tint to-transparent",
       )}
     />
   );
@@ -347,7 +362,7 @@ function PageGlyph({ muted }: { muted: boolean }) {
 /** Shown once a document has finished, in place of the progress rail. */
 export function ReadyTick() {
   return (
-    <span className="inline-flex items-center gap-1 text-[11.5px] text-royal-soft">
+    <span className="inline-flex items-center gap-1 text-[11.5px] text-royal">
       <Check size={11} />
       Indexed
     </span>

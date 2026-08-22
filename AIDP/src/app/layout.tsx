@@ -36,8 +36,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#08090c",
-  colorScheme: "dark",
+  themeColor: "#faf9f7",
+  colorScheme: "light",
 };
 
 export default function RootLayout({
@@ -51,7 +51,7 @@ export default function RootLayout({
       data-scroll-behavior="smooth"
       className={`${interTight.variable} ${inter.variable} h-full antialiased`}
     >
-      <body className="grain min-h-full bg-ink-900 font-sans text-white">
+      <body className="grain min-h-full bg-canvas font-sans text-ink">
         <MotionProvider>{children}</MotionProvider>
       </body>
     </html>

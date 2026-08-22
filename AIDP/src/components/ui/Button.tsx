@@ -2,7 +2,7 @@ import Link from "next/link";
 import { LinkPending } from "@/components/ui/LinkPending";
 import { cn } from "@/lib/cn";
 
-type Variant = "primary" | "secondary" | "ghost";
+type Variant = "primary" | "secondary" | "ghost" | "glass";
 type Size = "sm" | "md" | "lg";
 
 const sizes: Record<Size, string> = {
@@ -23,16 +23,23 @@ const base =
  */
 const variants: Record<Variant, string> = {
   primary: cn(
-    "bg-royal text-white shadow-[0_1px_0_0_rgba(255,255,255,0.18)_inset,0_8px_30px_-10px_rgba(109,40,217,0.9)]",
+    "bg-royal text-white shadow-[0_1px_0_0_rgba(255,255,255,0.22)_inset,0_2px_6px_-2px_rgba(109,40,217,0.28),0_10px_28px_-12px_rgba(109,40,217,0.45)]",
     "hover:-translate-y-px hover:bg-royal-mid active:translate-y-0",
-    "hover:shadow-[0_1px_0_0_rgba(255,255,255,0.26)_inset,0_16px_44px_-10px_rgba(139,92,246,0.85)]",
+    "hover:shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset,0_4px_10px_-3px_rgba(109,40,217,0.32),0_18px_40px_-14px_rgba(124,58,237,0.55)]",
   ),
   secondary: cn(
-    "border border-white/15 bg-white/[0.04] text-white/85 backdrop-blur-md",
-    "hover:-translate-y-px hover:border-white/30 hover:bg-white/[0.08] hover:text-white",
-    "hover:shadow-[0_10px_36px_-16px_rgba(255,255,255,0.4)] active:translate-y-0",
+    "border border-line bg-card text-ink/88 shadow-card",
+    "hover:-translate-y-px hover:border-line-strong hover:bg-card hover:text-ink",
+    "hover:shadow-card-hover active:translate-y-0",
   ),
-  ghost: "text-white/65 hover:text-white hover:bg-white/[0.06] rounded-full",
+  ghost: "text-ink/74 hover:text-ink hover:bg-canvas-sunk rounded-full",
+  // For the deep anchor surfaces. `secondary` is a white card, which on a
+  // violet ground shouts louder than the primary action next to it.
+  glass: cn(
+    "border border-white/25 bg-white/10 text-white/90 backdrop-blur-md",
+    "hover:-translate-y-px hover:border-white/40 hover:bg-white/[0.18] hover:text-white",
+    "active:translate-y-0",
+  ),
 };
 
 type CommonProps = {

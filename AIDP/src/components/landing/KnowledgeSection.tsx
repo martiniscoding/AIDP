@@ -29,12 +29,12 @@ export function KnowledgeSection() {
               <Eyebrow>Knowledge repository</Eyebrow>
             </Reveal>
             <Reveal delay={0.06}>
-              <h2 className="mt-5 font-display text-[2.5rem] font-medium leading-[1.04] tracking-[-0.04em] text-white text-balance sm:text-[3.25rem]">
+              <h2 className="mt-5 font-display text-[2.5rem] font-medium leading-[1.04] tracking-[-0.04em] text-ink text-balance sm:text-[3.25rem]">
                 Built on your organization&apos;s knowledge.
               </h2>
             </Reveal>
             <Reveal delay={0.12}>
-              <p className="mt-5 text-[17px] leading-relaxed text-white/60 text-pretty">
+              <p className="mt-5 text-[17px] leading-relaxed text-ink/72 text-pretty">
                 Dexter does not arrive with an opinion about your architecture. It
                 assesses against the principles, standards, and precedents you
                 give it — and every future assessment reflects the latest ones.
@@ -44,11 +44,11 @@ export function KnowledgeSection() {
             <ul className="mt-10 flex flex-col gap-7">
               {POINTS.map((point, i) => (
                 <Reveal as="li" key={point.title} delay={0.18 + i * 0.07}>
-                  <div className="border-l border-white/10 pl-5">
-                    <h3 className="font-display text-[15px] font-semibold text-white">
+                  <div className="border-l border-line pl-5">
+                    <h3 className="font-display text-[15px] font-semibold text-ink">
                       {point.title}
                     </h3>
-                    <p className="mt-1.5 text-[14.5px] leading-relaxed text-white/55 text-pretty">
+                    <p className="mt-1.5 text-[14.5px] leading-relaxed text-ink/70 text-pretty">
                       {point.body}
                     </p>
                   </div>
@@ -61,20 +61,20 @@ export function KnowledgeSection() {
             <Reveal delay={0.1}>
               <div
                 data-path-anchor
-                className="edge-light relative rounded-xl border border-white/[0.08] bg-white/[0.02] p-5 backdrop-blur-xl sm:p-8"
+                className="edge-light relative rounded-xl border border-line bg-card p-5 backdrop-blur-xl sm:p-8"
               >
                 <div
                   aria-hidden="true"
                   className="pointer-events-none absolute inset-0 rounded-xl opacity-60"
                   style={{
                     background:
-                      "radial-gradient(60% 60% at 70% 40%, rgba(255,255,255,0.05), transparent 70%)",
+                      "radial-gradient(60% 60% at 70% 40%, rgba(26,20,48,0.05), transparent 70%)",
                   }}
                 />
                 <div className="relative aspect-[420/200]">
                   <KnowledgeGraph />
                 </div>
-                <p className="relative mt-5 border-t border-white/[0.07] pt-4 text-[13px] text-white/40">
+                <p className="relative mt-5 border-t border-line pt-4 text-[13px] text-ink/64">
                   Sources are chunked, embedded, and versioned — then retrieved
                   per submission rather than applied as a blanket ruleset.
                 </p>

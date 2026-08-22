@@ -34,7 +34,7 @@ export function ConfirmStructure({
 
   if (confirmedAt) {
     return (
-      <p className="mb-6 inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/[0.06] px-3 py-2 text-[12.5px] text-emerald-200/85">
+      <p className="mb-6 inline-flex items-center gap-2 rounded-lg border border-ok-line bg-ok-tint px-3 py-2 text-[12.5px] text-ok">
         <Check size={13} className="shrink-0" />
         Structure read by a model and confirmed
         {confirmedBy ? ` by ${confirmedBy}` : ""} on{" "}
@@ -49,29 +49,29 @@ export function ConfirmStructure({
   }
 
   return (
-    <section className="mb-7 rounded-xl border border-amber-400/30 bg-amber-400/[0.07] p-4">
+    <section className="mb-7 rounded-xl border border-warn-line bg-warn-tint p-4">
       <div className="flex flex-wrap items-start gap-3">
-        <ScanLine size={16} className="mt-0.5 shrink-0 text-amber-300/90" />
+        <ScanLine size={16} className="mt-0.5 shrink-0 text-warn" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[14px] font-semibold text-amber-100">
+          <h2 className="text-[14px] font-semibold text-warn">
             This standard&apos;s structure was read by a model
           </h2>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-amber-100/75">
+          <p className="mt-1.5 text-[13px] leading-relaxed text-warn">
             Nothing in the document&apos;s own formatting marked where its
             sections and rules begin, so they were inferred from the text. We
             extracted {clauseCount} rule{clauseCount === 1 ? "" : "s"}. Every
             word below is from your document — nothing was rewritten — but the{" "}
-            <span className="text-amber-100">grouping is a machine&apos;s reading</span>{" "}
+            <span className="text-warn">grouping is a machine&apos;s reading</span>{" "}
             of it.
           </p>
-          <p className="mt-2 text-[12.5px] leading-relaxed text-amber-100/60">
+          <p className="mt-2 text-[12.5px] leading-relaxed text-warn">
             Check the rules below. Nothing can be assessed against this standard
             until you confirm them. If the reading is wrong, fix the source
             document and reprocess rather than confirming.
           </p>
 
           {message && (
-            <p role="status" className="mt-2.5 text-[12.5px] text-amber-100/80">
+            <p role="status" className="mt-2.5 text-[12.5px] text-warn">
               {message}
             </p>
           )}
@@ -86,7 +86,7 @@ export function ConfirmStructure({
                 router.refresh();
               })
             }
-            className="mt-3.5 inline-flex items-center gap-1.5 rounded-full bg-amber-400/90 px-3.5 py-1.5 text-[12.5px] font-medium text-ink-900 transition-colors hover:bg-amber-300 disabled:opacity-55"
+            className="mt-3.5 inline-flex items-center gap-1.5 rounded-full bg-warn px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-warn/85 disabled:opacity-55"
           >
             <Check size={13} />
             These rules are correct

@@ -26,10 +26,10 @@ export default async function AdminPage() {
   return (
     <>
       <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-white">
+        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
           Companies
         </h1>
-        <p className="mt-2 text-[15px] text-white/50">
+        <p className="mt-2 text-[15px] text-ink/68">
           Every organisation on the platform.
         </p>
       </header>
@@ -54,7 +54,7 @@ export default async function AdminPage() {
       </div>
 
       {organisations.length === 0 ? (
-        <p className="rounded-2xl border border-white/[0.09] p-10 text-center text-[13.5px] text-white/35">
+        <p className="rounded-2xl border border-line p-10 text-center text-[13.5px] text-ink/62">
           No companies have registered yet.
         </p>
       ) : (
@@ -63,22 +63,22 @@ export default async function AdminPage() {
             <li key={organisation.id}>
               <Link
                 href={`/admin/organisations/${organisation.id}`}
-                className="group block rounded-2xl border border-white/[0.09] bg-white/[0.02] p-5 transition-[border-color,background-color] hover:border-white/20 hover:bg-white/[0.04]"
+                className="group block rounded-2xl border border-line bg-card shadow-card p-5 transition-[border-color,background-color] hover:border-line-strong hover:bg-canvas-sunk"
               >
                 <div className="flex flex-wrap items-start gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2.5">
-                      <h2 className="font-display text-[17px] font-semibold tracking-tight text-white">
+                      <h2 className="font-display text-[17px] font-semibold tracking-tight text-ink">
                         {organisation.name}
                       </h2>
                       {organisation.documentCount === 0 && (
-                        <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-[10.5px] text-amber-300/90">
+                        <span className="rounded-full border border-warn-line bg-warn-tint px-2 py-0.5 text-[10.5px] text-warn">
                           Nothing uploaded
                         </span>
                       )}
                     </div>
 
-                    <p className="mt-1 text-[12.5px] text-white/40">
+                    <p className="mt-1 text-[12.5px] text-ink/64">
                       {organisation.owners.length > 0
                         ? organisation.owners
                             .map((owner) => `${owner.name || owner.email} (${owner.email})`)
@@ -101,7 +101,7 @@ export default async function AdminPage() {
                   </div>
 
                   <div className="text-right">
-                    <p className="text-[11.5px] text-white/30">
+                    <p className="text-[11.5px] text-ink/62">
                       Joined{" "}
                       {organisation.createdAt.toLocaleDateString(undefined, {
                         day: "numeric",
@@ -109,7 +109,7 @@ export default async function AdminPage() {
                         year: "numeric",
                       })}
                     </p>
-                    <p className="mt-1 text-[11.5px] text-white/30">
+                    <p className="mt-1 text-[11.5px] text-ink/62">
                       {organisation.lastActivityAt
                         ? `Active ${organisation.lastActivityAt.toLocaleDateString(undefined, {
                             day: "numeric",
@@ -119,7 +119,7 @@ export default async function AdminPage() {
                     </p>
                     <ArrowUpRight
                       size={15}
-                      className="ml-auto mt-2 text-white/25 transition-colors group-hover:text-white/60"
+                      className="ml-auto mt-2 text-ink/58 transition-colors group-hover:text-ink/72"
                     />
                   </div>
                 </div>
@@ -135,8 +135,8 @@ export default async function AdminPage() {
 function Pair({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline gap-1.5">
-      <dt className="text-white/30">{label}</dt>
-      <dd className="tabular-nums text-white/70">{value}</dd>
+      <dt className="text-ink/62">{label}</dt>
+      <dd className="tabular-nums text-ink/78">{value}</dd>
     </div>
   );
 }
@@ -153,15 +153,15 @@ function Stat({
   hint?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/[0.09] bg-white/[0.02] p-5">
-      <div className="flex items-center gap-2 text-white/40">
-        <span className="text-royal-soft">{icon}</span>
+    <div className="rounded-2xl border border-line bg-card shadow-card p-5">
+      <div className="flex items-center gap-2 text-ink/64">
+        <span className="text-royal">{icon}</span>
         <span className="text-[11px] font-medium uppercase tracking-[0.13em]">{label}</span>
       </div>
-      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-white">
+      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-ink">
         {value}
       </p>
-      {hint && <p className="mt-0.5 text-[12px] text-white/35">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[12px] text-ink/62">{hint}</p>}
     </div>
   );
 }

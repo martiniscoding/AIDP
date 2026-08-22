@@ -48,11 +48,11 @@ export function PlatformStrip() {
     <section id="platform" className="relative py-20 sm:py-28">
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
         <Reveal>
-          <div className="flex flex-col gap-2 border-b border-white/[0.07] pb-8">
-            <h2 className="font-display text-lg font-semibold tracking-[-0.01em] text-white">
+          <div className="flex flex-col gap-2 border-b border-line pb-8">
+            <h2 className="font-display text-lg font-semibold tracking-[-0.01em] text-ink">
               Built for scale, and for the audit afterwards
             </h2>
-            <p className="max-w-2xl text-[14.5px] leading-relaxed text-white/50">
+            <p className="max-w-2xl text-[14.5px] leading-relaxed text-ink/68">
               The parts of the platform that matter to a CISO more than to a
               demo.
             </p>
@@ -69,13 +69,13 @@ export function PlatformStrip() {
                 <signal.icon
                   size={17}
                   aria-hidden="true"
-                  className="mt-0.5 shrink-0 text-white/35"
+                  className="mt-0.5 shrink-0 text-ink/62"
                 />
                 <div>
-                  <h3 className="text-[14.5px] font-medium text-white/85">
+                  <h3 className="text-[14.5px] font-medium text-ink/88">
                     {signal.title}
                   </h3>
-                  <p className="mt-1 text-[13.5px] leading-relaxed text-white/45 text-pretty">
+                  <p className="mt-1 text-[13.5px] leading-relaxed text-ink/66 text-pretty">
                     {signal.body}
                   </p>
                 </div>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, BookMarked, FileSearch, Lock } from "lucide-react";
+import { AlertTriangle, ArrowRight, BookMarked, FolderOpen, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { listDocuments, PIPELINE, STATUS_LABEL, isTerminal } from "@/lib/ingest/documents";
 import { requireWorkspace } from "@/lib/access/gate";
@@ -27,52 +27,57 @@ export default async function DocumentsPage() {
       <PipelineWatcher active={inFlight} />
 
       <header className="mb-9">
-        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal-soft">
+        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal">
           {organisation.name}
         </p>
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-white">
+        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
           Standards library
         </h1>
-        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-white/50">
-          The documents an assessment measures against, and the designs measured
-          against them.
+        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink/68">
+          The clauses every assessment measures against. Designs live in
+          projects, and each one is checked against everything here.
         </p>
       </header>
 
-      {/*
-        Two groups, not one list. Reference and assessed are the whole product —
-        one is the yardstick, the other is the thing being measured — and a flat
-        list reduced that to a small chip nobody reads. Splitting them also
-        retires the role chooser: each group is its own drop target, so the role
-        is implied by where you drop rather than set by a mode switch that fails
-        silently when it is wrong.
-      */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Group
-          icon={<BookMarked size={15} strokeWidth={1.9} />}
-          title="Reference standards"
-          blurb="What an assessment measures against."
-          documents={references}
-          uploadLabel="Add reference standards"
-          role="reference"
-          empty="No standards yet. These define what good looks like."
-          // Only an administrator curates the standards. The upload endpoint
-          // refuses a member regardless — this just stops offering a control
-          // that would be refused, which reads as a rule rather than a fault.
-          canUpload={isOwner}
-          lockedNote="Only an administrator can add standards. Ask yours if something is missing."
+      <Group
+        icon={<BookMarked size={15} strokeWidth={1.9} />}
+        title="Reference standards"
+        blurb="What every assessment measures against."
+        documents={references}
+        uploadLabel="Add reference standards"
+        role="reference"
+        empty="No standards yet. These define what good looks like."
+        // Only an administrator curates the standards. The upload endpoint
+        // refuses a member regardless — this just stops offering a control that
+        // would be refused, which reads as a rule rather than a fault.
+        canUpload={isOwner}
+        lockedNote="Only an administrator can add standards. Ask yours if something is missing."
+      />
+
+      {/* Designs used to sit beside the standards here. They moved into
+          projects, so this points at them rather than showing a second,
+          ungrouped copy of the same list. */}
+      <Link
+        href="/dashboard/projects"
+        className="group mt-4 flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-card p-5 transition-colors hover:border-line-strong"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-royal-mid/30 bg-royal/10 text-royal">
+          <FolderOpen size={16} strokeWidth={1.9} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-medium text-ink/92">Designs live in projects</p>
+          <p className="mt-0.5 text-[12.5px] text-ink/64">
+            {assessed.length === 0
+              ? "Open a project and submit the designs that belong to it."
+              : `${assessed.length} design${assessed.length === 1 ? "" : "s"} across your projects.`}
+          </p>
+        </div>
+        <ArrowRight
+          size={15}
+          className="text-ink/40 transition-transform duration-300 group-hover:translate-x-0.5"
         />
-        <Group
-          icon={<FileSearch size={15} strokeWidth={1.9} />}
-          title="Designs to assess"
-          blurb="Submissions checked against every clause."
-          documents={assessed}
-          uploadLabel="Add a design to assess"
-          role="assessed"
-          empty="No submissions yet. Upload a solution design to assess it."
-          canUpload
-        />
-      </div>
+      </Link>
+
     </>
   );
 }
@@ -110,25 +115,25 @@ function Group({
       : "radial-gradient(90% 60% at 50% 100%, rgba(124,58,237,0.09), transparent 70%)";
 
   return (
-    <section className="ring-gradient relative overflow-hidden rounded-2xl bg-white/[0.015] p-4 sm:p-5">
+    <section className="ring-gradient relative overflow-hidden rounded-2xl bg-card p-4 sm:p-5">
       <span
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
         style={{ backgroundImage: wash }}
       />
       <header className="relative mb-3.5 flex items-start gap-3">
-        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border border-white/12 bg-white/[0.04] text-white/50">
+        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border border-line bg-card text-ink/68">
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="font-display text-[15.5px] font-semibold tracking-[-0.01em] text-white">
+          <h2 className="font-display text-[15.5px] font-semibold tracking-[-0.01em] text-ink">
             {title}
           </h2>
-          <p className="mt-0.5 text-[12.5px] text-white/40">{blurb}</p>
+          <p className="mt-0.5 text-[12.5px] text-ink/64">{blurb}</p>
         </div>
         {documents.length > 0 && (
-          <span className="shrink-0 text-right text-[11.5px] leading-tight text-white/35">
-            <span className="text-white/70">{documents.length}</span> doc
+          <span className="shrink-0 text-right text-[11.5px] leading-tight text-ink/62">
+            <span className="text-ink/78">{documents.length}</span> doc
             {documents.length === 1 ? "" : "s"}
             <br />
             {chunks} chunks
@@ -137,7 +142,7 @@ function Group({
       </header>
 
       {documents.length === 0 ? (
-        <p className="relative mb-3 rounded-lg border border-white/[0.07] bg-white/[0.015] px-3.5 py-5 text-center text-[12.5px] text-white/35">
+        <p className="relative mb-3 rounded-lg border border-line bg-card px-3.5 py-5 text-center text-[12.5px] text-ink/62">
           {empty}
         </p>
       ) : (
@@ -151,7 +156,7 @@ function Group({
       )}
 
       {review > 0 && (
-        <p className="relative mb-3 inline-flex items-center gap-1.5 text-[12px] text-amber-300/80">
+        <p className="relative mb-3 inline-flex items-center gap-1.5 text-[12px] text-warn">
           <AlertTriangle size={12} />
           {review} document{review === 1 ? "" : "s"} to review
         </p>
@@ -161,7 +166,7 @@ function Group({
         {canUpload ? (
           <UploadZone role={role} label={uploadLabel} />
         ) : (
-          <p className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-white/[0.09] px-3.5 py-4 text-center text-[12px] text-white/30">
+          <p className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-line px-3.5 py-4 text-center text-[12px] text-ink/62">
             <Lock size={12} aria-hidden="true" />
             {lockedNote}
           </p>
@@ -182,22 +187,22 @@ function Row({ doc }: { doc: Doc }) {
     <Link
       href={`/dashboard/documents/${doc.id}`}
       className={cn(
-        "group flex items-center gap-3 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5",
+        "group flex items-center gap-3 rounded-lg border border-line bg-card px-3 py-2.5",
         "transition-[border-color,background-color] duration-200",
-        "hover:border-white/20 hover:bg-white/[0.045]",
+        "hover:border-line hover:bg-card",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
       )}
     >
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13.5px] font-medium text-white/90">
+        <span className="block truncate text-[13.5px] font-medium text-ink/92">
           {doc.title}
         </span>
-        <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-white/35">
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-ink/62">
           {meta.map((m) => (
             <span key={m as string}>{m}</span>
           ))}
           {doc.issues.high > 0 && (
-            <span className="inline-flex items-center gap-1 text-amber-300/75">
+            <span className="inline-flex items-center gap-1 text-warn">
               <AlertTriangle size={10} />
               {doc.issues.high}
             </span>
@@ -209,7 +214,7 @@ function Row({ doc }: { doc: Doc }) {
 
       <ArrowRight
         size={14}
-        className="shrink-0 text-white/15 transition-[color,transform] duration-200 group-hover:translate-x-0.5 group-hover:text-white/50"
+        className="shrink-0 text-ink/38 transition-[color,transform] duration-200 group-hover:translate-x-0.5 group-hover:text-ink/68"
       />
     </Link>
   );
@@ -225,7 +230,7 @@ function Row({ doc }: { doc: Doc }) {
 function Status({ doc }: { doc: Doc }) {
   if (doc.status === "failed") {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/[0.08] px-2 py-0.5 text-[11px] text-amber-300">
+      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-warn-line bg-warn-tint px-2 py-0.5 text-[11px] text-warn">
         <AlertTriangle size={10} />
         Failed
       </span>
@@ -244,19 +249,19 @@ function Status({ doc }: { doc: Doc }) {
     <span className="flex shrink-0 items-center gap-2.5">
       <span
         aria-hidden="true"
-        className="relative hidden h-1 w-16 overflow-hidden rounded-full bg-white/[0.09] sm:block"
+        className="relative hidden h-1 w-16 overflow-hidden rounded-full bg-canvas-sunk sm:block"
       >
         <span
-          className="absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-royal to-royal-soft transition-[width] duration-700 ease-out"
+          className="absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-royal to-royal-mid transition-[width] duration-700 ease-out"
           style={{ width: `${Math.max(travelled * 100, 6)}%` }}
         />
         {/* The head of the rail glows where the pipeline is working. */}
         <span
-          className="absolute inset-y-0 w-2 rounded-full bg-white/80 blur-[2px] transition-[left] duration-700 ease-out"
+          className="absolute inset-y-0 w-2 rounded-full bg-royal blur-[2px] transition-[left] duration-700 ease-out"
           style={{ left: `calc(${Math.max(travelled * 100, 6)}% - 6px)` }}
         />
       </span>
-      <span className="text-[11.5px] whitespace-nowrap text-white/50">
+      <span className="text-[11.5px] whitespace-nowrap text-ink/68">
         {STATUS_LABEL[doc.status] ?? doc.status}
       </span>
     </span>

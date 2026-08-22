@@ -149,7 +149,7 @@ export default async function DocumentPage({
 
       <Link
         href="/dashboard/documents"
-        className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-white/45 transition-colors hover:text-white"
+        className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-ink/66 transition-colors hover:text-ink"
       >
         <ArrowLeft size={14} />
         Standards library
@@ -157,17 +157,17 @@ export default async function DocumentPage({
 
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="font-display text-[27px] font-semibold leading-tight tracking-[-0.02em] text-white">
+          <h1 className="font-display text-[27px] font-semibold leading-tight tracking-[-0.02em] text-ink">
             {document.title}
           </h1>
-          <p className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-white/40">
-            <span className="text-white/60">{STATUS_LABEL[document.status] ?? document.status}</span>
+          <p className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-ink/64">
+            <span className="text-ink/72">{STATUS_LABEL[document.status] ?? document.status}</span>
             {document.docCode && <span>{document.docCode}</span>}
             {document.version && <span>{document.version}</span>}
             {document.pageCount != null && <span>{document.pageCount} pages</span>}
             {document.profile && <span>{document.profile}</span>}
             {document.sensitivity && (
-              <span className="rounded border border-white/12 px-1.5 py-0.5 text-white/55">
+              <span className="rounded border border-line px-1.5 py-0.5 text-ink/70">
                 {document.sensitivity}
               </span>
             )}
@@ -180,7 +180,7 @@ export default async function DocumentPage({
       </header>
 
       {document.failureReason && (
-        <p className="mb-6 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-[13px] text-amber-200/90">
+        <p className="mb-6 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
           {document.failureReason}
         </p>
       )}
@@ -233,7 +233,7 @@ export default async function DocumentPage({
       */}
       {document.issues.length > 0 && (
         <section className="mb-9">
-          <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+          <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
             Review
           </h2>
           <ul className="space-y-2">
@@ -243,23 +243,23 @@ export default async function DocumentPage({
                 className={cn(
                   "flex gap-3 rounded-xl border px-4 py-3",
                   issue.severity === "high"
-                    ? "border-amber-400/25 bg-amber-400/[0.05]"
-                    : "border-white/[0.09] bg-white/[0.02]",
+                    ? "border-warn-line bg-warn-tint"
+                    : "border-line bg-card",
                 )}
               >
                 <span
                   className={cn(
                     "mt-0.5 shrink-0",
-                    issue.severity === "high" ? "text-amber-300/85" : "text-white/30",
+                    issue.severity === "high" ? "text-warn" : "text-ink/62",
                   )}
                 >
                   {issue.severity === "high" ? <AlertTriangle size={15} /> : <Info size={15} />}
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-[13.5px] leading-relaxed text-white/80">
+                  <span className="block text-[13.5px] leading-relaxed text-ink/84">
                     {issue.detail}
                   </span>
-                  <span className="mt-0.5 block text-[11.5px] text-white/30">
+                  <span className="mt-0.5 block text-[11.5px] text-ink/62">
                     {issue.kind.replace(/_/g, " ")}
                     {issue.page != null && ` · page ${issue.page}`}
                   </span>
@@ -273,12 +273,12 @@ export default async function DocumentPage({
       <Figures figures={figureViews} />
 
       <section>
-        <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+        <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
           Structure
         </h2>
 
         {document.sections.length === 0 ? (
-          <p className="rounded-xl border border-white/10 bg-white/[0.015] px-5 py-8 text-center text-[13.5px] text-white/40">
+          <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
             {isTerminal(document.status)
               ? "No sections were detected in this document."
               : "Still reading the document…"}
@@ -291,7 +291,7 @@ export default async function DocumentPage({
             drawn: parents sit at the margin with weight, children hang off a
             rule, and only the counts that exist are shown.
           */
-          <ol className="border-t border-white/[0.07]">
+          <ol className="border-t border-line">
             {document.sections.map((section) => {
               const child = section.depth > 1;
               return (
@@ -299,21 +299,21 @@ export default async function DocumentPage({
                   <div
                     style={{ paddingLeft: `${Math.min(section.depth - 1, 3) * 22}px` }}
                     className={cn(
-                      "border-b border-white/[0.05]",
-                      section.isEmpty && "bg-amber-400/[0.04]",
+                      "border-b border-line-soft",
+                      section.isEmpty && "bg-warn-tint",
                     )}
                   >
                     <div
                       className={cn(
                         "flex items-baseline gap-3 py-2",
-                        child && "border-l border-white/[0.09] pl-3",
+                        child && "border-l border-line pl-3",
                       )}
                     >
                       {section.numberText && (
                         <span
                           className={cn(
                             "shrink-0 font-mono text-[11px] tabular-nums",
-                            child ? "text-white/25" : "text-white/40",
+                            child ? "text-ink/58" : "text-ink/64",
                           )}
                         >
                           {section.numberText}
@@ -323,16 +323,16 @@ export default async function DocumentPage({
                         className={cn(
                           "min-w-0 flex-1 truncate",
                           child
-                            ? "text-[13px] text-white/65"
-                            : "text-[13.5px] font-medium text-white/90",
+                            ? "text-[13px] text-ink/74"
+                            : "text-[13.5px] font-medium text-ink/92",
                         )}
                       >
                         {section.title}
                       </span>
 
-                      <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-white/30">
+                      <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-ink/62">
                         {section.clauses.length > 0 && (
-                          <span className="text-white/45">
+                          <span className="text-ink/66">
                             {section.clauses.length}{" "}
                             {section.clauses.length === 1 ? "clause" : "clauses"}
                           </span>
@@ -350,10 +350,10 @@ export default async function DocumentPage({
                           </span>
                         )}
                         {section.isEmpty && (
-                          <span className="text-amber-300/80">empty in source</span>
+                          <span className="text-warn">empty in source</span>
                         )}
                         {section.pageStart != null && (
-                          <span className="w-7 text-right tabular-nums text-white/20">
+                          <span className="w-7 text-right tabular-nums text-ink/62">
                             p{section.pageStart}
                           </span>
                         )}
@@ -374,9 +374,9 @@ export default async function DocumentPage({
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-white/[0.09] bg-white/[0.02] px-4 py-3">
-      <dt className="text-[11.5px] uppercase tracking-[0.1em] text-white/35">{label}</dt>
-      <dd className="mt-1 font-display text-[22px] font-semibold tracking-[-0.02em] text-white">
+    <div className="rounded-xl border border-line bg-card px-4 py-3">
+      <dt className="text-[11.5px] uppercase tracking-[0.1em] text-ink/62">{label}</dt>
+      <dd className="mt-1 font-display text-[22px] font-semibold tracking-[-0.02em] text-ink">
         {value}
       </dd>
     </div>

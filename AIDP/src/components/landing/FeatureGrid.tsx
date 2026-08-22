@@ -60,7 +60,7 @@ export function FeatureGrid() {
         >
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.title} delay={(i % 3) * 0.08}>
-              <div className="group edge-light relative h-full overflow-hidden rounded-xl border border-white/[0.1] bg-white/[0.025] p-6 backdrop-blur-xl transition-[transform,border-color,background-color,box-shadow] duration-500 ease-out hover:-translate-y-1 hover:border-white/[0.2] hover:bg-white/[0.04] hover:shadow-[0_28px_80px_-38px_rgba(255,255,255,0.3)]">
+              <div className="group edge-light relative h-full overflow-hidden rounded-xl border border-line bg-card p-6 shadow-card backdrop-blur-xl transition-[transform,border-color,background-color,box-shadow] duration-500 ease-out hover:-translate-y-1 hover:border-line-strong hover:shadow-card-hover">
                 {/* Inner glow that only appears on hover */}
                 <div
                   aria-hidden="true"
@@ -71,13 +71,13 @@ export function FeatureGrid() {
                   }}
                 />
                 <div className="relative">
-                  <span className="grid size-9 place-items-center rounded-md border border-white/12 bg-white/[0.05] text-white/70 transition-colors duration-500 group-hover:border-white/20 group-hover:text-royal-soft">
+                  <span className="grid size-9 place-items-center rounded-md border border-line bg-card text-ink/78 transition-colors duration-500 group-hover:border-line-strong group-hover:text-royal">
                     <feature.icon size={18} aria-hidden="true" />
                   </span>
-                  <h3 className="mt-5 font-display text-[16.5px] font-medium tracking-[-0.02em] text-white">
+                  <h3 className="mt-5 font-display text-[16.5px] font-medium tracking-[-0.02em] text-ink">
                     {feature.title}
                   </h3>
-                  <p className="mt-2.5 text-[14.5px] leading-relaxed text-white/55 text-pretty">
+                  <p className="mt-2.5 text-[14.5px] leading-relaxed text-ink/70 text-pretty">
                     {feature.body}
                   </p>
                 </div>

@@ -17,10 +17,10 @@ import { Spinner } from "@/components/ui/Spinner";
 import { resetPassword } from "@/lib/auth-client";
 
 const STRENGTH_STYLES = [
-  "bg-white/15",
-  "bg-rose-400/70",
-  "bg-amber-300/80",
-  "bg-emerald-400/80",
+  "bg-ink/15",
+  "bg-danger",
+  "bg-warn",
+  "bg-ok",
 ] as const;
 
 export function ResetPasswordForm({
@@ -71,13 +71,13 @@ export function ResetPasswordForm({
         subtitle="You can now sign in with your new password."
       >
         <div className="flex flex-col gap-5">
-          <div className="flex items-center gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07] p-4">
+          <div className="flex items-center gap-3 rounded-xl border border-ok-line bg-ok-tint p-4">
             <CheckCircle2
               size={18}
               aria-hidden="true"
-              className="shrink-0 text-emerald-300"
+              className="shrink-0 text-ok"
             />
-            <p className="text-[13px] text-white/65">
+            <p className="text-[13px] text-ink/74">
               Taking you to sign in…
             </p>
           </div>
@@ -122,7 +122,7 @@ export function ResetPasswordForm({
           Changed your mind?{" "}
           <Link
             href="/sign-in"
-            className="font-medium text-white/85 underline-offset-4 hover:underline"
+            className="font-medium text-ink/88 underline-offset-4 hover:underline"
           >
             Back to sign in
           </Link>
@@ -154,12 +154,12 @@ export function ResetPasswordForm({
                     className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
                       strength.score >= step
                         ? STRENGTH_STYLES[strength.score]
-                        : "bg-white/10"
+                        : "bg-canvas-sunk"
                     }`}
                   />
                 ))}
               </div>
-              <span className="min-w-14 text-right text-[12px] text-white/45">
+              <span className="min-w-14 text-right text-[12px] text-ink/66">
                 {strength.label || `${MIN_PASSWORD_LENGTH}+ characters`}
               </span>
             </div>

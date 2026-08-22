@@ -36,10 +36,10 @@ export function Figures({ figures }: { figures: FigureView[] }) {
   return (
     <section className="mb-9">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+        <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
           Figures
         </h2>
-        <p className="text-[12.5px] text-white/40">
+        <p className="text-[12.5px] text-ink/64">
           {pending > 0
             ? `${pending} of ${figures.length} unreviewed — a diagram's description is written by a model, not read off the page.`
             : "All descriptions reviewed."}
@@ -58,10 +58,10 @@ export function Figures({ figures }: { figures: FigureView[] }) {
 }
 
 const STATE: Record<string, { label: string; tone: string }> = {
-  pending: { label: "Unreviewed", tone: "border-white/15 bg-white/[0.05] text-white/55" },
-  confirmed: { label: "Confirmed", tone: "border-royal-mid/30 bg-royal/12 text-royal-soft" },
-  corrected: { label: "Corrected", tone: "border-amber-400/30 bg-amber-400/[0.08] text-amber-300" },
-  rejected: { label: "Rejected", tone: "border-red-400/30 bg-red-400/[0.07] text-red-300" },
+  pending: { label: "Unreviewed", tone: "border-line bg-card text-ink/70" },
+  confirmed: { label: "Confirmed", tone: "border-royal-mid/30 bg-royal/8 text-royal" },
+  corrected: { label: "Corrected", tone: "border-warn-line bg-warn-tint text-warn" },
+  rejected: { label: "Rejected", tone: "border-danger-line bg-danger-tint text-danger" },
 };
 
 function FigureCard({ figure }: { figure: FigureView }) {
@@ -84,14 +84,14 @@ function FigureCard({ figure }: { figure: FigureView }) {
     });
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.09] bg-white/[0.02]">
+    <div className="overflow-hidden rounded-xl border border-line bg-card">
       <div className="grid gap-0 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
         {/*
           The image, on white. Diagrams are drawn for paper; on a near-black
           panel a navy-on-white schematic is unreadable, which defeats the
           entire point of showing it.
         */}
-        <div className="border-b border-white/[0.07] bg-white p-2 md:border-r md:border-b-0">
+        <div className="border-b border-line bg-white p-2 md:border-r md:border-b-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={`/api/figures/${figure.id}`}
@@ -117,18 +117,18 @@ function FigureCard({ figure }: { figure: FigureView }) {
               )}
               {state.label}
             </span>
-            <span className="text-[11.5px] text-white/30">page {figure.page}</span>
+            <span className="text-[11.5px] text-ink/62">page {figure.page}</span>
             {figure.complexity >= 40 && (
               <span
                 title="Many labels and shapes — the case vision models most often get wrong"
-                className="inline-flex items-center gap-1 text-[11.5px] text-amber-300/75"
+                className="inline-flex items-center gap-1 text-[11.5px] text-warn"
               >
                 <TriangleAlert size={10} />
                 dense
               </span>
             )}
             {!figure.correctedDescription && (
-              <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/30">
+              <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-ink/62">
                 <Sparkles size={10} />
                 model-written
               </span>
@@ -141,28 +141,28 @@ function FigureCard({ figure }: { figure: FigureView }) {
               onChange={(e) => setDraft(e.target.value)}
               rows={7}
               className={cn(
-                "w-full resize-y rounded-lg border border-white/15 bg-ink-900 px-3 py-2",
-                "text-[13px] leading-relaxed text-white/85",
+                "w-full resize-y rounded-lg border border-line bg-canvas px-3 py-2",
+                "text-[13px] leading-relaxed text-ink/88",
                 "focus:border-royal-mid/60 focus:outline-none",
               )}
             />
           ) : figure.reviewState === "rejected" ? (
-            <p className="text-[13px] leading-relaxed text-white/40">
+            <p className="text-[13px] leading-relaxed text-ink/64">
               Rejected as unusable. This figure is not indexed and cannot be cited as
               evidence.
             </p>
           ) : (
-            <p className="text-[13px] leading-relaxed whitespace-pre-line text-white/70">
+            <p className="text-[13px] leading-relaxed whitespace-pre-line text-ink/78">
               {shown || "No description was produced for this figure."}
             </p>
           )}
 
           {figure.correctedDescription && !editing && (
             <details className="mt-2">
-              <summary className="cursor-pointer text-[11.5px] text-white/30 hover:text-white/55">
+              <summary className="cursor-pointer text-[11.5px] text-ink/62 hover:text-ink/70">
                 What the model originally wrote
               </summary>
-              <p className="mt-1.5 text-[12px] leading-relaxed whitespace-pre-line text-white/40">
+              <p className="mt-1.5 text-[12px] leading-relaxed whitespace-pre-line text-ink/64">
                 {figure.description}
               </p>
             </details>
@@ -195,7 +195,7 @@ function FigureCard({ figure }: { figure: FigureView }) {
                 </Action>
               </>
             )}
-            {message && <span className="text-[11.5px] text-white/40">{message}</span>}
+            {message && <span className="text-[11.5px] text-ink/64">{message}</span>}
           </div>
         </div>
       </div>
@@ -224,10 +224,10 @@ function Action({
         "transition-colors disabled:opacity-50",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
         tone === "primary"
-          ? "border-royal-mid/40 bg-royal/15 text-white hover:bg-royal/25"
+          ? "border-royal/40 bg-royal-tint text-royal-deep hover:bg-royal/15"
           : tone === "danger"
-            ? "border-white/12 text-white/50 hover:border-red-400/40 hover:text-red-300"
-            : "border-white/12 text-white/60 hover:border-white/28 hover:text-white",
+            ? "border-line text-ink/68 hover:border-danger-line hover:text-danger"
+            : "border-line text-ink/72 hover:border-line-strong hover:text-ink",
       )}
     >
       {children}

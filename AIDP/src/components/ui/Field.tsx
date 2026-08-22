@@ -43,7 +43,7 @@ export function Field({
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="text-[13px] font-medium text-white/70">
+        <label htmlFor={id} className="text-[13px] font-medium text-ink/78">
           {label}
         </label>
         {labelAction}
@@ -56,15 +56,15 @@ export function Field({
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy || undefined}
           className={cn(
-            "peer h-12 w-full rounded-xl border bg-white/[0.03] px-3.5 text-[15px] text-white",
-            "placeholder:text-white/25",
+            "peer h-12 w-full rounded-xl border bg-canvas-sunk/60 px-3.5 text-[15px] text-ink",
+            "placeholder:text-ink/58",
             "transition-[border-color,box-shadow,background-color] duration-200",
-            "hover:border-white/20 focus:bg-white/[0.05] focus:outline-none",
+            "hover:border-line-strong focus:bg-card focus:outline-none",
             icon ? "pl-11" : null,
             isPassword ? "pr-11" : null,
             error
-              ? "border-rose-400/50 focus:border-rose-400/70 focus:shadow-[0_0_0_3px_rgba(251,113,133,0.14)]"
-              : "border-white/12 focus:border-royal-mid/70 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.25)]",
+              ? "border-danger-line focus:border-danger focus:shadow-[0_0_0_3px_rgba(190,18,60,0.14)]"
+              : "border-line focus:border-royal focus:shadow-[0_0_0_3px_rgba(109,40,217,0.15)]",
           )}
           {...props}
         />
@@ -76,8 +76,8 @@ export function Field({
             className={cn(
               "pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 transition-colors duration-200",
               error
-                ? "text-rose-300/70"
-                : "text-white/30 peer-focus:text-royal-soft",
+                ? "text-danger"
+                : "text-ink/62 peer-focus:text-royal",
             )}
           >
             {icon}
@@ -94,7 +94,7 @@ export function Field({
             // and an extra stop between every password field and the submit
             // button is friction for a control the mouse is there for.
             tabIndex={-1}
-            className="absolute right-1.5 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/35 transition-colors hover:bg-white/[0.07] hover:text-white/80"
+            className="absolute right-1.5 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-lg text-ink/62 transition-colors hover:bg-canvas-sunk hover:text-ink/84"
           >
             {revealed ? (
               <EyeOff size={16} aria-hidden="true" />
@@ -106,11 +106,11 @@ export function Field({
       </div>
 
       {error ? (
-        <p id={`${id}-error`} className="text-[12.5px] text-rose-300/90">
+        <p id={`${id}-error`} className="text-[12.5px] text-danger">
           {error}
         </p>
       ) : hint ? (
-        <div id={`${id}-hint`} className="text-[12.5px] text-white/40">
+        <div id={`${id}-hint`} className="text-[12.5px] text-ink/64">
           {hint}
         </div>
       ) : null}

@@ -98,24 +98,24 @@ export function ImportPanel() {
           "relative overflow-hidden rounded-2xl border border-dashed p-6 transition-colors",
           dragging
             ? "border-royal-mid/60 bg-royal/[0.08]"
-            : "border-white/12 bg-white/[0.015] hover:border-white/20",
+            : "border-line bg-card hover:border-line-strong",
         )}
       >
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute -right-20 -top-20 size-52 rounded-full bg-royal/12 blur-3xl"
+          className="pointer-events-none absolute -right-20 -top-20 size-52 rounded-full bg-royal/8 blur-3xl"
         />
 
         <div className="relative flex flex-wrap items-center gap-4">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-royal-mid/30 bg-royal/15 text-royal-soft">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-royal-mid/30 bg-royal/10 text-royal">
             <FileSpreadsheet size={18} strokeWidth={1.9} />
           </span>
 
           <div className="min-w-0 flex-1">
-            <p className="text-[14px] font-medium text-white/90">
+            <p className="text-[14px] font-medium text-ink/92">
               Load your staff list
             </p>
-            <p className="mt-0.5 text-[12.5px] text-white/45">
+            <p className="mt-0.5 text-[12.5px] text-ink/66">
               Drop an Excel or CSV export here. We find the email column
               ourselves — no template needed. Nobody gets access until you admit
               them.
@@ -126,7 +126,7 @@ export function ImportPanel() {
             type="button"
             disabled={pending}
             onClick={() => input.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3.5 py-1.5 text-[12.5px] text-white/75 transition-colors hover:border-white/30 hover:text-white disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/80 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-40"
           >
             <Upload size={13} />
             {pending ? "Reading…" : "Choose file"}
@@ -147,12 +147,12 @@ export function ImportPanel() {
       </div>
 
       {error && (
-        <p role="alert" className="mt-2.5 text-[12.5px] text-amber-200/80">
+        <p role="alert" className="mt-2.5 text-[12.5px] text-warn">
           {error}
         </p>
       )}
       {done && (
-        <p role="status" className="mt-2.5 text-[12.5px] text-emerald-300/80">
+        <p role="status" className="mt-2.5 text-[12.5px] text-ok">
           {done}
         </p>
       )}
@@ -179,17 +179,17 @@ function Preview({
   const sample = sheet.people.slice(0, 8);
 
   return (
-    <section className="mb-2 rounded-2xl border border-white/12 bg-white/[0.025] p-5">
+    <section className="mb-2 rounded-2xl border border-line bg-card shadow-card p-5">
       <div className="mb-4 flex flex-wrap items-start gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-emerald-400/25 bg-emerald-400/10 text-emerald-300">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-ok-line bg-ok-tint text-ok">
           <FileSpreadsheet size={16} strokeWidth={1.9} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-white/90">
+          <p className="text-[14px] font-medium text-ink/92">
             Found {sheet.people.length} {sheet.people.length === 1 ? "person" : "people"} in{" "}
             {filename}
           </p>
-          <p className="mt-0.5 text-[12.5px] text-white/45">
+          <p className="mt-0.5 text-[12.5px] text-ink/66">
             Sheet “{sheet.sheetName}”. Check the columns below are the ones you
             expect, then import.
           </p>
@@ -198,7 +198,7 @@ function Preview({
           type="button"
           onClick={onCancel}
           aria-label="Discard this file"
-          className="rounded-md p-1 text-white/30 transition-colors hover:bg-white/[0.06] hover:text-white/70"
+          className="rounded-md p-1 text-ink/62 transition-colors hover:bg-canvas-sunk hover:text-ink/78"
         >
           <X size={15} />
         </button>
@@ -210,21 +210,21 @@ function Preview({
         {Object.entries(sheet.columns).map(([field, header]) => (
           <span
             key={field}
-            className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[11.5px] text-white/55"
+            className="rounded-md border border-line bg-card px-2 py-1 text-[11.5px] text-ink/70"
           >
-            <span className="text-white/30">{LABEL[field] ?? field} ←</span> {header}
+            <span className="text-ink/62">{LABEL[field] ?? field} ←</span> {header}
           </span>
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-white/[0.08]">
+      <div className="overflow-hidden rounded-xl border border-line">
         <table className="w-full border-collapse text-left">
           <tbody>
             {sample.map((person) => (
-              <tr key={person.email} className="border-b border-white/[0.05] last:border-0">
-                <td className="px-3 py-2 text-[12.5px] text-white/80">{person.name}</td>
-                <td className="px-3 py-2 text-[12.5px] text-white/45">{person.email}</td>
-                <td className="px-3 py-2 text-[12px] text-white/30">
+              <tr key={person.email} className="border-b border-line-soft last:border-0">
+                <td className="px-3 py-2 text-[12.5px] text-ink/84">{person.name}</td>
+                <td className="px-3 py-2 text-[12.5px] text-ink/66">{person.email}</td>
+                <td className="px-3 py-2 text-[12px] text-ink/62">
                   {[person.jobTitle, person.department].filter(Boolean).join(" · ")}
                 </td>
               </tr>
@@ -232,7 +232,7 @@ function Preview({
           </tbody>
         </table>
         {sheet.people.length > sample.length && (
-          <p className="border-t border-white/[0.05] px-3 py-2 text-[11.5px] text-white/30">
+          <p className="border-t border-line-soft px-3 py-2 text-[11.5px] text-ink/62">
             and {sheet.people.length - sample.length} more
           </p>
         )}
@@ -244,19 +244,19 @@ function Preview({
             type="button"
             onClick={() => setShowRejects((open) => !open)}
             aria-expanded={showRejects}
-            className="inline-flex items-center gap-1.5 text-[12.5px] text-amber-200/80 transition-colors hover:text-amber-200"
+            className="inline-flex items-center gap-1.5 text-[12.5px] text-warn transition-colors hover:text-danger"
           >
             <AlertTriangle size={13} />
             {sheet.rejected.length} row{sheet.rejected.length === 1 ? "" : "s"} could not be read
           </button>
 
           {showRejects && (
-            <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-white/[0.08] p-2.5">
+            <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-line p-2.5">
               {sheet.rejected.map((rejection) => (
-                <li key={`${rejection.row}-${rejection.value}`} className="text-[11.5px] text-white/40">
-                  <span className="text-white/25">Row {rejection.row}:</span> {rejection.reason}
+                <li key={`${rejection.row}-${rejection.value}`} className="text-[11.5px] text-ink/64">
+                  <span className="text-ink/58">Row {rejection.row}:</span> {rejection.reason}
                   {rejection.value && (
-                    <span className="text-white/25"> — “{rejection.value.slice(0, 60)}”</span>
+                    <span className="text-ink/58"> — “{rejection.value.slice(0, 60)}”</span>
                   )}
                 </li>
               ))}
@@ -266,7 +266,7 @@ function Preview({
       )}
 
       {error && (
-        <p role="alert" className="mt-3 text-[12.5px] text-amber-200/80">
+        <p role="alert" className="mt-3 text-[12.5px] text-warn">
           {error}
         </p>
       )}
@@ -283,11 +283,11 @@ function Preview({
         <button
           type="button"
           onClick={onCancel}
-          className="text-[12.5px] text-white/35 transition-colors hover:text-white/70"
+          className="text-[12.5px] text-ink/62 transition-colors hover:text-ink/78"
         >
           cancel
         </button>
-        <p className="text-[11.5px] text-white/30">
+        <p className="text-[11.5px] text-ink/62">
           They arrive with no access. You choose who gets in afterwards.
         </p>
       </div>

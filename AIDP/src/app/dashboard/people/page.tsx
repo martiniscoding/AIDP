@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Coins, UserRound, UsersRound } from "lucide-react";
-import { requireOwner } from "@/lib/access/gate";
+import { requireOwnerWorkspace } from "@/lib/access/gate";
 import { list } from "@/lib/access/roster";
 import { formatTokens, organisationSpend } from "@/lib/access/usage";
 import { PeopleTable } from "./PeopleTable";
@@ -18,12 +18,13 @@ export const metadata: Metadata = {
  * allowed in, and what they have used. Splitting them would mean an
  * administrator checking a spend figure has to go somewhere else to act on it.
  *
- * `requireOwner` throws for a member, which the dashboard layout renders as a
- * refusal. The nav link is hidden from them as well, but that is cosmetic —
- * this is the check that matters.
+ * `requireOwnerWorkspace` redirects a member to their own dashboard. The nav
+ * link is hidden from them as well, but that is cosmetic — this is the check
+ * that matters, and the Server Actions behind the table repeat it because they
+ * accept direct POSTs.
  */
 export default async function PeoplePage() {
-  const access = await requireOwner();
+  const access = await requireOwnerWorkspace();
   const [people, spend] = await Promise.all([
     list(access.organisation.id),
     organisationSpend(access.organisation.id),
@@ -43,10 +44,10 @@ export default async function PeoplePage() {
   return (
     <>
       <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-white">
+        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
           People
         </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-white/50">
+        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
           Everyone at {access.organisation.name} who can use Dexter. Load your staff
           list, then admit the people who need access — nobody gets in until you
           say so.
@@ -85,10 +86,10 @@ export default async function PeoplePage() {
 
       {spend.byStage.length > 0 && (
         <section className="mt-10">
-          <h2 className="mb-1 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+          <h2 className="mb-1 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
             Where the tokens went
           </h2>
-          <p className="mb-4 text-[12.5px] text-white/40">
+          <p className="mb-4 text-[12.5px] text-ink/64">
             By pipeline stage. Analysis is the expensive one — it asks the model
             about every clause of every standard.
           </p>
@@ -97,16 +98,16 @@ export default async function PeoplePage() {
               const share =
                 spend.totalTokens > 0 ? (stage.totalTokens / spend.totalTokens) * 100 : 0;
               return (
-                <li key={stage.stage} className="rounded-xl border border-white/[0.08] p-3.5">
+                <li key={stage.stage} className="rounded-xl border border-line p-3.5">
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[13px] text-white/75 capitalize">{stage.stage}</span>
-                    <span className="text-[12.5px] tabular-nums text-white/45">
+                    <span className="text-[13px] text-ink/80 capitalize">{stage.stage}</span>
+                    <span className="text-[12.5px] tabular-nums text-ink/66">
                       {formatTokens(stage.totalTokens)} · {stage.calls.toLocaleString()} calls
                     </span>
                   </div>
                   <div
                     aria-hidden="true"
-                    className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]"
+                    className="mt-2 h-1 overflow-hidden rounded-full bg-canvas-sunk"
                   >
                     <div
                       className="h-full rounded-full bg-royal-mid/70"
@@ -135,15 +136,15 @@ function Stat({
   hint: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/[0.09] bg-white/[0.02] p-5">
-      <div className="flex items-center gap-2 text-white/40">
-        <span className="text-royal-soft">{icon}</span>
+    <div className="rounded-2xl border border-line bg-card shadow-card p-5">
+      <div className="flex items-center gap-2 text-ink/64">
+        <span className="text-royal">{icon}</span>
         <span className="text-[11px] font-medium uppercase tracking-[0.13em]">{label}</span>
       </div>
-      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-white">
+      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-ink">
         {value}
       </p>
-      <p className="mt-0.5 text-[12px] text-white/35">{hint}</p>
+      <p className="mt-0.5 text-[12px] text-ink/62">{hint}</p>
     </div>
   );
 }

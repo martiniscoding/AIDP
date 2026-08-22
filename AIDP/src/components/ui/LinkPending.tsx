@@ -37,7 +37,7 @@ export function LinkPending({
   return (
     <span
       className={cn(
-        "link-pending absolute inset-0 z-10 grid place-items-center rounded-[inherit] bg-ink-900/45 backdrop-blur-[1px]",
+        "link-pending absolute inset-0 z-10 grid place-items-center rounded-[inherit] bg-canvas/70 backdrop-blur-[1px]",
         className,
       )}
     >

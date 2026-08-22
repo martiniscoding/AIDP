@@ -9,10 +9,10 @@ import { STATUS_META, isRosterStatus } from "@/lib/access/roster-status";
 import { formatTokens, organisationSpend } from "@/lib/access/usage";
 
 const TONE: Record<string, string> = {
-  good: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  warn: "border-amber-400/30 bg-amber-400/[0.08] text-amber-300",
-  neutral: "border-white/12 bg-white/[0.04] text-white/50",
-  off: "border-white/10 bg-white/[0.02] text-white/30",
+  good: "border-ok-line bg-ok-tint text-ok",
+  warn: "border-warn-line bg-warn-tint text-warn",
+  neutral: "border-line bg-card text-ink/68",
+  off: "border-line bg-card text-ink/62",
 };
 
 export async function generateMetadata({
@@ -52,17 +52,17 @@ export default async function OrganisationPage({
     <>
       <Link
         href="/admin"
-        className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-white/40 transition-colors hover:text-white/80"
+        className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink/64 transition-colors hover:text-ink/84"
       >
         <ArrowLeft size={13} />
         All companies
       </Link>
 
       <header className="mb-8">
-        <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-white">
+        <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-ink">
           {organisation.name}
         </h1>
-        <p className="mt-1.5 text-[13.5px] text-white/45">
+        <p className="mt-1.5 text-[13.5px] text-ink/66">
           Joined{" "}
           {organisation.createdAt.toLocaleDateString(undefined, {
             day: "numeric",
@@ -80,18 +80,18 @@ export default async function OrganisationPage({
       </header>
 
       <section>
-        <h2 className="mb-4 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+        <h2 className="mb-4 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
           People
-          <span className="ml-2 text-[13px] font-normal text-white/30">
+          <span className="ml-2 text-[13px] font-normal text-ink/62">
             {organisation.people.length}
           </span>
         </h2>
 
-        <div className="overflow-hidden rounded-2xl border border-white/[0.09]">
+        <div className="overflow-hidden rounded-2xl border border-line">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse text-left">
               <thead>
-                <tr className="border-b border-white/[0.08] bg-white/[0.02]">
+                <tr className="border-b border-line bg-card">
                   <Th>Person</Th>
                   <Th>Status</Th>
                   <Th>Role</Th>
@@ -106,22 +106,22 @@ export default async function OrganisationPage({
                   return (
                     <tr
                       key={person.email}
-                      className="border-b border-white/[0.05] last:border-0 hover:bg-white/[0.02]"
+                      className="border-b border-line-soft last:border-0 hover:bg-card"
                     >
                       <td className="px-3 py-3">
-                        <p className="text-[13.5px] leading-tight text-white/90">
+                        <p className="text-[13.5px] leading-tight text-ink/92">
                           {person.name || person.email.split("@")[0]}
                           {person.isPlatformAdmin && (
-                            <span className="ml-2 rounded border border-royal-mid/35 px-1.5 py-px text-[10px] text-royal-soft">
+                            <span className="ml-2 rounded border border-royal-mid/35 px-1.5 py-px text-[10px] text-royal">
                               operator
                             </span>
                           )}
                         </p>
-                        <p className="mt-0.5 text-[12px] leading-tight text-white/40">
+                        <p className="mt-0.5 text-[12px] leading-tight text-ink/64">
                           {person.email}
                         </p>
                         {(person.jobTitle || person.department) && (
-                          <p className="mt-0.5 text-[11.5px] leading-tight text-white/25">
+                          <p className="mt-0.5 text-[11.5px] leading-tight text-ink/58">
                             {[person.jobTitle, person.department].filter(Boolean).join(" · ")}
                           </p>
                         )}
@@ -136,10 +136,10 @@ export default async function OrganisationPage({
                           {meta.label}
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-[12.5px] text-white/55">
+                      <td className="px-3 py-3 text-[12.5px] text-ink/70">
                         {ROLE_LABEL[toRole(person.role)]}
                       </td>
-                      <td className="px-3 py-3 text-right text-[13px] tabular-nums text-white/70">
+                      <td className="px-3 py-3 text-right text-[13px] tabular-nums text-ink/78">
                         {person.totalTokens > 0 ? formatTokens(person.totalTokens) : "—"}
                       </td>
                     </tr>
@@ -147,7 +147,7 @@ export default async function OrganisationPage({
                 })}
                 {sorted.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-10 text-center text-[13px] text-white/35">
+                    <td colSpan={4} className="px-4 py-10 text-center text-[13px] text-ink/62">
                       Nobody on this company&rsquo;s list.
                     </td>
                   </tr>
@@ -160,17 +160,17 @@ export default async function OrganisationPage({
 
       {spend.byStage.length > 0 && (
         <section className="mt-9">
-          <h2 className="mb-4 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+          <h2 className="mb-4 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
             Usage by stage
           </h2>
           <ul className="grid gap-2 sm:grid-cols-2">
             {spend.byStage.map((stage) => (
               <li
                 key={stage.stage}
-                className="flex items-baseline justify-between rounded-xl border border-white/[0.08] px-3.5 py-2.5"
+                className="flex items-baseline justify-between rounded-xl border border-line px-3.5 py-2.5"
               >
-                <span className="text-[13px] capitalize text-white/70">{stage.stage}</span>
-                <span className="text-[12.5px] tabular-nums text-white/45">
+                <span className="text-[13px] capitalize text-ink/78">{stage.stage}</span>
+                <span className="text-[12.5px] tabular-nums text-ink/66">
                   {formatTokens(stage.totalTokens)} · {stage.calls.toLocaleString()} calls
                 </span>
               </li>
@@ -187,7 +187,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
     <th
       scope="col"
       className={cn(
-        "px-3 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] text-white/30",
+        "px-3 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] text-ink/62",
         className,
       )}
     >

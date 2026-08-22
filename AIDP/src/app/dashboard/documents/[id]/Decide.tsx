@@ -22,9 +22,9 @@ export type OutcomeView = {
 };
 
 const TONE: Record<string, string> = {
-  good: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  warn: "border-amber-400/30 bg-amber-400/[0.08] text-amber-300",
-  escalate: "border-royal-mid/40 bg-royal/[0.12] text-royal-soft",
+  good: "border-ok-line bg-ok-tint text-ok",
+  warn: "border-warn-line bg-warn-tint text-warn",
+  escalate: "border-royal-mid/40 bg-royal/8 text-royal",
 };
 
 const ICON = {
@@ -81,10 +81,10 @@ export function Decide({
 
   return (
     <section className="mb-10">
-      <h2 className="mb-1 font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+      <h2 className="mb-1 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
         Decision
       </h2>
-      <p className="mb-4 text-[12.5px] text-white/40">
+      <p className="mb-4 text-[12.5px] text-ink/64">
         {current
           ? "This submission has been decided. Recording another adds to the history."
           : "Every assessment ends in a recorded outcome."}
@@ -100,7 +100,7 @@ export function Decide({
                 key={entry.id}
                 className={cn(
                   "rounded-xl border p-4",
-                  index === 0 ? "border-white/[0.12] bg-white/[0.03]" : "border-white/[0.07] opacity-70",
+                  index === 0 ? "border-line bg-card" : "border-line opacity-70",
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2.5">
@@ -113,7 +113,7 @@ export function Decide({
                     <Icon size={11} />
                     {entryMeta.label}
                   </span>
-                  <span className="text-[12.5px] text-white/45">
+                  <span className="text-[12.5px] text-ink/66">
                     {entry.decidedByName || "Unattributed"} ·{" "}
                     {new Date(entry.createdAt).toLocaleDateString(undefined, {
                       day: "numeric",
@@ -122,18 +122,18 @@ export function Decide({
                     })}
                   </span>
                   {index === 0 && history.length > 1 && (
-                    <span className="text-[11px] text-white/30">current</span>
+                    <span className="text-[11px] text-ink/62">current</span>
                   )}
                 </div>
 
                 {entry.note && (
-                  <p className="mt-2.5 text-[13px] leading-relaxed text-white/70">{entry.note}</p>
+                  <p className="mt-2.5 text-[13px] leading-relaxed text-ink/78">{entry.note}</p>
                 )}
 
                 {/* What the report said at the moment of the decision. Findings
                     stay editable afterwards, so without this the record drifts. */}
                 {entry.snapshot && (
-                  <p className="mt-2 text-[11.5px] text-white/35">
+                  <p className="mt-2 text-[11.5px] text-ink/62">
                     At the time: {entry.snapshot.total} findings
                     {entry.snapshot.unreviewed > 0 &&
                       `, ${entry.snapshot.unreviewed} unreviewed`}
@@ -150,7 +150,7 @@ export function Decide({
       )}
 
       {(unreviewed > 0 || open > 0) && !chosen && (
-        <p className="mb-3 text-[12.5px] text-amber-200/70">
+        <p className="mb-3 text-[12.5px] text-warn">
           {open > 0 && `${open} finding${open === 1 ? "" : "s"} still contradict or are unaddressed`}
           {open > 0 && unreviewed > 0 && " · "}
           {unreviewed > 0 && `${unreviewed} not yet reviewed`}
@@ -172,7 +172,7 @@ export function Decide({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] transition-[box-shadow,opacity]",
                 TONE[outcomeMeta.tone],
-                chosen === outcome ? "ring-2 ring-white/50" : "opacity-70 hover:opacity-100",
+                chosen === outcome ? "ring-2 ring-line-strong" : "opacity-70 hover:opacity-100",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
               )}
             >
@@ -184,11 +184,11 @@ export function Decide({
       </div>
 
       {chosen && meta && (
-        <div className="mt-3.5 rounded-xl border border-white/10 bg-ink-950/40 p-4">
-          <p className="mb-3 text-[12.5px] text-white/55">{meta.commitment}</p>
+        <div className="mt-3.5 rounded-xl border border-line bg-canvas-sunk p-4">
+          <p className="mb-3 text-[12.5px] text-ink/70">{meta.commitment}</p>
 
           <label className="block">
-            <span className="mb-1.5 block text-[11.5px] text-white/40">
+            <span className="mb-1.5 block text-[11.5px] text-ink/64">
               {meta.requiresNote ? "Reason (required)" : "Reason (optional)"}
             </span>
             <textarea
@@ -202,7 +202,7 @@ export function Decide({
                     ? "What is the board being asked to decide?"
                     : "Anything worth recording alongside the approval."
               }
-              className="w-full resize-y rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-2 text-[13px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+              className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
             />
           </label>
 
@@ -222,7 +222,7 @@ export function Decide({
                 setChosen(null);
                 setNote("");
               }}
-              className="text-[12.5px] text-white/35 transition-colors hover:text-white/70"
+              className="text-[12.5px] text-ink/62 transition-colors hover:text-ink/78"
             >
               cancel
             </button>
@@ -231,7 +231,7 @@ export function Decide({
       )}
 
       {message && (
-        <p role="status" className="mt-3 text-[12.5px] text-white/55">
+        <p role="status" className="mt-3 text-[12.5px] text-ink/70">
           {message}
         </p>
       )}

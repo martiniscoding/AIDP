@@ -2,27 +2,86 @@
 
 /* ------------------------------------------------------------------ *
  * Dexter design tokens
- * Dark-only, and deliberately monochrome: near-black grounds, white and
- * grey carry structure and body copy. Royal purple is the single accent
- * and is spent only on what should draw the eye.
  *
- * The three purples are a contrast ladder against #08090c, not a palette:
- *   royal      button fills and solid surfaces (white text on it, ~7:1)
- *   royal-mid  large display emphasis — passes the 3:1 large-text bar
- *   royal-soft small accent text and icons (~6.5:1)
- * Using royal at small text sizes would fail contrast; that's what
- * royal-soft is for.
+ * Light, and pitched toward the accent: the ground is a pale violet-grey,
+ * cards are true white lifted off it, and a handful of deep violet anchor
+ * surfaces give the page something dark to push against.
+ *
+ * The ground is tinted on purpose. A neutral off-white next to white cards
+ * separates by about 1.03:1 — which is to say not at all, and the result
+ * reads as one blank sheet. Pulling the canvas to #f2f0f9 opens that to
+ * 1.13:1, so a card is visibly a card, and it puts the accent's hue in the
+ * paper itself rather than saving violet for buttons.
+ *
+ * Depth works the opposite way round from a dark UI. There, a raised
+ * surface was a *lighter* film over near-black. Here it is a white card on
+ * a tinted ground, with a layered shadow doing the lifting: a tint alone
+ * reads as a stain, and a border alone reads as a table.
+ *
+ * Contrast comes from range, not from mid-greys. Rather than darkening
+ * every surface a little — which turns a light theme muddy — the page
+ * carries a few `deep` violet blocks at full strength (hero, CTA, the auth
+ * aside) and leaves everything between them bright.
+ *
+ * The purple ladder inverts too. On near-black the light violets carried
+ * small text and the deep one carried fills. On paper that is backwards —
+ * a #a78bfa label on white is 2.2:1. So:
+ *   royal-deep  small text sitting on a lavender tint (~11.9:1 on white)
+ *   royal       accent text, icons and solid fills (~7.4:1)
+ *   royal-mid   hover fills and large display emphasis (~6.1:1)
+ *   royal-tint  chip and badge grounds — a surface, never a text colour
  * ------------------------------------------------------------------ */
 @theme {
-  --color-ink-950: #06070a;
-  --color-ink-900: #08090c;
-  --color-ink-850: #0a0b0f;
-  --color-ink-800: #0e1015;
-  --color-ink-700: #14161d;
+  /* Grounds. `canvas` is the page, `card` is anything raised off it, and
+     `canvas-sunk` is for wells that recede: table headers, inset panels,
+     form fields, the tray a hover state opens into. */
+  --color-canvas: #f2f0f9;
+  --color-canvas-sunk: #e7e3f4;
+  --color-card: #ffffff;
 
+  /* Anchor surface. Full-strength violet, for the few blocks that carry white
+     copy — the hero, the stats block, the closing CTA, the auth aside and the
+     app's header band. These are what keep the page from reading as one flat
+     sheet, and they are deliberately few: the contrast comes from range
+     between bright and deep, so darkening anything in between spends it. */
+  --color-deep: #2e1065;
+  /* The accent, inverted for use *on* a deep surface. The ladder's other
+     rungs all assume a light ground and go invisible here. 8.4:1 on deep. */
+  --color-royal-light: #c4b5fd;
+
+  /* Hairlines. Tinted to match the ground, not neutral grey — a warm or
+     neutral rule over a violet-grey canvas reads as dirt on the paper. */
+  --color-line-soft: #e9e5f6;
+  --color-line: #dcd5ef;
+  --color-line-strong: #c3b9e0;
+
+  /* Foreground. One base colour; the type hierarchy is alpha over it, which
+     keeps every rung warm against the paper rather than drifting grey.
+     Violet-black rather than neutral: against a tinted ground a neutral
+     black drifts visibly warm, and the cool cast ties body copy to the
+     accent instead of fighting it.
+
+     Measured against --color-canvas: /62 is 4.78:1 and /74 is 7.12:1, so
+     those are the floors for body copy and for AAA. Everything at /58 and
+     below is large-text or decoration only. */
+  --color-ink: #1a1430;
+
+  --color-royal-deep: #4c1d95;
   --color-royal: #6d28d9;
-  --color-royal-mid: #8b5cf6;
-  --color-royal-soft: #a78bfa;
+  --color-royal-mid: #7c3aed;
+  --color-royal-tint: #ede9fe;
+
+  /* Status. Text rungs are the 700s so they clear 4.5:1 on both white and
+     their own tint; the 500s are for fills and rules only. */
+  --color-ok: #047857;
+  --color-ok-line: #6ee7b7;
+  --color-ok-tint: #ecfdf5;
+  --color-warn: #b45309;
+  --color-warn-line: #fcd34d;
+  --color-warn-tint: #fffbeb;
+  --color-danger: #be123c;
+  --color-danger-line: #fda4af;
+  --color-danger-tint: #fff1f2;
 
   --font-display: var(--font-display-face), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
@@ -37,15 +96,22 @@
   --text-display-lg--line-height: 0.95;
   --text-display-lg--letter-spacing: -0.04em;
 
+  /* Elevation. Warm-tinted and layered — a contact shadow for the edge plus
+     a wide soft one for the lift. Pure black at one offset is the giveaway
+     of a light theme converted from a dark one. */
+  --shadow-card: 0 1px 2px -1px rgb(46 16 101 / 0.10), 0 4px 14px -6px rgb(46 16 101 / 0.12);
+  --shadow-card-hover: 0 2px 4px -2px rgb(46 16 101 / 0.13), 0 14px 34px -12px rgb(46 16 101 / 0.20);
+  --shadow-pop: 0 2px 6px -2px rgb(46 16 101 / 0.14), 0 24px 60px -20px rgb(46 16 101 / 0.28);
+
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html {
-  background-color: var(--color-ink-900);
+  background-color: var(--color-canvas);
   scroll-behavior: smooth;
 }
 
@@ -56,15 +122,16 @@ html {
 }
 
 body {
-  background-color: var(--color-ink-900);
-  color: #fff;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
 }
 
-/* Fine-grain film noise so the near-black never reads as flat fill.
-   Fixed-position overlay above content, non-interactive. */
+/* Paper tooth. Multiplied rather than laid over, so it darkens the ground
+   slightly instead of dusting grey on top of it — at this opacity it reads
+   as stock, not as noise. Fixed overlay above content, non-interactive. */
 .grain::after {
   content: "";
   position: fixed;
@@ -72,6 +139,7 @@ body {
   z-index: 60;
   pointer-events: none;
   opacity: 0.03;
+  mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -79,9 +147,9 @@ body {
  * Utilities
  * ------------------------------------------------------------------ */
 /* Emphasis inside a display headline. Flat colour, not a gradient — the
-   palette only has one accent now, so there is nothing to blend to. */
+   palette only has one accent, so there is nothing to blend to. */
 @utility text-accent {
-  color: var(--color-royal-mid);
+  color: var(--color-royal);
 }
 
 @utility bg-accent {
@@ -108,7 +176,9 @@ body {
   }
 }
 
-/* Hairline top edge that catches "light" — used on glass cards. */
+/* Top edge of a raised card. On the dark build this was a hairline catching
+   light; on paper the lift comes from the shadow underneath, so the same
+   utility now draws the *crease* — a soft ink line that fades at both ends. */
 @utility edge-light {
   &::before {
     content: "";
@@ -119,7 +189,7 @@ body {
     background: linear-gradient(
       90deg,
       transparent,
-      rgb(255 255 255 / 0.25),
+      rgb(26 20 48 / 0.12),
       transparent
     );
   }
@@ -151,8 +221,8 @@ body {
     --ring,
     linear-gradient(
       140deg,
-      rgb(255 255 255 / 0.22),
-      rgb(255 255 255 / 0.04) 42%,
+      rgb(26 20 48 / 0.18),
+      rgb(26 20 48 / 0.06) 42%,
       transparent 70%
     )
   );
@@ -170,7 +240,10 @@ body {
 
 /* The scan beam. Travels the height of its container once per cycle; the
    container clips it. Used while a file is being dragged over the aperture and
-   while one is uploading — i.e. only ever when something is actually moving. */
+   while one is uploading — i.e. only ever when something is actually moving.
+
+   On paper a beam cannot be made of white light, so the sweep is ink and
+   violet: it reads as a line passing over the page rather than through it. */
 /* `top`, not translateY: a percentage transform resolves against the element's
    own box, and the beam is 1px tall — it would travel 5px and stop. A
    percentage offset resolves against the panel, which is the distance meant. */
@@ -193,9 +266,9 @@ body {
   background: linear-gradient(
     90deg,
     transparent,
-    color-mix(in oklab, var(--color-royal-soft) 55%, transparent) 22%,
-    rgb(255 255 255 / 0.85) 50%,
-    color-mix(in oklab, var(--color-royal-soft) 55%, transparent) 78%,
+    color-mix(in oklab, var(--color-royal-mid) 30%, transparent) 22%,
+    var(--color-royal) 50%,
+    color-mix(in oklab, var(--color-royal-mid) 30%, transparent) 78%,
     transparent
   );
   animation: beam-sweep 2.1s cubic-bezier(0.4, 0, 0.3, 1) infinite;
@@ -249,17 +322,20 @@ body {
 }
 
 /* ------------------------------------------------------------------ *
- * Focus states — visible on dark without relying on the browser default
+ * Focus states
+ * The accent doubles as the focus colour: on paper it is the one hue that
+ * is unmistakably deliberate, and it clears 3:1 against both the canvas and
+ * every card surface.
  * ------------------------------------------------------------------ */
 :focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--color-royal);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--color-royal) 65%, transparent);
-  color: #fff;
+  background: color-mix(in oklab, var(--color-royal) 22%, transparent);
+  color: var(--color-ink);
 }
 
 /* ------------------------------------------------------------------ *
@@ -269,20 +345,20 @@ body {
  * costs no re-renders while scrolling.
  * ------------------------------------------------------------------ */
 [data-path-step][data-path-active] .step-card {
-  border-color: rgb(255 255 255 / 0.2);
-  background-color: rgb(255 255 255 / 0.04);
-  box-shadow: 0 26px 80px -40px rgb(255 255 255 / 0.28);
+  border-color: var(--color-line-strong);
+  background-color: var(--color-card);
+  box-shadow: var(--shadow-card-hover);
 }
 
 [data-path-step][data-path-active] .step-index {
-  border-color: color-mix(in oklab, var(--color-royal-mid) 70%, transparent);
+  border-color: var(--color-royal);
   color: #fff;
-  background-color: color-mix(in oklab, var(--color-royal) 32%, transparent);
+  background-color: var(--color-royal);
 }
 
 [data-path-step][data-path-active] .step-visual {
-  border-color: rgb(255 255 255 / 0.2);
-  box-shadow: 0 26px 80px -44px rgb(255 255 255 / 0.3);
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-card-hover);
   transform: translateY(-3px);
 }
 

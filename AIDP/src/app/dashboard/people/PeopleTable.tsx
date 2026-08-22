@@ -28,10 +28,10 @@ import {
 } from "./actions";
 
 const TONE: Record<string, string> = {
-  good: "border-emerald-400/30 bg-emerald-400/[0.08] text-emerald-300",
-  warn: "border-amber-400/30 bg-amber-400/[0.08] text-amber-300",
-  neutral: "border-white/12 bg-white/[0.04] text-white/50",
-  off: "border-white/10 bg-white/[0.02] text-white/30",
+  good: "border-ok-line bg-ok-tint text-ok",
+  warn: "border-warn-line bg-warn-tint text-warn",
+  neutral: "border-line bg-card text-ink/68",
+  off: "border-line bg-card text-ink/62",
 };
 
 type Filter = "all" | RosterStatus;
@@ -134,9 +134,9 @@ export function PeopleTable({
   return (
     <section className="mt-8">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="mr-auto font-display text-[17px] font-semibold tracking-[-0.01em] text-white">
+        <h2 className="mr-auto font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
           Your list
-          <span className="ml-2 text-[13px] font-normal text-white/30">
+          <span className="ml-2 text-[13px] font-normal text-ink/62">
             {people.length} {people.length === 1 ? "person" : "people"}
           </span>
         </h2>
@@ -145,7 +145,7 @@ export function PeopleTable({
           <Search
             size={14}
             aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink/62"
           />
           <input
             type="search"
@@ -153,7 +153,7 @@ export function PeopleTable({
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search name, email, team"
             aria-label="Search people"
-            className="w-60 rounded-lg border border-white/12 bg-white/[0.03] py-1.5 pl-8 pr-3 text-[12.5px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+            className="w-60 rounded-lg border border-line bg-card py-1.5 pl-8 pr-3 text-[12.5px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
           />
         </label>
 
@@ -161,7 +161,7 @@ export function PeopleTable({
           type="button"
           onClick={() => setAdding((open) => !open)}
           aria-expanded={adding}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[12.5px] text-white/70 transition-colors hover:border-white/25 hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink"
         >
           <UserPlus size={13} />
           Add someone
@@ -183,8 +183,8 @@ export function PeopleTable({
               className={cn(
                 "rounded-full border px-3 py-1 text-[12px] transition-colors",
                 filter === option.id
-                  ? "border-royal-mid/45 bg-royal/15 text-royal-soft"
-                  : "border-white/10 text-white/45 hover:border-white/20 hover:text-white/70",
+                  ? "border-royal-mid/45 bg-royal/10 text-royal"
+                  : "border-line text-ink/66 hover:border-line-strong hover:text-ink/78",
               )}
             >
               {option.label}
@@ -196,7 +196,7 @@ export function PeopleTable({
 
       {actionable.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-royal-mid/30 bg-royal/[0.08] p-3">
-          <span className="mr-auto text-[12.5px] text-white/70">
+          <span className="mr-auto text-[12.5px] text-ink/78">
             {actionable.length} selected
           </span>
 
@@ -215,27 +215,27 @@ export function PeopleTable({
             disabled={pending}
             onClick={() => act(() => grantAccess(ids, OWNER))}
             title="Admit as an administrator — they can manage people and see spend."
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-[12.5px] text-white/70 transition-colors hover:border-white/30 hover:text-white disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-40"
           >
             <ShieldCheck size={13} />
             As administrator
           </button>
 
           {confirmRevoke ? (
-            <span className="inline-flex items-center gap-2 rounded-lg border border-red-400/35 bg-red-400/10 px-2.5 py-1 text-[12px] text-red-200">
+            <span className="inline-flex items-center gap-2 rounded-lg border border-danger-line bg-danger-tint px-2.5 py-1 text-[12px] text-danger">
               Sign them out and withdraw access?
               <button
                 type="button"
                 disabled={pending}
                 onClick={() => act(() => revokeAccess(ids))}
-                className="rounded-md bg-red-500/85 px-2 py-0.5 font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-40"
+                className="rounded-md bg-danger px-2 py-0.5 font-medium text-white transition-colors hover:bg-danger/85 disabled:opacity-40"
               >
                 Yes, revoke
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmRevoke(false)}
-                className="text-white/50 transition-colors hover:text-white"
+                className="text-ink/68 transition-colors hover:text-ink"
               >
                 cancel
               </button>
@@ -245,7 +245,7 @@ export function PeopleTable({
               type="button"
               disabled={pending}
               onClick={() => setConfirmRevoke(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-[12.5px] text-white/60 transition-colors hover:border-red-400/40 hover:text-red-200 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/72 transition-colors hover:border-danger-line hover:text-danger disabled:opacity-40"
             >
               <UserMinus size={13} />
               Revoke
@@ -259,18 +259,18 @@ export function PeopleTable({
           role="status"
           className={cn(
             "mb-3 text-[12.5px]",
-            message.ok ? "text-emerald-300/80" : "text-amber-200/80",
+            message.ok ? "text-ok" : "text-warn",
           )}
         >
           {message.text}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-white/[0.09]">
+      <div className="overflow-hidden rounded-2xl border border-line">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left">
             <thead>
-              <tr className="border-b border-white/[0.08] bg-white/[0.02]">
+              <tr className="border-b border-line bg-card">
                 <th scope="col" className="w-10 px-3 py-2.5">
                   <input
                     type="checkbox"
@@ -301,7 +301,7 @@ export function PeopleTable({
               ))}
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-white/35">
+                  <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-ink/62">
                     {people.length === 0
                       ? "Nobody on the list yet. Import your staff spreadsheet above, or add someone by hand."
                       : "Nobody matches that."}
@@ -321,7 +321,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
     <th
       scope="col"
       className={cn(
-        "px-3 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] text-white/30",
+        "px-3 py-2.5 text-[11px] font-medium uppercase tracking-[0.12em] text-ink/62",
         className,
       )}
     >
@@ -352,8 +352,8 @@ function Row({
   return (
     <tr
       className={cn(
-        "border-b border-white/[0.05] last:border-0 transition-colors",
-        selected ? "bg-royal/[0.07]" : "hover:bg-white/[0.02]",
+        "border-b border-line-soft last:border-0 transition-colors",
+        selected ? "bg-royal/[0.07]" : "hover:bg-card",
         person.status === "revoked" && "opacity-55",
       )}
     >
@@ -368,13 +368,13 @@ function Row({
       </td>
 
       <td className="px-3 py-3">
-        <p className="text-[13.5px] leading-tight text-white/90">
+        <p className="text-[13.5px] leading-tight text-ink/92">
           {person.name || person.email.split("@")[0]}
-          {isSelf && <span className="ml-2 text-[11px] text-white/30">you</span>}
+          {isSelf && <span className="ml-2 text-[11px] text-ink/62">you</span>}
         </p>
-        <p className="mt-0.5 text-[12px] leading-tight text-white/40">{person.email}</p>
+        <p className="mt-0.5 text-[12px] leading-tight text-ink/64">{person.email}</p>
         {(person.jobTitle || person.department) && (
-          <p className="mt-0.5 text-[11.5px] leading-tight text-white/28">
+          <p className="mt-0.5 text-[11.5px] leading-tight text-ink/62">
             {[person.jobTitle, person.department].filter(Boolean).join(" · ")}
           </p>
         )}
@@ -391,10 +391,10 @@ function Row({
           {meta.label}
         </span>
         {person.status === "revoked" && person.revokedByName && (
-          <p className="mt-1 text-[11px] text-white/25">by {person.revokedByName}</p>
+          <p className="mt-1 text-[11px] text-ink/58">by {person.revokedByName}</p>
         )}
         {person.status === "allowed" && !person.hasAccount && (
-          <p className="mt-1 text-[11px] text-white/25">has not signed up</p>
+          <p className="mt-1 text-[11px] text-ink/58">has not signed up</p>
         )}
       </td>
 
@@ -402,7 +402,7 @@ function Row({
         <span
           className={cn(
             "text-[12.5px]",
-            person.role === OWNER ? "text-royal-soft" : "text-white/50",
+            person.role === OWNER ? "text-royal" : "text-ink/68",
           )}
         >
           {ROLE_LABEL[person.role]}
@@ -410,11 +410,11 @@ function Row({
       </td>
 
       <td className="px-3 py-3 text-right">
-        <span className="text-[13px] tabular-nums text-white/70">
+        <span className="text-[13px] tabular-nums text-ink/78">
           {person.totalTokens > 0 ? formatTokens(person.totalTokens) : "—"}
         </span>
         {person.lastActiveAt && (
-          <p className="mt-0.5 text-[11px] text-white/25">
+          <p className="mt-0.5 text-[11px] text-ink/58">
             {new Date(person.lastActiveAt).toLocaleDateString(undefined, {
               day: "numeric",
               month: "short",
@@ -429,7 +429,7 @@ function Row({
           onClick={() => setOpen((value) => !value)}
           aria-label={`Actions for ${person.email}`}
           aria-expanded={open}
-          className="rounded-md p-1 text-white/30 transition-colors hover:bg-white/[0.06] hover:text-white/70"
+          className="rounded-md p-1 text-ink/62 transition-colors hover:bg-canvas-sunk hover:text-ink/78"
         >
           <ChevronDown size={14} />
         </button>
@@ -447,7 +447,7 @@ function Row({
         )}
 
         {open && !settingPassword && (
-          <div className="absolute right-2 top-11 z-20 w-52 overflow-hidden rounded-xl border border-white/12 bg-ink-800 py-1 shadow-xl shadow-black/40">
+          <div className="absolute right-2 top-11 z-20 w-52 overflow-hidden rounded-xl border border-line bg-card py-1 shadow-pop">
             <MenuItem
               disabled={pending}
               onClick={() => {
@@ -533,8 +533,8 @@ function MenuItem({
       className={cn(
         "block w-full px-3 py-2 text-left text-[12.5px] transition-colors disabled:opacity-30",
         danger
-          ? "text-red-200/80 hover:bg-red-500/10"
-          : "text-white/70 hover:bg-white/[0.06] hover:text-white",
+          ? "text-danger hover:bg-danger-tint"
+          : "text-ink/78 hover:bg-canvas-sunk hover:text-ink",
       )}
     >
       {children}
@@ -556,7 +556,7 @@ function AddPersonForm({
           onDone(await addPerson(formData));
         })
       }
-      className="mb-4 rounded-xl border border-white/10 bg-white/[0.02] p-4"
+      className="mb-4 rounded-xl border border-line bg-card p-4"
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Input name="email" label="Email" type="email" required placeholder="name@company.com" />
@@ -576,14 +576,14 @@ function AddPersonForm({
           autoComplete="new-password"
           placeholder={`At least ${MIN_PASSWORD} characters`}
         />
-        <p className="self-end pb-1.5 text-[11.5px] leading-relaxed text-white/30">
+        <p className="self-end pb-1.5 text-[11.5px] leading-relaxed text-ink/62">
           Leave blank and they sign up themselves. Fill it in and their account
           is created now — pass the password on yourself; nothing is emailed.
         </p>
       </div>
 
       <div className="mt-3.5 flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-[12.5px] text-white/60">
+        <label className="flex items-center gap-2 text-[12.5px] text-ink/72">
           <input
             type="checkbox"
             name="admit"
@@ -593,7 +593,7 @@ function AddPersonForm({
           Give them access straight away
         </label>
 
-        <label className="flex items-center gap-2 text-[12.5px] text-white/60">
+        <label className="flex items-center gap-2 text-[12.5px] text-ink/72">
           <input
             type="checkbox"
             name="role"
@@ -632,7 +632,7 @@ function Input({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-white/30">
+      <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-ink/62">
         {label}
       </span>
       <input
@@ -641,7 +641,7 @@ function Input({
         required={required}
         placeholder={placeholder}
         autoComplete={autoComplete}
-        className="w-full rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-[13px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+        className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
       />
     </label>
   );
@@ -668,8 +668,8 @@ function PasswordBox({
   const tooShort = value.length > 0 && value.length < MIN_PASSWORD;
 
   return (
-    <div className="absolute right-2 top-11 z-20 w-72 rounded-xl border border-white/12 bg-ink-800 p-3 shadow-xl shadow-black/40">
-      <p className="mb-2 text-[11.5px] leading-relaxed text-white/45">
+    <div className="absolute right-2 top-11 z-20 w-72 rounded-xl border border-line bg-card p-3 shadow-pop">
+      <p className="mb-2 text-[11.5px] leading-relaxed text-ink/66">
         Set a password for {person.email}. You will need to pass it on — nothing
         is emailed.
       </p>
@@ -680,10 +680,10 @@ function PasswordBox({
         autoComplete="new-password"
         onChange={(event) => setValue(event.target.value)}
         placeholder={`At least ${MIN_PASSWORD} characters`}
-        className="w-full rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-[13px] text-white/85 placeholder:text-white/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+        className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
       />
       {tooShort && (
-        <p className="mt-1.5 text-[11px] text-amber-200/70">
+        <p className="mt-1.5 text-[11px] text-warn">
           {MIN_PASSWORD - value.length} more character
           {MIN_PASSWORD - value.length === 1 ? "" : "s"}.
         </p>
@@ -700,7 +700,7 @@ function PasswordBox({
         <button
           type="button"
           onClick={onCancel}
-          className="text-[12px] text-white/40 transition-colors hover:text-white"
+          className="text-[12px] text-ink/64 transition-colors hover:text-ink"
         >
           cancel
         </button>

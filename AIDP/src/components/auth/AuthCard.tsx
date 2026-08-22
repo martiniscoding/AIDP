@@ -14,7 +14,7 @@ function AuthTabs({ active }: { active: "sign-in" | "sign-up" }) {
   ] as const;
 
   return (
-    <div className="grid grid-cols-2 gap-1 rounded-full border border-white/10 bg-ink-950/40 p-1">
+    <div className="grid grid-cols-2 gap-1 rounded-full border border-line bg-canvas-sunk p-1">
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
@@ -26,8 +26,8 @@ function AuthTabs({ active }: { active: "sign-in" | "sign-up" }) {
               "relative inline-flex h-9 items-center justify-center rounded-full text-[13.5px] font-medium",
               "transition-[background-color,color,box-shadow] duration-200",
               isActive
-                ? "bg-white/[0.1] text-white shadow-[0_1px_0_0_rgba(255,255,255,0.14)_inset]"
-                : "text-white/45 hover:bg-white/[0.04] hover:text-white/80",
+                ? "bg-card text-ink shadow-card"
+                : "text-ink/66 hover:bg-card/60 hover:text-ink/84",
             )}
           >
             {tab.label}
@@ -68,7 +68,7 @@ export function AuthCard({
         className,
       )}
     >
-      <div className="edge-light relative overflow-hidden rounded-2xl border border-white/[0.09] bg-white/[0.035] p-7 shadow-[0_1px_0_0_rgba(255,255,255,0.05)_inset,0_50px_120px_-60px_rgba(124,58,237,0.85),0_20px_60px_-40px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:p-9">
+      <div className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(60,50,40,0.10),0_18px_50px_-24px_rgba(60,50,40,0.20),0_40px_90px_-60px_rgba(124,58,237,0.35)] backdrop-blur-2xl sm:p-9">
         {/* Light falling on the top edge of the glass, from the same side as
             the artwork's glow. Sits under the content, not over it. */}
         <div
@@ -87,11 +87,11 @@ export function AuthCard({
             </div>
           ) : null}
 
-          <h1 className="font-display text-[27px] font-medium leading-[1.15] tracking-[-0.035em] text-white text-balance">
+          <h1 className="font-display text-[27px] font-medium leading-[1.15] tracking-[-0.035em] text-ink text-balance">
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-2.5 text-[14.5px] leading-relaxed text-white/50 text-pretty">
+            <p className="mt-2.5 text-[14.5px] leading-relaxed text-ink/68 text-pretty">
               {subtitle}
             </p>
           ) : null}
@@ -101,7 +101,7 @@ export function AuthCard({
       </div>
 
       {footer ? (
-        <p className="mt-6 text-center text-[14px] text-white/45">{footer}</p>
+        <p className="mt-6 text-center text-[14px] text-ink/66">{footer}</p>
       ) : null}
     </div>
   );
@@ -111,7 +111,7 @@ export function FormError({ children }: { children: React.ReactNode }) {
   return (
     <p
       role="alert"
-      className="rounded-xl border border-rose-400/25 bg-rose-500/[0.08] px-3.5 py-2.5 text-[13px] leading-relaxed text-rose-200"
+      className="rounded-xl border border-danger-line bg-danger-tint px-3.5 py-2.5 text-[13px] leading-relaxed text-danger"
     >
       {children}
     </p>

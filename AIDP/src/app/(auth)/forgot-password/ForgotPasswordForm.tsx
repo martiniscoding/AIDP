@@ -52,7 +52,7 @@ export function ForgotPasswordForm() {
         subtitle={
           <>
             If an account exists for{" "}
-            <span className="text-white/80">{email.trim()}</span>, a password
+            <span className="text-ink/84">{email.trim()}</span>, a password
             reset link is on its way. It expires in one hour.
           </>
         }
@@ -62,7 +62,7 @@ export function ForgotPasswordForm() {
             <button
               type="button"
               onClick={() => setSent(false)}
-              className="font-medium text-white/85 underline-offset-4 hover:underline"
+              className="font-medium text-ink/88 underline-offset-4 hover:underline"
             >
               Try another
             </button>
@@ -70,24 +70,24 @@ export function ForgotPasswordForm() {
         }
       >
         <div className="flex flex-col gap-5">
-          <div className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-card p-4">
             <MailCheck
               size={18}
               aria-hidden="true"
-              className="mt-0.5 shrink-0 text-royal-soft"
+              className="mt-0.5 shrink-0 text-royal"
             />
-            <p className="text-[13px] leading-relaxed text-white/55">
+            <p className="text-[13px] leading-relaxed text-ink/70">
               No email provider is configured in development — the reset link is
               printed to the terminal running{" "}
-              <code className="rounded bg-white/10 px-1 py-0.5 text-[12px] text-white/75">
+              <code className="rounded bg-canvas-sunk px-1 py-0.5 text-[12px] text-ink/80">
                 npm run dev
               </code>
               . See{" "}
-              <code className="rounded bg-white/10 px-1 py-0.5 text-[12px] text-white/75">
+              <code className="rounded bg-canvas-sunk px-1 py-0.5 text-[12px] text-ink/80">
                 sendResetPassword
               </code>{" "}
               in{" "}
-              <code className="rounded bg-white/10 px-1 py-0.5 text-[12px] text-white/75">
+              <code className="rounded bg-canvas-sunk px-1 py-0.5 text-[12px] text-ink/80">
                 src/lib/auth.ts
               </code>{" "}
               to plug in a real sender.
@@ -111,7 +111,7 @@ export function ForgotPasswordForm() {
           Remembered it?{" "}
           <Link
             href="/sign-in"
-            className="font-medium text-white/85 underline-offset-4 hover:underline"
+            className="font-medium text-ink/88 underline-offset-4 hover:underline"
           >
             Sign in
           </Link>
