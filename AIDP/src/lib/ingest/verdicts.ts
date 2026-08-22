@@ -49,6 +49,28 @@ export const VERDICT_META: Record<
 
 export type VerdictCounts = Record<Verdict, number>;
 
+/**
+ * Which findings a report is showing.
+ *
+ * "attention" is what a report opens on: everything except covered. A covered
+ * finding is the evidence that a clause was checked and passed — an audit asks
+ * for exactly that, and a wrong one is the most expensive mistake this tool can
+ * make, so they are folded rather than dropped and the count stays on screen.
+ */
+export type Lens = Verdict | "attention" | "all";
+
+/**
+ * Apply a lens. Pure, and separate from the component, so the rule can be
+ * tested as a rule — the component is a Client Component, and every finding
+ * reaches the browser in its props whether or not it is drawn, which makes
+ * "is it on the page?" unanswerable from the HTML.
+ */
+export function applyLens<T extends { verdict: string }>(findings: T[], lens: Lens): T[] {
+  if (lens === "all") return findings;
+  if (lens === "attention") return findings.filter((finding) => finding.verdict !== "covered");
+  return findings.filter((finding) => finding.verdict === lens);
+}
+
 export function emptyCounts(): VerdictCounts {
   return Object.fromEntries(VERDICTS.map((v) => [v, 0])) as VerdictCounts;
 }

@@ -16,7 +16,9 @@ import { cn } from "@/lib/cn";
 import {
   VERDICTS,
   VERDICT_META,
+  applyLens,
   type EvidenceItem,
+  type Lens,
   type Verdict,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
@@ -65,6 +67,14 @@ const TONE: Record<string, string> = {
  * Findings arrive worst-first and default to collapsed. A reviewer working a
  * hundred-clause run needs the shape of the result before any one row, and the
  * rows they will actually open are the handful at the top.
+ *
+ * The list opens on what needs attention, with covered findings folded away.
+ * They are *not* discarded: a covered finding is the evidence that a clause was
+ * checked and passed, which is precisely what an audit asks for, and it is also
+ * the only way anybody catches a wrong one — a false "covered" ships a gap,
+ * which is the most expensive mistake this tool can make. So the count stays on
+ * screen and they are one click away; what changes is only which of them a
+ * reviewer has to scroll past to reach the work.
  */
 export function Assessment({
   documentId,
@@ -83,7 +93,11 @@ export function Assessment({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Verdict | null>(null);
+  /**
+   * Which findings to show. A verdict narrows to that one; "attention" is the
+   * default and hides only covered; "all" is the explicit way back.
+   */
+  const [lens, setLens] = useState<Lens>("attention");
 
   /**
    * Queued and running are different things, and collapsing them hid a real
@@ -95,8 +109,10 @@ export function Assessment({
   const queued = run?.state === "queued";
   const assessing = run?.state === "running";
   const inFlight = queued || assessing;
-  const shown = filter ? findings.filter((f) => f.verdict === filter) : findings;
-  const reviewed = findings.filter((f) => f.reviewerState !== "pending").length;
+  const shown = applyLens(findings, lens);
+  const reviewed = findings.filter((finding) => finding.reviewerState !== "pending").length;
+  // Only worth mentioning the fold when it is actually hiding something.
+  const folded = lens === "attention" ? counts.covered : 0;
 
 
   const begin = () =>
@@ -203,13 +219,13 @@ export function Assessment({
             {VERDICTS.map((verdict) => {
               const meta = VERDICT_META[verdict];
               const count = counts[verdict];
-              const active = filter === verdict;
+              const active = lens === verdict;
               return (
                 <button
                   key={verdict}
                   type="button"
                   title={meta.blurb}
-                  onClick={() => setFilter(active ? null : verdict)}
+                  onClick={() => setLens(active ? "attention" : verdict)}
                   disabled={count === 0}
                   className={cn(
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] transition-opacity",
@@ -228,12 +244,38 @@ export function Assessment({
 
           <p className="mb-3 text-[12px] text-ink/62">
             {reviewed} of {findings.length} reviewed
-            {filter && (
+            {folded > 0 && (
+              <>
+                {" · "}
+                {folded} covered {folded === 1 ? "clause is" : "clauses are"} folded away
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => setLens("all")}
+                  className="text-royal hover:text-ink"
+                >
+                  show everything
+                </button>
+              </>
+            )}
+            {lens === "all" && counts.covered > 0 && (
               <>
                 {" · "}
                 <button
                   type="button"
-                  onClick={() => setFilter(null)}
+                  onClick={() => setLens("attention")}
+                  className="text-royal hover:text-ink"
+                >
+                  hide covered
+                </button>
+              </>
+            )}
+            {lens !== "all" && lens !== "attention" && (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => setLens("attention")}
                   className="text-royal hover:text-ink"
                 >
                   clear filter
@@ -242,11 +284,33 @@ export function Assessment({
             )}
           </p>
 
-          <ul className="space-y-2">
-            {shown.map((finding) => (
-              <FindingRow key={finding.id} finding={finding} />
-            ))}
-          </ul>
+          {shown.length === 0 ? (
+            // Reachable when every clause passed. An empty list would read as a
+            // broken page rather than as the best possible result.
+            <p className="rounded-xl border border-ok-line bg-ok-tint px-4 py-6 text-center text-[13px] text-ok">
+              {lens === "attention" && findings.length > 0
+                ? `Nothing to resolve — all ${findings.length} clauses are covered.`
+                : "No findings match that filter."}
+              {lens === "attention" && findings.length > 0 && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={() => setLens("all")}
+                    className="underline underline-offset-2"
+                  >
+                    Show them
+                  </button>
+                </>
+              )}
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {shown.map((finding) => (
+                <FindingRow key={finding.id} finding={finding} />
+              ))}
+            </ul>
+          )}
         </>
       )}
 
