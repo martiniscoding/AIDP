@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 import { requireWorkspace } from "@/lib/access/gate";
 import { listProjects, type ProjectSummary } from "@/lib/ingest/projects";
 import { NewProject } from "./NewProject";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Projects",
@@ -18,7 +19,14 @@ export const metadata: Metadata = {
  * should not have to be invited to each one, and a colleague picking up
  * somebody's work should not have to ask where it lives.
  */
-export default async function ProjectsPage() {
+export default async function ProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ new?: string }>;
+}) {
+  // "Create Project" in the header is a link, not a button — it has to work
+  // from any page — so it arrives here with the form already asked for.
+  const { new: openNew } = await searchParams;
   const { organisation, isOwner } = await requireWorkspace();
   const projects = await listProjects(organisation.id);
 
@@ -27,21 +35,17 @@ export default async function ProjectsPage() {
 
   return (
     <>
-      <header className="mb-7">
-        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal">
-          {organisation.name}
-        </p>
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Projects
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
-          {isOwner
+      <PageHeader
+        eyebrow={organisation.name}
+        title="My Projects"
+        lede={
+          isOwner
             ? "Every piece of work in this workspace, and what is happening inside it."
-            : "Open a project for a piece of work, then submit its designs for assessment."}
-        </p>
-      </header>
+            : "Open a project for a piece of work, then submit its designs for assessment."
+        }
+      />
 
-      <NewProject />
+      <NewProject defaultOpen={openNew === "1"} />
 
       {active.length === 0 && archived.length === 0 ? (
         <p className="rounded-2xl border border-line bg-card px-4 py-10 text-center text-[13.5px] text-ink/58">
@@ -83,7 +87,7 @@ function Row({ project }: { project: ProjectSummary }) {
     <Link
       href={`/dashboard/projects/${project.id}`}
       className={cn(
-        "group block rounded-2xl border bg-card p-5 transition-[border-color,transform] duration-300",
+        "group card-sheen block rounded-2xl border bg-card p-5 shadow-card transition-[border-color,transform,box-shadow] duration-300 hover:shadow-card-hover",
         archived
           ? "border-line opacity-70 hover:opacity-100"
           : "border-line hover:-translate-y-0.5 hover:border-line-strong",

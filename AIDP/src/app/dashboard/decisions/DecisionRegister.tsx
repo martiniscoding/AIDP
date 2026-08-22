@@ -186,7 +186,7 @@ function DecisionCard({
   return (
     <article
       className={cn(
-        "rounded-xl border border-line bg-card p-4",
+        "card-sheen rounded-xl border border-line bg-card p-4 shadow-card",
         !inForce && "opacity-60",
       )}
     >

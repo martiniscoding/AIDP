@@ -5,6 +5,7 @@ import { listDocuments, PIPELINE, STATUS_LABEL, isTerminal } from "@/lib/ingest/
 import { requireWorkspace } from "@/lib/access/gate";
 import { PipelineWatcher } from "./PipelineWatcher";
 import { ReadyTick, UploadZone } from "./UploadZone";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -26,18 +27,11 @@ export default async function DocumentsPage() {
     <>
       <PipelineWatcher active={inFlight} />
 
-      <header className="mb-9">
-        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal">
-          {organisation.name}
-        </p>
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Standards library
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink/68">
-          The clauses every assessment measures against. Designs live in
-          projects, and each one is checked against everything here.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow={organisation.name}
+        title="Reference Library"
+        lede="The clauses every assessment measures against. Designs live in projects, and each one is checked against everything here."
+      />
 
       <Group
         icon={<BookMarked size={15} strokeWidth={1.9} />}
@@ -59,7 +53,7 @@ export default async function DocumentsPage() {
           ungrouped copy of the same list. */}
       <Link
         href="/dashboard/projects"
-        className="group mt-4 flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-card p-5 transition-colors hover:border-line-strong"
+        className="group card-sheen mt-4 flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-card p-5 shadow-card transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-card-hover"
       >
         <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-royal-mid/30 bg-royal/10 text-royal">
           <FolderOpen size={16} strokeWidth={1.9} />

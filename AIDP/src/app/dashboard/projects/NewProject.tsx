@@ -13,9 +13,9 @@ import { newProject } from "./actions";
  * form sitting permanently above it pushes the content down for the one time in
  * fifty that somebody is starting something new.
  */
-export function NewProject() {
+export function NewProject({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 

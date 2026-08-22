@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
+import { cn } from "@/lib/cn";
 import { requireWorkspace } from "@/lib/access/gate";
 import { SignOutButton } from "./SignOutButton";
 
@@ -35,16 +36,19 @@ export default async function DashboardLayout({
       .map((part) => part[0]!.toUpperCase())
       .join("") || "?";
 
+  // `cta` is the one entry that starts something rather than going somewhere,
+  // so it is styled as an action. Profile is not in this list: it lives on the
+  // account block at the right, which is where people look for it.
   const links = [
-    { href: "/dashboard", label: "Overview" },
-    { href: "/dashboard/projects", label: "Projects" },
-    { href: "/dashboard/documents", label: "Standards library" },
+    { href: "/dashboard", label: "Home" },
+    { href: "/dashboard/documents", label: "Reference Library" },
+    { href: "/dashboard/projects?new=1", label: "Create Project", cta: true },
+    { href: "/dashboard/projects", label: "My Projects" },
     { href: "/dashboard/decisions", label: "Decisions" },
     ...(isOwner
       ? [
           { href: "/dashboard/activity", label: "Activity" },
           { href: "/dashboard/people", label: "People" },
-          { href: "/dashboard/profile", label: "Profile" },
         ]
       : []),
   ];
@@ -52,15 +56,20 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-svh">
       <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-6">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
           <Logo tone="light" href="/dashboard" />
 
-          <nav className="hidden items-center gap-1 sm:flex">
+          <nav className="hidden items-center gap-0.5 lg:flex">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="rounded-full px-3 py-1.5 text-[13.5px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                className={cn(
+                  "whitespace-nowrap rounded-full px-2.5 py-1.5 text-[13px] transition-colors",
+                  link.cta
+                    ? "bg-royal-light font-medium text-deep hover:bg-white"
+                    : "text-white/70 hover:bg-white/10 hover:text-white",
+                )}
               >
                 {link.label}
               </Link>
@@ -68,29 +77,34 @@ export default async function DashboardLayout({
             {user.isPlatformAdmin && (
               <Link
                 href="/admin"
-                className="ml-1 rounded-full border border-royal-light/40 bg-white/10 px-3 py-1.5 text-[13.5px] text-royal-light transition-colors hover:bg-white/20"
+                className="ml-1 whitespace-nowrap rounded-full border border-royal-light/40 bg-white/10 px-2.5 py-1.5 text-[13px] text-royal-light transition-colors hover:bg-white/20"
               >
                 Admin
               </Link>
             )}
           </nav>
 
-          <div className="ml-auto flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-[13px] leading-tight text-white/88">
-                {user.name || user.email}
-              </p>
-              <p className="text-[11.5px] leading-tight text-white/55">
-                {organisation.name}
-                {isOwner ? " · Administrator" : ""}
-              </p>
-            </div>
-            <span
-              aria-hidden="true"
-              className="grid size-9 place-items-center rounded-full border border-white/20 bg-white/10 text-[12px] font-semibold text-white/85"
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Link
+              href="/dashboard/profile"
+              className="flex shrink-0 items-center gap-2.5 rounded-full py-1 pl-3 pr-1 transition-colors hover:bg-white/10"
             >
-              {initials}
-            </span>
+              <span className="hidden text-right xl:block">
+                <span className="block whitespace-nowrap text-[13px] leading-tight text-white/88">
+                  {user.name || user.email}
+                </span>
+                <span className="block whitespace-nowrap text-[11.5px] leading-tight text-white/55">
+                  {organisation.name}
+                  {isOwner ? " · Administrator" : ""}
+                </span>
+              </span>
+              <span
+                aria-hidden="true"
+                className="grid size-9 shrink-0 place-items-center rounded-full bg-royal-light text-[12px] font-semibold text-deep"
+              >
+                {initials}
+              </span>
+            </Link>
             <SignOutButton />
           </div>
         </div>

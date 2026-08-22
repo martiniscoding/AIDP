@@ -156,6 +156,28 @@ body {
   background-color: var(--color-royal);
 }
 
+/* A white card with the accent falling across it from one corner. Cards on a
+   tinted ground read flat when they are pure fill — this is a wash rather than
+   a border or a tint, so the edge stays crisp and only the field carries hue. */
+@utility card-sheen {
+  background-image: linear-gradient(
+    152deg,
+    rgb(124 58 237 / 0.08),
+    rgb(124 58 237 / 0.022) 38%,
+    rgb(124 58 237 / 0) 68%
+  );
+}
+
+/* Page headers. A soft bloom behind the title so a screen opens on colour
+   instead of bare type sitting on flat ground. */
+@utility header-bloom {
+  background-image: radial-gradient(
+    62% 140% at 0% 0%,
+    rgb(124 58 237 / 0.14),
+    transparent 64%
+  );
+}
+
 /* Navigation pending overlay (see LinkPending.tsx). Starts invisible and fades
    in on a delay, so only a navigation that actually makes the user wait ever
    shows a spinner — a prefetched, instant one resolves inside the delay. */

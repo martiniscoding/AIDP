@@ -3,6 +3,7 @@ import { ArrowRight, BookMarked, FolderOpen, Gavel } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireWorkspace } from "@/lib/access/gate";
 import { cn } from "@/lib/cn";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 /**
  * Where somebody lands, and what they should do next.
@@ -48,50 +49,91 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <header className="mb-9">
-        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal">
-          {organisation.name}
-        </p>
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          {firstName ? `Welcome back, ${firstName}` : "Welcome back"}
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">{next}</p>
-      </header>
+      <PageHeader
+        eyebrow={organisation.name}
+        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
+        lede={next}
+      />
+
+      {/* The workspace in four figures. This is the page's deep block: it is
+          the one element that is always present whatever state the workspace
+          is in, so it is the one that can carry the weight. It also takes the
+          counts off the cards below, which were repeating them in body text. */}
+      <section
+        aria-label="Workspace at a glance"
+        className="relative mb-5 overflow-hidden rounded-2xl bg-deep px-7 py-6 shadow-pop"
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(70% 140% at 12% 0%, rgba(139,92,246,0.42), rgba(124,58,237,0.10) 48%, transparent 72%)",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-[8%] top-0 h-px bg-linear-to-r from-transparent via-white/30 to-transparent"
+        />
+        <dl className="relative grid grid-cols-2 gap-y-6 sm:grid-cols-4">
+          <Stat label="Standards" value={standards} />
+          <Stat label="Projects" value={projects} />
+          <Stat label="Designs assessed" value={designs} accent />
+          <Stat label="Decisions" value={decisions} />
+        </dl>
+      </section>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Card
           href="/dashboard/documents"
           icon={<BookMarked size={19} strokeWidth={1.9} />}
-          title="Standards library"
+          title="Reference Library"
           blurb="The clauses every assessment is measured against."
-          count={standards}
-          unit="standard"
           lead={standards === 0}
         />
         <Card
           href="/dashboard/projects"
           icon={<FolderOpen size={19} strokeWidth={1.9} />}
-          title="Projects"
+          title="My Projects"
           blurb="Pieces of work, and the designs being assessed inside them."
-          count={projects}
-          unit="project"
           lead={standards > 0 && projects === 0}
-          note={
-            designs > 0
-              ? `${designs} design${designs === 1 ? "" : "s"}, ${runs} assessment${runs === 1 ? "" : "s"}`
-              : undefined
-          }
+          note={runs > 0 ? `${runs} assessment${runs === 1 ? "" : "s"} run` : undefined}
         />
         <Card
           href="/dashboard/decisions"
           icon={<Gavel size={19} strokeWidth={1.9} />}
           title="Decisions"
           blurb="Rulings this organisation has settled, applied to future assessments."
-          count={decisions}
-          unit="decision"
         />
       </div>
     </>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  /** The figure that says whether the pipeline is actually running. */
+  accent?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="order-2 text-[11.5px] font-medium uppercase tracking-[0.13em] text-white/55">
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "order-1 font-display text-[2.1rem] font-medium leading-none tracking-[-0.04em] tabular-nums",
+          value === 0 ? "text-white/40" : accent ? "text-royal-light" : "text-white",
+        )}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
@@ -100,8 +142,6 @@ function Card({
   icon,
   title,
   blurb,
-  count,
-  unit,
   lead,
   note,
 }: {
@@ -109,89 +149,59 @@ function Card({
   icon: React.ReactNode;
   title: string;
   blurb: string;
-  count: number;
-  unit: string;
   /** The one thing to do next, given the state of the workspace. */
   lead?: boolean;
   note?: string;
 }) {
   return (
-    // The lead card is the deep one. Which card leads is decided by the state
-    // of the workspace above, so the strongest surface on the page always
-    // lands on the thing to do next rather than on a fixed tile.
+    // Which card leads is decided by the state of the workspace above, so the
+    // emphasis always lands on the thing to do next rather than on a fixed
+    // tile. It is an accent border and a heavier sheen rather than a deep
+    // fill: the stat band above is already this page's dark block, and two
+    // of them competing reads as decoration instead of hierarchy.
     <Link
       href={href}
       className={cn(
-        "group relative block overflow-hidden rounded-2xl border p-6",
-        "transition-[border-color,transform,box-shadow] duration-300 hover:-translate-y-0.5",
+        "group card-sheen relative block overflow-hidden rounded-2xl border bg-card p-6",
+        "transition-[border-color,transform,box-shadow] duration-300",
+        "hover:-translate-y-0.5 hover:shadow-card-hover",
         lead
-          ? "border-transparent bg-deep shadow-pop"
-          : "border-line bg-card shadow-card hover:border-line-strong hover:shadow-card-hover",
+          ? "border-royal/45 shadow-card-hover"
+          : "border-line shadow-card hover:border-line-strong",
       )}
     >
-      {lead && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(80% 120% at 100% 0%, rgba(139,92,246,0.45), transparent 62%)",
-          }}
-        />
-      )}
-
       <div className="relative flex items-start gap-4">
         <span
           className={cn(
-            "grid size-11 shrink-0 place-items-center rounded-xl border",
+            "grid size-11 shrink-0 place-items-center rounded-xl border transition-colors",
             lead
-              ? "border-white/25 bg-white/10 text-royal-light"
-              : "border-royal-mid/30 bg-royal/10 text-royal",
+              ? "border-transparent bg-royal text-white"
+              : "border-royal-mid/25 bg-royal/10 text-royal group-hover:bg-royal/15",
           )}
         >
           {icon}
         </span>
 
         <div className="min-w-0 flex-1">
-          <h2
-            className={cn(
-              "font-display text-[17px] font-semibold tracking-tight",
-              lead ? "text-white" : "text-ink",
-            )}
-          >
-            {title}
-          </h2>
-          <p
-            className={cn(
-              "mt-1 text-[13px] leading-relaxed",
-              lead ? "text-white/70" : "text-ink/64",
-            )}
-          >
-            {blurb}
-          </p>
-          <p
-            className={cn(
-              "mt-3 text-[13px] tabular-nums",
-              lead ? "text-white/85" : "text-ink/80",
-            )}
-          >
-            {count} {unit}
-            {count === 1 ? "" : "s"}
-            {note ? (
-              <span className={lead ? "text-white/55" : "text-ink/62"}>
-                {" "}
-                · {note}
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-[17px] font-semibold tracking-tight text-ink">
+              {title}
+            </h2>
+            {lead ? (
+              <span className="rounded-full bg-royal-tint px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-royal-deep">
+                Start here
               </span>
             ) : null}
-          </p>
+          </div>
+          <p className="mt-1 text-[13px] leading-relaxed text-ink/64">{blurb}</p>
+          {note ? (
+            <p className="mt-3 text-[12.5px] tabular-nums text-ink/62">{note}</p>
+          ) : null}
         </div>
 
         <ArrowRight
           size={15}
-          className={cn(
-            "mt-1 shrink-0 transition-transform duration-300 group-hover:translate-x-0.5",
-            lead ? "text-white/60" : "text-ink/40",
-          )}
+          className="mt-1 shrink-0 text-ink/40 transition-transform duration-300 group-hover:translate-x-0.5"
         />
       </div>
     </Link>

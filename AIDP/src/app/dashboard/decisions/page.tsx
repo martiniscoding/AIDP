@@ -3,6 +3,7 @@ import { Gavel } from "lucide-react";
 import { listDecisions } from "@/lib/ingest/decisions";
 import { requireWorkspace } from "@/lib/access/gate";
 import { DecisionRegister } from "./DecisionRegister";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -21,19 +22,11 @@ export default async function DecisionsPage() {
 
   return (
     <>
-      <header className="mb-9">
-        <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.14em] text-royal">
-          {organisation.name}
-        </p>
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Decisions
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink/68">
-          What this organisation has already settled. Every assessment from here
-          on is judged with these in front of it, so a question answered once is
-          not asked again.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow={organisation.name}
+        title="Decisions"
+        lede="What this organisation has already settled. Every assessment from here on is judged with these in front of it, so a question answered once is not asked again."
+      />
 
       {decisions.length === 0 ? (
         <div className="mb-8 rounded-2xl border border-line bg-card shadow-card px-6 py-10 text-center">
