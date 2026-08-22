@@ -42,6 +42,28 @@ export const ROLE_LABEL: Record<OrgRole, string> = {
 
 export const ROLE_BLURB: Record<OrgRole, string> = {
   [OWNER]:
-    "Can admit and remove colleagues, and see what the organisation is spending.",
-  [MEMBER]: "Can upload documents, run assessments, and record decisions.",
+    "Can admit and remove colleagues, curate the standards, and see what the organisation is spending.",
+  [MEMBER]:
+    "Can submit designs for assessment, review findings, and record decisions. Cannot change the standards.",
 };
+
+/**
+ * May this role add, replace or retire the organisation's standards?
+ *
+ * Reference documents are not ordinary uploads. They are the rules every
+ * assessment is measured against, so whoever controls them controls every
+ * verdict the product will ever produce for this customer. An employee
+ * submitting a design must not be able to quietly widen — or delete — the
+ * standard they are about to be judged by.
+ *
+ * Submitted designs are the opposite case and stay open to every member: that
+ * is the work they are here to do.
+ *
+ * Named after the policy rather than written as `role === OWNER` at each call
+ * site, because it is a different question from "may they manage people" and
+ * the two should be free to diverge — a future "standards editor" role would
+ * change this line and nothing else.
+ */
+export function canManageStandards(stored: string | null | undefined): boolean {
+  return isOwner(stored);
+}

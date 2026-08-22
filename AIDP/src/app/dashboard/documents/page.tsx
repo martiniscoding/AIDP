@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, BookMarked, FileSearch } from "lucide-react";
+import { AlertTriangle, ArrowRight, BookMarked, FileSearch, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { listDocuments, PIPELINE, STATUS_LABEL, isTerminal } from "@/lib/ingest/documents";
 import { requireWorkspace } from "@/lib/access/gate";
@@ -15,7 +15,7 @@ export default async function DocumentsPage() {
   // throwing `requireAccess`: a page renders concurrently with its layout, so
   // two thrown refusals race each other. This one redirects instead, so the
   // outcome is the same every time.
-  const { user, organisation } = await requireWorkspace();
+  const { user, organisation, isOwner } = await requireWorkspace();
   const documents = await listDocuments(user.id, organisation.id);
 
   const references = documents.filter((d) => d.role !== "assessed");
@@ -56,6 +56,11 @@ export default async function DocumentsPage() {
           uploadLabel="Add reference standards"
           role="reference"
           empty="No standards yet. These define what good looks like."
+          // Only an administrator curates the standards. The upload endpoint
+          // refuses a member regardless — this just stops offering a control
+          // that would be refused, which reads as a rule rather than a fault.
+          canUpload={isOwner}
+          lockedNote="Only an administrator can add standards. Ask yours if something is missing."
         />
         <Group
           icon={<FileSearch size={15} strokeWidth={1.9} />}
@@ -65,6 +70,7 @@ export default async function DocumentsPage() {
           uploadLabel="Add a design to assess"
           role="assessed"
           empty="No submissions yet. Upload a solution design to assess it."
+          canUpload
         />
       </div>
     </>
@@ -79,6 +85,8 @@ function Group({
   uploadLabel,
   role,
   empty,
+  canUpload,
+  lockedNote,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -87,6 +95,8 @@ function Group({
   uploadLabel: string;
   role: "reference" | "assessed";
   empty: string;
+  canUpload: boolean;
+  lockedNote?: string;
 }) {
   const chunks = documents.reduce((n, d) => n + d._count.chunks, 0);
   const review = documents.reduce((n, d) => n + d.issues.high, 0);
@@ -148,7 +158,14 @@ function Group({
       )}
 
       <div className="relative">
-        <UploadZone role={role} label={uploadLabel} />
+        {canUpload ? (
+          <UploadZone role={role} label={uploadLabel} />
+        ) : (
+          <p className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-white/[0.09] px-3.5 py-4 text-center text-[12px] text-white/30">
+            <Lock size={12} aria-hidden="true" />
+            {lockedNote}
+          </p>
+        )}
       </div>
     </section>
   );

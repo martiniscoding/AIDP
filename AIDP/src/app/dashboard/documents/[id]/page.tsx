@@ -10,7 +10,8 @@ import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verd
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { historyForRun } from "@/lib/ingest/outcomes";
-import { NotAMember } from "@/lib/ingest/org";
+import { NotAMember, requireMembership } from "@/lib/ingest/org";
+import { canManageStandards } from "@/lib/access/roles";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Figures, type FigureView } from "./Figures";
 import { ConfirmStructure } from "./ConfirmStructure";
@@ -40,6 +41,16 @@ export default async function DocumentPage({
     throw error;
   }
   if (!document) notFound();
+
+  // Reference standards are the administrator's to curate, so the controls that
+  // change one are only offered to them. `guardStandards` in ../actions.ts
+  // refuses regardless — this keeps the page from showing a button that would
+  // be turned down, which reads as a rule rather than as a fault. The role is
+  // read against the *document's* organisation, since a consultant can
+  // administer one customer and merely belong to another.
+  const membership = await requireMembership(session.user.id, document.organisationId);
+  const mayChange =
+    document.role === "assessed" || canManageStandards(membership.role);
 
   const clauses = document.sections.reduce((n, s) => n + s.clauses.length, 0);
   const tables = document.sections.reduce((n, s) => n + s.tables.length, 0);
@@ -163,7 +174,9 @@ export default async function DocumentPage({
           </p>
         </div>
 
-        <DocumentActions documentId={document.id} title={document.title} redirectAfterDelete />
+        {mayChange && (
+          <DocumentActions documentId={document.id} title={document.title} redirectAfterDelete />
+        )}
       </header>
 
       {document.failureReason && (
@@ -174,7 +187,7 @@ export default async function DocumentPage({
 
       {/* Above the statistics on purpose: the counts below are meaningless
           until someone has agreed the reading that produced them. */}
-      {document.structureInferred && (
+      {document.structureInferred && mayChange && (
         <ConfirmStructure
           documentId={document.id}
           clauseCount={clauses}

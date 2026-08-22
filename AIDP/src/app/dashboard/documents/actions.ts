@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess } from "@/lib/access/gate";
+import { canManageStandards } from "@/lib/access/roles";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { resolveFramework, unconfirmedStructure } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
@@ -23,6 +24,31 @@ export type ActionResult = { ok: boolean; message: string; runId?: string };
  */
 async function requireUser() {
   return (await requireAccess()).user;
+}
+
+const STANDARDS_REFUSED =
+  "Only an administrator can change the standards. You can submit a design for assessment instead.";
+
+/**
+ * Refuse a member who is reaching for a reference document.
+ *
+ * Uploading a standard, deleting one, re-parsing one, and confirming the rules
+ * a model read out of one are the same act in different clothes: they decide
+ * what every future assessment is measured against. All four belong to the
+ * administrator.
+ *
+ * Takes the role from `requireMembership`'s return value rather than from the
+ * caller's active workspace, because a consultant can be an administrator of
+ * one customer and a member of another — the role that matters is the one they
+ * hold in the organisation that owns *this* document.
+ */
+function guardStandards(
+  membership: { role: string },
+  document: { role: string },
+): ActionResult | null {
+  if (document.role === "assessed") return null;
+  if (canManageStandards(membership.role)) return null;
+  return { ok: false, message: STANDARDS_REFUSED };
 }
 
 /**
@@ -45,6 +71,7 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
       where: { id: documentId },
       select: {
         organisationId: true,
+        role: true,
         storageKey: true,
         title: true,
         sections: { select: { figures: { select: { storageKey: true } } } },
@@ -52,7 +79,9 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
 
-    await requireMembership(user.id, document.organisationId);
+    const membership = await requireMembership(user.id, document.organisationId);
+    const refused = guardStandards(membership, document);
+    if (refused) return refused;
 
     const keys = [
       document.storageKey,
@@ -89,11 +118,13 @@ export async function reprocessDocument(documentId: string): Promise<ActionResul
 
     const document = await prisma.document.findUnique({
       where: { id: documentId },
-      select: { organisationId: true, title: true },
+      select: { organisationId: true, role: true, title: true },
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
 
-    await requireMembership(user.id, document.organisationId);
+    const membership = await requireMembership(user.id, document.organisationId);
+    const refused = guardStandards(membership, document);
+    if (refused) return refused;
 
     await prisma.$transaction(async (tx) => {
       await tx.job.deleteMany({ where: { documentId } });
@@ -146,7 +177,7 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
       },
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
-    await requireMembership(user.id, document.organisationId);
+    const membership = await requireMembership(user.id, document.organisationId);
 
     if (document.role !== "assessed") {
       return {
@@ -169,12 +200,21 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
     const unconfirmed = await unconfirmedStructure(document.organisationId);
     if (unconfirmed.length > 0) {
       const names = unconfirmed.map((d) => d.title).join(", ");
+      // Only an administrator can confirm a standard's structure, so telling a
+      // member to go and do it would strand them on an instruction they cannot
+      // follow. Same block either way; different next step.
+      const yours = canManageStandards(membership.role);
+      const remedy = yours
+        ? unconfirmed.length === 1
+          ? "Open it and confirm the rules before assessing against them."
+          : "Confirm them before assessing."
+        : "Ask an administrator of this workspace to confirm the rules before assessing against them.";
       return {
         ok: false,
         message:
           unconfirmed.length === 1
-            ? `The structure of "${names}" was read by a model and has not been confirmed. Open it and confirm the rules before assessing against them.`
-            : `${unconfirmed.length} reference standards had their structure read by a model and are not yet confirmed: ${names}. Confirm them before assessing.`,
+            ? `The structure of "${names}" was read by a model and has not been confirmed. ${remedy}`
+            : `${unconfirmed.length} reference standards had their structure read by a model and are not yet confirmed: ${names}. ${remedy}`,
       };
     }
 
@@ -252,10 +292,12 @@ export async function confirmStructure(documentId: string): Promise<ActionResult
 
     const document = await prisma.document.findUnique({
       where: { id: documentId },
-      select: { organisationId: true, title: true, structureInferred: true },
+      select: { organisationId: true, role: true, title: true, structureInferred: true },
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
-    await requireMembership(user.id, document.organisationId);
+    const membership = await requireMembership(user.id, document.organisationId);
+    const refused = guardStandards(membership, document);
+    if (refused) return refused;
 
     if (!document.structureInferred) {
       return { ok: false, message: "That document's structure was parsed, not inferred." };

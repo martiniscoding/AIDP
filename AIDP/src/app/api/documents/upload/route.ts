@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess, type Access } from "@/lib/access/gate";
+import { canManageStandards } from "@/lib/access/roles";
 import { documentKey, put, sha256 } from "@/lib/ingest/storage";
 
 /**
@@ -82,6 +83,26 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const file = form.get("file");
   const role = form.get("role") === "assessed" ? "assessed" : "reference";
+
+  // Standards are the administrator's to curate. Whoever controls the reference
+  // documents controls every verdict this customer will ever get, so an
+  // employee submitting a design must not be able to widen the standard they
+  // are about to be judged against. Checked here rather than only in the UI,
+  // because this endpoint accepts a direct POST and the role arrives in the
+  // form body — the client asking nicely is not an access control.
+  //
+  // Note the parse above defaults to "reference": an employee sending a missing
+  // or malformed role is refused rather than quietly granted the privileged
+  // path. Failing closed is the right direction for this one.
+  if (role === "reference" && !canManageStandards(access.organisation.role)) {
+    return NextResponse.json(
+      {
+        error:
+          "Only an administrator can add standards documents. You can submit a design for assessment instead.",
+      },
+      { status: 403 },
+    );
+  }
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file was attached." }, { status: 400 });
