@@ -48,8 +48,8 @@ function createPrismaClient() {
  * `Prisma.ModelName` alone is not enough: it moves when a model is added or
  * removed, and sits perfectly still when a field is added to one that already
  * exists. That is the more common migration by far, and it produced a cached
- * client that knew `TechAssessment` but not its new `organisationId` — a query
- * rejected as "Unknown argument" against a column the database really had.
+ * client that knew `Document` but not its new `uploadedById` — a query rejected
+ * as "Unknown argument" against a column the database really had.
  *
  * Each model's `*ScalarFieldEnum` lists its own fields, so folding those in
  * catches field-level drift too. Relation fields still aren't listed, but a new

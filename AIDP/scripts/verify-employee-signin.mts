@@ -13,7 +13,6 @@ import { auth } from "../src/lib/auth";
 import { prisma } from "../src/lib/prisma";
 import { admit } from "../src/lib/access/gate";
 import * as roster from "../src/lib/access/roster";
-import { companyMatches } from "../src/lib/access/company-name";
 
 const EMAIL = "zz-temp-employee@test.invalid";
 // Generated per run rather than written down. The account is deleted at the end
@@ -71,7 +70,6 @@ try {
   const outcome = await admit(employee);
   ok("joins satyamindustry", "organisation" in outcome && outcome.organisation.id === org.id);
   ok("as a member, not an administrator", "role" in outcome && outcome.role === "member");
-  ok("company name they would type is accepted", companyMatches("satyamindustry", org.name, org.slug));
 
   console.log("\n4. Revoking shuts them out immediately");
   await roster.revoke(actor, [person.id]);

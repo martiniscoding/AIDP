@@ -62,7 +62,7 @@ _scripted: dict[str, dict] = {}
 
 
 def _stub_judge(
-    *, reference: str, clause: str, extracts: str, precedents: str = "", technology: str = ""
+    *, reference: str, clause: str, extracts: str, precedents: str = ""
 ):  # noqa: ARG001
     # Longest key first. Matching on substrings otherwise lets one clause name
     # shadow another ("grounded-covered" contains no other key, but the earlier

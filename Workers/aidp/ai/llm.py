@@ -81,7 +81,7 @@ Reference: {reference}
 <extracts_from_submitted_document>
 {extracts}
 </extracts_from_submitted_document>
-{precedents}{technology}
+{precedents}
 Choose exactly one verdict:
 
 - "covered"      — the extracts address every requirement in the clause
@@ -106,11 +106,7 @@ Rules that matter more than being decisive:
 3. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 4. confidence is your own certainty in the verdict, 0 to 1.
-5. Technology context, where given, is background only. It may make a rationale
-   or a recommendation concrete — naming the control this organisation would
-   actually use — but it is never evidence. Never reach a verdict from it: the
-   design either says a thing or it does not, whatever the organisation runs.
-6. Standing decisions, where any are given, are this organisation's own settled
+5. Standing decisions, where any are given, are this organisation's own settled
    rulings and outrank your general judgement about what good practice looks
    like. If one resolves the clause, follow it and list its id in
    appliedDecisions. Never list an id you were not given. A decision marked
@@ -199,7 +195,6 @@ class LLM(Protocol):
         clause: str,
         extracts: str,
         precedents: str = "",
-        technology: str = "",
     ) -> dict: ...
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
@@ -427,7 +422,6 @@ class GeminiLLM:
         clause: str,
         extracts: str,
         precedents: str = "",
-        technology: str = "",
     ) -> dict:
         text = self._generate(
             [
@@ -437,7 +431,6 @@ class GeminiLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
-                        technology=technology,
                     )
                 }
             ],
@@ -578,7 +571,6 @@ class AnthropicLLM:
         clause: str,
         extracts: str,
         precedents: str = "",
-        technology: str = "",
     ) -> dict:
         data = self._send(
             {
@@ -593,7 +585,6 @@ class AnthropicLLM:
                             clause=clause,
                             extracts=extracts,
                             precedents=_precedent_block(precedents),
-                            technology=technology,
                         ),
                     },
                     # Prefilling the opening brace is the closest equivalent to
@@ -703,14 +694,12 @@ def judge(
     clause: str,
     extracts: str,
     precedents: str = "",
-    technology: str = "",
 ) -> dict:
     return client().judge(
         reference=reference,
         clause=clause,
         extracts=extracts,
         precedents=precedents,
-        technology=technology,
     )
 
 

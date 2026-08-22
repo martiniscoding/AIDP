@@ -32,7 +32,6 @@ async function counts(organisationId: string) {
     chunks: await prisma.chunk.count({ where: { organisationId } }),
     runs: await prisma.assessmentRun.count({ where: { organisationId } }),
     findings: await prisma.finding.count(),
-    techAssessments: await prisma.techAssessment.count(),
     decisions: await prisma.decision.count(),
     // The part most at risk: work must stay attributed to whoever did it.
     uploadedBySatyam: await prisma.document.count({

@@ -104,6 +104,34 @@ export async function POST(request: Request) {
     );
   }
 
+  // A design belongs to a piece of work. Resolved before the file is read, so
+  // a bad project id costs nothing, and checked against this organisation so a
+  // guessed id from another customer is indistinguishable from a typo.
+  let projectId: string | null = null;
+  if (role === "assessed") {
+    const requested = String(form.get("projectId") ?? "");
+    if (!requested) {
+      return NextResponse.json(
+        { error: "Choose a project for this design." },
+        { status: 400 },
+      );
+    }
+    const project = await prisma.project.findFirst({
+      where: { id: requested, organisationId: access.organisation.id },
+      select: { id: true, status: true },
+    });
+    if (!project) {
+      return NextResponse.json({ error: "That project no longer exists." }, { status: 404 });
+    }
+    if (project.status !== "active") {
+      return NextResponse.json(
+        { error: "That project is archived. Reopen it before adding designs." },
+        { status: 409 },
+      );
+    }
+    projectId = project.id;
+  }
+
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file was attached." }, { status: 400 });
   }
@@ -163,6 +191,9 @@ export async function POST(request: Request) {
       data: {
         organisationId: organisation.id,
         role,
+        // Null for a reference standard: those belong to the organisation, not
+        // to any one piece of work.
+        projectId,
         title: title.slice(0, 500),
         storageKey: key,
         mimeType: format.mimeType,

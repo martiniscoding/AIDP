@@ -302,16 +302,40 @@ export async function requireWorkspace(): Promise<Access> {
   }
 }
 
-/** As `requireAccess`, and refuses anyone who is not this customer's own
- *  administrator. Guards the People page and every action behind it. */
+/**
+ * As `requireAccess`, and refuses anyone who is not this customer's own
+ * administrator.
+ *
+ * Throws, so it belongs in Server Actions — a POST has nowhere to be sent.
+ * Pages want `requireOwnerWorkspace` below.
+ */
 export async function requireOwner(): Promise<Access> {
   const access = await requireAccess();
   if (!access.isOwner) {
     throw new NoAccess({
       reason: "not-admitted",
-      message: "Only an administrator of this workspace can manage its people.",
+      message: "Only an administrator of this workspace can manage this.",
     });
   }
+  return access;
+}
+
+/**
+ * The administrator-only equivalent of `requireWorkspace`, for pages.
+ *
+ * Same reasoning, and the same bug it was written to fix: a page renders
+ * concurrently with its layout, so a page that *throws* leaves the outcome to
+ * whichever settles first. `requireWorkspace` was fixed for that and
+ * `requireOwner` was not, which left the three administrator pages answering a
+ * member with a rendered error instead of a redirect.
+ *
+ * A member is sent to their own dashboard rather than to /no-access: they have
+ * a workspace and are perfectly entitled to be in it, they simply do not
+ * administer it.
+ */
+export async function requireOwnerWorkspace(): Promise<Access> {
+  const access = await requireWorkspace();
+  if (!access.isOwner) redirect("/dashboard");
   return access;
 }
 

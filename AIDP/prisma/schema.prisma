@@ -50,10 +50,6 @@ model User {
   sessions Session[]
   accounts Account[]
 
-  // Technology references this person has saved. Scoped to the organisation
-  // now, so one account can be the last editor of several.
-  assessment TechAssessment[]
-
   // Which customer organisations this person can see. Consultants span several.
   memberships Membership[]
 
@@ -73,6 +69,10 @@ model User {
 
   // Model spend attributed to them.
   usage TokenUsage[]
+
+  // Pieces of work they opened. Attribution only — a project belongs to the
+  // organisation, and outlives whoever started it.
+  projects Project[]
 
   @@map("user")
 }
@@ -129,132 +129,28 @@ model Verification {
   @@map("verification")
 }
 
-// ---------------------------------------------------------------------------
-// Technology Stack & Architecture Reference
-//
-// Mirrors the client assessment template: five sections, one row per account.
-// The shape here is deliberately split between arrays and a relation:
-//
-//   - Sections 2 and 3 are multi-select lists where the client may also type
-//     something we don't have on the shelf. Both cases are just strings, so a
-//     Postgres text[] holds them without a join. Anything not in the catalog in
-//     src/lib/tech-stack/catalog.ts is a write-in and renders as a monogram.
-//
-//   - Section 4 pairs each platform with two graded answers, and we will want
-//     to aggregate across clients ("how many rated Databricks high?"). That is
-//     a relation, not JSON, so it stays queryable.
-// ---------------------------------------------------------------------------
-
-model TechAssessment {
-  id String @id @default(cuid())
-
-  /// One reference per *organisation*, not per person.
-  ///
-  /// It was keyed to the user originally, which put it out of reach of the
-  /// assessment pipeline: runs belong to an organisation, so "whose stack
-  /// applies to this run?" had no answer when two consultants shared a customer.
-  ///
-  /// Nullable because a person can fill this in before they have touched
-  /// anything that creates an organisation. Postgres permits many NULLs under a
-  /// unique index, so those rows coexist; they simply never reach an
-  /// assessment, which is correct — a stack belonging to no organisation cannot
-  /// describe one.
-  organisationId String?       @unique
-  organisation   Organisation? @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-
-  /// Who last saved it. Attribution only — no longer identity.
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // 1 — Client information. Seeded from the sign-up record on first open, then
-  // owned by this form: a client may complete it for a subsidiary.
-  companyName    String @default("")
-  primaryContact String @default("")
-  roleTitle      String @default("")
-  dateCompleted  String @default("")
-
-  // 2 — Current data infrastructure
-  dataSources     String[] @default([])
-  dataWarehousing String[] @default([])
-  biReporting     String[] @default([])
-  primaryCloud    String[] @default([])
-
-  // 3 — Workload requirements
-  workloads String[] @default([])
-
-  // 5 — Additional references and specific needs
-  additionalNotes String @default("")
-
-  /// The reference rendered for the assessment prompt, written on every save.
-  ///
-  /// Denormalised because the option catalog is TypeScript
-  /// (src/lib/tech-stack/catalog.ts) and the worker is Python: the database
-  /// holds ids like "synapse", and only the app can turn those into "Azure
-  /// Synapse Analytics". Duplicating the catalog in the worker would be a
-  /// second copy to keep in step for no gain — same reasoning as `label` on
-  /// TechPlatformPreference below.
-  summary String @default("")
-
-  // "draft" until the client presses Submit; they can still edit afterwards,
-  // so this records intent rather than locking the row.
-  status      String    @default("draft")
-  submittedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // 4 — Platform preferences
-  platforms TechPlatformPreference[]
-
-  @@map("tech_assessment")
-}
-
-model TechPlatformPreference {
-  id String @id @default(cuid())
-
-  assessmentId String
-  assessment   TechAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-
-  // Catalog slug ("databricks") or a slugified write-in ("custom-teradata").
-  // Unique per assessment so the save path can upsert row by row.
-  platformKey String
-  // Denormalised so a write-in keeps its label without a catalog entry.
-  label       String
-  isCustom    Boolean @default(false)
-
-  // Null means "not answered yet" — distinct from a deliberate "no".
-  currentUsage  String? // "yes" | "no"
-  interestLevel String? // "high" | "medium" | "low"
-
-  sortOrder Int @default(0)
-
-  @@unique([assessmentId, platformKey])
-  @@index([assessmentId])
-  @@map("tech_platform_preference")
-}
-
-// ---------------------------------------------------------------------------
-// Document ingestion
-//
-// An organisation is a customer of the consultancy, and it is the tenant
-// boundary: one customer's Internal-Use standards must never surface in
-// another's work. `organisationId` is denormalised onto Document, Chunk and Job
-// rather than reached through a join, because every retrieval filters on it and
-// the filter must be impossible to forget. See src/lib/ingest/retrieval.ts —
-// nothing builds a vector query without going through it.
-//
-// Cascades are deliberate, not incidental. Data Standards §10.4 requires
-// disposal to be "auditable, authorized, and verifiable" and that "all copies
-// and dependent systems must be identified and addressed": deleting a document
-// has to take its sections, clauses, tables, figures, chunks and vectors with
-// it. Blob cleanup is the one part Postgres can't do, so it runs as a job.
-// ---------------------------------------------------------------------------
-
 model Organisation {
   id   String @id @default(cuid())
   name String
   // URL-safe handle. Stable once issued — it appears in paths.
   slug String @unique
+
+  /// Company details, shown and edited on /dashboard/profile.
+  ///
+  /// Held on the organisation rather than on whoever registered it. The person
+  /// who signed up may leave, and the company's own contact details should not
+  /// leave with them — the same reason the technology reference was moved off
+  /// the user before it was retired.
+  ///
+  /// All optional: an organisation is created the moment somebody registers,
+  /// long before anyone has filled any of this in, and a required field would
+  /// mean inventing a value nobody chose.
+  primaryContact String @default("")
+  contactEmail   String @default("")
+  contactPhone   String @default("")
+  country        String @default("")
+  industry       String @default("")
+  notes          String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -266,9 +162,9 @@ model Organisation {
   frameworks  Framework[]
   runs        AssessmentRun[]
   decisions   Decision[]
-  techStack   TechAssessment?
   outcomes    SubmissionOutcome[]
   roster      RosterEntry[]
+  projects    Project[]
   usage       TokenUsage[]
   aiCache     AiCache[]
 
@@ -432,11 +328,68 @@ model TokenUsage {
   @@map("token_usage")
 }
 
+/// A piece of work: one design under review, or a design and the revisions
+/// that follow it, measured against the organisation's standards.
+///
+/// Employees open these and put their submissions inside. Reference standards
+/// deliberately do *not* belong to one — they are the organisation's rules,
+/// curated by its administrator, and every project is measured against the
+/// same set. A standard that belonged to a project would quietly become a
+/// different yardstick per project, which is the opposite of what a standard
+/// is for.
+///
+/// Archived rather than deleted. A project holds documents, findings and
+/// recorded decisions; deleting one would take the record of a review with it,
+/// and "we assessed this in March" is exactly what an audit asks about.
+model Project {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String @default("")
+
+  /// "active" | "archived"
+  status String @default("active")
+
+  /// Who opened it. Nullable, and paired with a denormalised name, for the same
+  /// reason as Decision.decidedByName: the record has to keep saying who
+  /// started this after their account is gone.
+  createdById   String?
+  createdBy     User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdByName String  @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents Document[]
+
+  /// One name per organisation. Two projects called "Portal" in the same
+  /// workspace is a support ticket waiting to happen, and the constraint gives
+  /// the create form something specific to say instead of silently making a
+  /// second one.
+  @@unique([organisationId, name])
+  @@index([organisationId, status])
+  @@map("project")
+}
+
 model Document {
   id String @id @default(cuid())
 
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// The piece of work this belongs to.
+  ///
+  /// Null for reference standards, which are organisation-wide by design, and
+  /// null for designs that predate projects — the backfill gives those a home,
+  /// but the column stays optional because standards legitimately have none.
+  ///
+  /// `SetNull` rather than a cascade: a project is archived, not deleted, but
+  /// if one ever is removed the submissions inside it must not go with it.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   /// Who submitted it. Nullable because the column arrived after the first
   /// documents did, and because the account may since have been deleted.

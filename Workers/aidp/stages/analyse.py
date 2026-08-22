@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from psycopg.types.json import Jsonb
 
-from .. import db, decisions, logs, queue, retrieval, techstack
+from .. import db, decisions, logs, queue, retrieval
 from ..ai import llm
 from ..config import get_config
 from ..queue import Job
@@ -75,9 +75,6 @@ def handle(job: Job, heartbeat) -> None:
         if run is None:
             raise RuntimeError(f"assessment run {run_id} no longer exists")
         clauses = _framework_clauses(conn, run["frameworkId"])
-        # Once per run: the same string for every clause, so fetching it inside
-        # the loop would be a hundred round trips for one row.
-        technology = techstack.for_organisation(conn, run["organisationId"])
         done = {
             r["clauseId"]
             for r in db.query(
@@ -100,11 +97,8 @@ def handle(job: Job, heartbeat) -> None:
         pending=len(pending),
     )
 
-    if technology:
-        logs.info(log, "technology reference in scope", runId=run_id, chars=len(technology))
-
     for index, clause in enumerate(pending, start=1):
-        _assess_one(run, clause, technology)
+        _assess_one(run, clause)
         heartbeat()
         # Every clause, not every fifth. A clause takes around fifteen seconds,
         # so batching the write held the progress bar still for over a minute at
@@ -142,7 +136,7 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
     )
 
 
-def _assess_one(run: dict, clause: dict, technology: str = "") -> None:
+def _assess_one(run: dict, clause: dict) -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
@@ -198,7 +192,6 @@ def _assess_one(run: dict, clause: dict, technology: str = "") -> None:
             clause=_render_clause(clause),
             extracts=_render_extracts(candidates),
             precedents=decisions.render(precedents),
-            technology=techstack.render(technology),
         )
     except Exception as exc:  # noqa: BLE001 — one clause must not sink the run
         logs.warn(log, "judge failed for clause", clauseId=clause["id"], error=str(exc)[:200])
