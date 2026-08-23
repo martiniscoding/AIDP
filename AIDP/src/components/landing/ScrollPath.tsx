@@ -91,6 +91,9 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
   const anchorsRef = useRef<Anchor[]>([]);
   const heightRef = useRef(0);
   const activeRef = useRef<HTMLElement | null>(null);
+  /** Last y actually painted, so settling frames that move nothing can be
+   *  dropped. NaN forces the next call through. */
+  const paintedYRef = useRef(Number.NaN);
 
   const reduced = useReducedMotion();
 
@@ -139,6 +142,14 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
     if (!height || samplesRef.current.length === 0) return;
 
     const y = clamp(progress.get(), 0, 1) * height;
+    // The spring settles asymptotically, so the tail of every scroll is a run
+    // of frames that move the node by a fraction of a pixel. Each one still
+    // costs a repaint of a page-tall stroke, and none of them can change a
+    // pixel. NaN on the first call and after every re-measure, so this never
+    // swallows the initial placement.
+    if (Math.abs(y - paintedYRef.current) < 0.25) return;
+    paintedYRef.current = y;
+
     const hit = pointAtY(y);
     if (!hit) return;
 
@@ -290,6 +301,7 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
       samples[i] = { t, x: pt.x, y: pt.y };
     }
     samplesRef.current = samples;
+    paintedYRef.current = Number.NaN;
     render();
   }, [d, render]);
 
@@ -309,86 +321,101 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
         fill="none"
       >
         <defs>
-          <filter id="node-glow" x="-300%" y="-300%" width="700%" height="700%">
-            <feGaussianBlur stdDeviation="9" />
-          </filter>
+          {/* Radial gradients standing in for what used to be a Gaussian blur.
+              WebKit rasterises every SVG filter into an image buffer of its own
+              on every paint, and these nodes repaint on every scroll frame — on
+              a Retina display that is four times the pixels of a 1x Windows
+              screen, which is why this only ever stuttered on a Mac. A gradient
+              fill is drawn straight into the destination, and on a soft round
+              glow the two are indistinguishable. */}
+          <radialGradient id="node-halo">
+            <stop offset="0" stopColor="#8b5cf6" stopOpacity={1} />
+            <stop offset="0.4" stopColor="#8b5cf6" stopOpacity={0.72} />
+            <stop offset="0.72" stopColor="#8b5cf6" stopOpacity={0.24} />
+            <stop offset="1" stopColor="#8b5cf6" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="node-core-glow">
+            <stop offset="0" stopColor="#7c3aed" stopOpacity={0.78} />
+            <stop offset="0.42" stopColor="#7c3aed" stopOpacity={0.42} />
+            <stop offset="1" stopColor="#7c3aed" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="origin-glow">
+            <stop offset="0" stopColor="#ffffff" stopOpacity={0.8} />
+            <stop offset="0.38" stopColor="#ffffff" stopOpacity={0.42} />
+            <stop offset="1" stopColor="#ffffff" stopOpacity={0} />
+          </radialGradient>
 
-          {/* Masks the strokes only — the origin node and the playhead stay at
-              full strength so the start of the line is still a hard point. */}
+          {/* The origin fade, carried by the stroke paint rather than a mask.
+              A <mask> is applied by drawing everything under it into a
+              transparency buffer the size of the mask region — here the full
+              height of the page — and the lit stroke inside it changes on every
+              scroll frame, so that buffer was being allocated and composited
+              sixty times a second. A gradient reaches the same picture with no
+              buffer at all, because every stroke beneath it is one flat colour
+              and fading the paint is the same as fading the shape. */}
           <linearGradient
-            id="path-origin-fade"
+            id="path-rail-fade"
             gradientUnits="userSpaceOnUse"
             x1={0}
             y1={startY}
             x2={0}
             y2={startY + ORIGIN_FADE}
           >
-            <stop offset="0" stopColor="#000000" />
-            <stop offset="1" stopColor="#ffffff" />
+            <stop offset="0" stopColor="#1a1430" stopOpacity={0} />
+            <stop offset="1" stopColor="#1a1430" stopOpacity={0.09} />
           </linearGradient>
-          <mask
-            id="path-origin-mask"
-            maskUnits="userSpaceOnUse"
-            x={0}
-            y={0}
-            width={size.w || 1}
-            height={size.h || 1}
+          <linearGradient
+            id="path-lit-fade"
+            gradientUnits="userSpaceOnUse"
+            x1={0}
+            y1={startY}
+            x2={0}
+            y2={startY + ORIGIN_FADE}
           >
-            <rect
-              x={0}
-              y={0}
-              width={size.w || 1}
-              height={size.h || 1}
-              fill="url(#path-origin-fade)"
-            />
-          </mask>
+            <stop offset="0" stopColor="#6d28d9" stopOpacity={0} />
+            <stop offset="1" stopColor="#6d28d9" stopOpacity={1} />
+          </linearGradient>
         </defs>
 
-        <g mask="url(#path-origin-mask)">
-          {/* Unlit rail — shows where the line is headed.
-              Also the geometry we sample: no `pathLength` here, so
-              getTotalLength()/getPointAtLength() operate on real user units. */}
-          <path
-            ref={pathRef}
-            d={d}
-            stroke="rgba(26,20,48,0.09)"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-          />
+        {/* Unlit rail — shows where the line is headed.
+            Also the geometry we sample: no `pathLength` here, so
+            getTotalLength()/getPointAtLength() operate on real user units. */}
+        <path
+          ref={pathRef}
+          d={d}
+          stroke="url(#path-rail-fade)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
 
-          {/* Lit portion, in the accent — this line runs almost entirely over
-              the light body, where white was invisible. The halo is three
-              stacked strokes rather than a Gaussian blur: a filter region
-              spanning the full page height is expensive to rasterise, and
-              layered strokes are indistinguishable on a 2px line. */}
-          {[
-            { width: 10, opacity: 0.09 },
-            { width: 5, opacity: 0.2 },
-            { width: 2, opacity: 1 },
-          ].map((layer) => (
-            <motion.path
-              key={layer.width}
-              d={d}
-              pathLength={1}
-              stroke="#6d28d9"
-              strokeWidth={layer.width}
-              strokeLinecap="round"
-              strokeDasharray={1}
-              opacity={layer.opacity}
-              style={{ strokeDashoffset: dashOffset }}
-            />
-          ))}
-        </g>
+        {/* Lit portion, in the accent — this line runs almost entirely over
+            the light body, where white was invisible. The halo is three
+            stacked strokes rather than a Gaussian blur: a filter region
+            spanning the full page height is expensive to rasterise, and
+            layered strokes are indistinguishable on a 2px line.
+            `strokeOpacity` rather than `opacity`, for the same reason the mask
+            went: opacity on an element is a transparency layer, opacity on the
+            paint is just a colour. */}
+        {[
+          { width: 10, opacity: 0.09 },
+          { width: 5, opacity: 0.2 },
+          { width: 2, opacity: 1 },
+        ].map((layer) => (
+          <motion.path
+            key={layer.width}
+            d={d}
+            pathLength={1}
+            stroke="url(#path-lit-fade)"
+            strokeWidth={layer.width}
+            strokeLinecap="round"
+            strokeDasharray={1}
+            strokeOpacity={layer.opacity}
+            style={{ strokeDashoffset: dashOffset }}
+          />
+        ))}
 
         {/* Origin node, sitting just below the hero copy */}
-        <circle
-          cx={size.w / 2}
-          cy={startY}
-          r={4}
-          fill="#ffffff"
-          filter="url(#node-glow)"
-          opacity={0.8}
-        />
+        <circle cx={size.w / 2} cy={startY} r={22} fill="url(#origin-glow)" />
         <circle cx={size.w / 2} cy={startY} r={2.5} fill="#ffffff" />
 
         {/* The playhead — violet core against the light body, with a lighter
@@ -397,19 +424,11 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
         <motion.circle
           cx={nodeX}
           cy={nodeY}
-          r={14}
-          fill="#8b5cf6"
-          filter="url(#node-glow)"
+          r={34}
+          fill="url(#node-halo)"
           style={{ opacity: reduced ? 0.7 : proximity }}
         />
-        <motion.circle
-          cx={nodeX}
-          cy={nodeY}
-          r={9}
-          fill="#7c3aed"
-          filter="url(#node-glow)"
-          opacity={0.7}
-        />
+        <motion.circle cx={nodeX} cy={nodeY} r={25} fill="url(#node-core-glow)" />
         <motion.circle
           cx={nodeX}
           cy={nodeY}
