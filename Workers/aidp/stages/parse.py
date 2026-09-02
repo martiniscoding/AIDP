@@ -34,7 +34,7 @@ from psycopg.types.json import Jsonb
 
 from .. import db, logs, queue, storage
 from ..ai import llm
-from ..parsing import ai_structure, furniture, sections, sheets, slides, spans, tables, toc
+from ..parsing import ai_structure, docs, furniture, sections, sheets, slides, spans, tables, toc
 from ..parsing import clauses as clause_parser
 from ..parsing import figures as figure_parser
 from ..queue import Job
@@ -56,6 +56,9 @@ _MIN_DECK_CHARS = 40
 
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 # A workbook of nothing but numbers is still a document worth indexing, so this
 # is lower again than the deck's. It asks only whether there is *any* text: a
@@ -68,6 +71,13 @@ def _is_workbook(document: dict) -> bool:
     if (document.get("mimeType") or "") == _XLSX_MIME:
         return True
     return str(document.get("storageKey") or "").lower().endswith(".xlsx")
+
+
+def _is_word(document: dict) -> bool:
+    """As `_is_deck`, for Word documents."""
+    if (document.get("mimeType") or "") == _DOCX_MIME:
+        return True
+    return str(document.get("storageKey") or "").lower().endswith(".docx")
 
 
 def _is_deck(document: dict) -> bool:
@@ -95,7 +105,9 @@ def handle(job: Job, heartbeat) -> None:
     _set_status(job.document_id, "parsing")
     raw = storage.storage().get(document["storageKey"])
 
-    if _is_workbook(document):
+    if _is_word(document):
+        result = _parse_word(raw, document, heartbeat)
+    elif _is_workbook(document):
         result = _parse_workbook(raw, document, heartbeat)
     elif _is_deck(document):
         result = _parse_deck(raw, document, heartbeat)
@@ -285,6 +297,103 @@ def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
             f"{len(read.orphan_lines)} lines before the first heading belong to "
             "no section and were not indexed as part of any rule.",
         )
+
+
+def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
+    """A .docx, read from the structure it already states.
+
+    The highest-fidelity path in the pipeline, and the shortest, because
+    everything the other formats have to work for is declared in the file. No
+    font profiling: Word says which paragraphs are headings and at what depth.
+    No model pass and no `structure_inferred`: nothing here is a proposal, so
+    nothing needs confirming before it can be assessed against.
+
+    What is kept from the PDF path is the half that is about the document's
+    content rather than its shape — clause extraction, tables, figures and the
+    coverage checks — because a Word standard states its rules exactly as its
+    exported PDF does.
+    """
+    out = _Result()
+    read = docs.read(raw)
+    out.page_count = read.page_count
+
+    text_chars = sum(len(line.text) for line in read.lines)
+    if text_chars < _MIN_TEXT_CHARS:
+        raise RuntimeError(
+            f"no usable text in this Word document ({text_chars} characters) — "
+            "a file of flattened images needs OCR, which is not wired up"
+        )
+
+    out.title = read.title or document["title"]
+    out.profile = "prose-clause"
+    heartbeat()
+
+    out.sections, owner = sections.from_outline(
+        read.lines, read.levels, document_title=out.title
+    )
+
+    if not out.sections:
+        # Styled with no headings at all — a single-flow document. Indexing it
+        # whole keeps it searchable, and the issue says why it cannot be
+        # assessed against.
+        out.sections = sections.whole_document(read.lines, document_title=out.title)
+        owner = [0] * len(read.lines)
+        out.issue(
+            "high",
+            "no_sections",
+            "This document declares no headings, so all of it has been indexed as a "
+            "single section. It is searchable, but no rules could be located in it "
+            "and it cannot be assessed against.",
+        )
+        if not out.sections:
+            return out
+
+    # Anchored by position, not by page: the walk knows which section each
+    # table was written under, and a Word document has no page numbers to
+    # approximate it with.
+    def section_at(anchor_index: int) -> int:
+        for index in range(min(anchor_index, len(owner) - 1), -1, -1):
+            if owner[index] >= 0:
+                return owner[index]
+        return 0
+
+    for anchor_index, table in read.tables:
+        out.tables.setdefault(section_at(anchor_index), []).append(table)
+    for anchor_index, figure in read.figures:
+        out.figures.setdefault(section_at(anchor_index), []).append(figure)
+    heartbeat()
+
+    out.profile = sections.detect_profile(out.sections)
+
+    inferred: set[int] = set()
+    for index, section in enumerate(out.sections):
+        if section.is_structural:
+            continue
+        found = clause_parser.from_prose(section)
+        if not found:
+            for table in out.tables.get(index, []):
+                found.extend(clause_parser.from_table(section, table.rows))
+        if not found:
+            found = clause_parser.from_normative_prose(section)
+            if found:
+                inferred.add(index)
+        if found:
+            out.clauses[index] = found
+
+    if read.undecodable_images:
+        out.issue(
+            "low",
+            "figure_undecodable",
+            f"{read.undecodable_images} image(s) are in a vector format this pipeline "
+            "cannot read (usually EMF/WMF, from a drawing pasted out of Office). They "
+            "are not indexed. Re-save them as PNG to include them.",
+        )
+
+    _flag_inferred_clauses(out, inferred)
+    _flag_missed_obligations(out)
+    _flag_empty_sections(out)
+    _flag_no_clauses(out, document)
+    return out
 
 
 def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:

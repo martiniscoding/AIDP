@@ -19,6 +19,7 @@ type Receipt = {
 const MAX_BYTES = 64 * 1024 * 1024;
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -97,7 +98,9 @@ export function UploadZone({
           file.type === "application/pdf" ||
           file.type === PPTX_MIME ||
           file.type === XLSX_MIME ||
+          file.type === DOCX_MIME ||
           name.endsWith(".pdf") ||
+          name.endsWith(".docx") ||
           name.endsWith(".pptx") ||
           name.endsWith(".xlsx");
         if (!supported) {
@@ -106,7 +109,7 @@ export function UploadZone({
             name: file.name,
             size: file.size,
             state: "error",
-            message: "Not a PDF, PowerPoint or Excel file",
+            message: "Not a PDF, Word, PowerPoint or Excel file",
           });
         } else if (file.size > MAX_BYTES) {
           rejected.push({
@@ -181,7 +184,7 @@ export function UploadZone({
       <input
         ref={inputRef}
         type="file"
-        accept={`application/pdf,.pdf,${PPTX_MIME},.pptx,${XLSX_MIME},.xlsx`}
+        accept={`application/pdf,.pdf,${DOCX_MIME},.docx,${PPTX_MIME},.pptx,${XLSX_MIME},.xlsx`}
         multiple
         className="sr-only"
         onChange={(event) => {

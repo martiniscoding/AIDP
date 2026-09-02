@@ -184,3 +184,70 @@ def whole_document(lines: list[Line], *, document_title: str) -> list[Section]:
             lines=body,
         )
     ]
+
+
+def from_outline(
+    lines: list[Line],
+    levels: dict[int, int],
+    *,
+    document_title: str,
+) -> tuple[list[Section], list[int]]:
+    """Sections from depths the document declared, rather than ones we inferred.
+
+    `build` above has to defend a guess: typography said "this looks like a
+    heading", so the shape rules exist to stop a bold sentence or a
+    `Statement:` label being promoted. None of that applies here. A .docx
+    states that a paragraph is a level-2 heading, and second-guessing a
+    declaration would drop real headings — a heading legitimately reading
+    "Scope: retail payments only" carries a colon and is still a heading.
+
+    So the only thing borrowed from the inferred path is the numbering: a
+    heading that spells its own number out ("5.2 Key Management") has it lifted
+    for display and citation, and one relying on Word's automatic numbering
+    simply has none in its text. Identity stays `(document_id, ordinal)` either
+    way, for the reason given at the top of this module.
+
+    Returns the sections and, for each line, the index of the section it falls
+    in — which is how a table lands in the section it was written under rather
+    than in whichever one a page number happens to hit.
+    """
+    sections: list[Section] = []
+    owner = [-1] * len(lines)
+    stack: list[tuple[int, str]] = []
+    current: Section | None = None
+
+    for index, line in enumerate(lines):
+        depth = levels.get(index)
+        if depth is None:
+            if current is not None:
+                current.lines.append(line)
+                current.page_end = max(current.page_end, line.page)
+                owner[index] = len(sections) - 1
+            continue
+
+        text = line.text.strip()
+        number: str | None = None
+        title = text
+        if m := _NUMBERED.match(text):
+            number, title = m.group("number"), m.group("title").strip()
+        elif m := _APPENDIX.match(text):
+            number = m.group("number").title()
+            title = (m.group("title") or "").strip() or number
+
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        stack.append((depth, f"{number} {title}".strip() if number else title))
+
+        current = Section(
+            ordinal=len(sections) + 1,
+            number_text=number,
+            title=title,
+            depth=depth,
+            heading_path=" › ".join([document_title, *(t for _, t in stack)]),
+            page_start=line.page,
+            page_end=line.page,
+        )
+        sections.append(current)
+        owner[index] = len(sections) - 1
+
+    return sections, owner

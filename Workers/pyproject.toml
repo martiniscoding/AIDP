@@ -18,6 +18,9 @@ dependencies = [
     # Excel parsing. A workbook says most of what it says in a grid, and the
     # header-to-cell binding is the meaning — see parsing/sheets.py.
     "openpyxl>=3.1",
+    # Word parsing. The only format that still carries its own structure when
+    # it reaches us, so this path infers nothing — see parsing/docs.py.
+    "python-docx>=1.1",
     # Every outbound call — Gemini, embeddings, and storage via the app — goes
     # over plain HTTP rather than through a vendor SDK, so swapping providers is
     # a config change and the dependency list stays short.

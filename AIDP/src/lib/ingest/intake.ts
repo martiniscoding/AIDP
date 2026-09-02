@@ -27,11 +27,15 @@ export type Format = { mimeType: string; extension: string };
 
 const PDF_MAGIC = "%PDF-";
 const ZIP_MAGIC = "PK";
+/** Legacy .doc, .xls and .ppt are OLE2 compound files, not ZIPs. */
+const OLE2_MAGIC = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
 
 export const PPTX_MIME =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 export const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /** The largest file we will take. Enforced on our side of the upload, wherever
  *  the bytes came from — a storage service's own limit is configuration, not a
@@ -66,16 +70,26 @@ export function identify(bytes: Uint8Array): Format | Refusal {
       return { mimeType: XLSX_MIME, extension: "xlsx" };
     }
     if (buffer.includes("word/document.xml")) {
-      return {
-        error: "Word documents aren't supported yet — PDF, PowerPoint and Excel only.",
-        status: 415,
-      };
+      return { mimeType: DOCX_MIME, extension: "docx" };
     }
+  }
+
+  // The old binary Office formats. Nothing here can read them, and "that
+  // doesn't look like a document" is a useless answer to someone holding a
+  // file Word opens perfectly well — so say which format it is and what to do.
+  if (Buffer.from(bytes.subarray(0, 8)).toString("latin1") === OLE2_MAGIC) {
+    return {
+      error:
+        "That's a pre-2007 Office file (.doc, .xls or .ppt). Open it in Office and " +
+        "save as .docx, .xlsx or .pptx, then upload that.",
+      status: 415,
+    };
   }
 
   return {
     error:
-      "That doesn't look like a PDF, PowerPoint or Excel file. Only those can be ingested.",
+      "That doesn't look like a PDF, Word, PowerPoint or Excel file. Only those can " +
+      "be ingested.",
     status: 415,
   };
 }
@@ -191,7 +205,7 @@ export async function record(input: {
   // come out as something a person would recognise.
   const title =
     fileName
-      .replace(/\.(pdf|pptx|xlsx)$/i, "")
+      .replace(/\.(pdf|docx|pptx|xlsx)$/i, "")
       .replace(/[_-]+/g, " ")
       .replace(/\s+/g, " ")
       .replace(/^[.\s]+/, "")
