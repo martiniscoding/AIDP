@@ -52,7 +52,7 @@ export default async function DashboardLayout({
   ];
 
   return (
-    <div className="min-h-svh">
+    <div className="app-dark min-h-svh">
       <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
           <Logo tone="light" href="/dashboard" />

@@ -432,3 +432,164 @@ body {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * The product interior — dark
+ *
+ * Scoped to `.app-dark`, which the /dashboard and /admin layouts put on
+ * their shell. The landing page never sees it.
+ *
+ * Nothing here restyles a component. Every surface in the app is already
+ * built on the tokens above, so the whole interior turns over by giving
+ * those tokens different values inside this scope — which is also why the
+ * two themes cannot drift apart: there is one set of names.
+ *
+ * The light theme's own reasoning, run backwards:
+ *
+ *   - Depth inverts. A raised card is a *lighter* film over near-black
+ *     rather than white paper on a tinted ground, so `card` sits above
+ *     `canvas` and `canvas-sunk` drops below it.
+ *   - The ground stays violet-black rather than neutral. A true #000 next
+ *     to the violet accent reads cold and makes the accent look like it is
+ *     glowing rather than printed.
+ *   - The purple ladder inverts back to what a dark build wants: the light
+ *     violets carry text, and the fills carry dark labels. See the fill
+ *     rule at the bottom — it is the one thing tokens alone cannot express,
+ *     because `royal` is both a text colour and a button ground.
+ * ------------------------------------------------------------------ */
+.app-dark {
+  /* Grounds. The card/canvas step is 1.25:1 — wider than the light
+     theme's 1.13:1, because on dark a too-close step reads as a smudge
+     rather than as an edge. */
+  --color-canvas: #0b0813;
+  --color-canvas-sunk: #06040c;
+  --color-card: #15111f;
+
+  /* The anchor band, unchanged. On paper this was the one dark block; here
+     it is the one *saturated* one, which is what keeps the header from
+     dissolving into the page. It still carries white copy either way. */
+  --color-deep: #2e1065;
+  --color-royal-light: #ddd0ff;
+
+  /* Hairlines, now lifting off the ground instead of settling onto it.
+     Still violet-tinted: a neutral grey rule on a violet-black ground
+     reads as dust. */
+  --color-line-soft: #1d1730;
+  --color-line: #2b2344;
+  --color-line-strong: #453a66;
+
+  /* Foreground. Near-white with the same violet cast the ink had, so the
+     alpha rungs the app already uses stay warm against the ground rather
+     than going grey. Measured on --color-canvas: /58 is 5.7:1 and /40 is
+     3.2:1, so the existing floors hold — /58 and up is body copy, below
+     /50 is meta and decoration. */
+  --color-ink: #efecf9;
+
+  /* The ladder, inverted. These are text colours first now; the fill rule
+     below is what makes them safe as grounds. */
+  --color-royal-deep: #d3c4ff;
+  --color-royal: #a78bfa;
+  --color-royal-mid: #b9a2fc;
+  --color-royal-tint: #241c3d;
+
+  /* Status. The 400s, which clear 7:1 on this ground where the light
+     theme's 700s would sit at barely 2:1. Tints are the same hue pulled
+     almost to the canvas, so a tinted row still reads as a row. */
+  --color-ok: #34d399;
+  --color-ok-line: #1c6b51;
+  --color-ok-tint: #0c231c;
+  --color-warn: #fbbf24;
+  --color-warn-line: #7a5410;
+  --color-warn-tint: #241a06;
+  --color-danger: #fb7185;
+  --color-danger-line: #7f2337;
+  --color-danger-tint: #260d15;
+
+  /* Elevation. Violet-tinted shadow is invisible on a violet-black ground,
+     so the lift comes from black under the card plus the lighter fill
+     above it. Kept shallow — a heavy shadow on dark reads as a halo. */
+  --shadow-card: 0 1px 2px -1px rgb(0 0 0 / 0.55), 0 4px 14px -6px rgb(0 0 0 / 0.65);
+  --shadow-card-hover: 0 2px 4px -2px rgb(0 0 0 / 0.6), 0 14px 34px -12px rgb(0 0 0 / 0.75);
+  --shadow-pop: 0 2px 6px -2px rgb(0 0 0 / 0.65), 0 24px 60px -20px rgb(0 0 0 / 0.85);
+
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/* The shell is a child of <body>, so the page behind it — overscroll rubber
+   band, and the strip under a short page — would still be the light canvas.
+   `:has` lets the root follow the shell without the root layout needing to
+   know which route is rendering. */
+html:has(.app-dark) {
+  background-color: #0b0813;
+  color-scheme: dark;
+}
+
+html:has(.app-dark) body {
+  background-color: #0b0813;
+}
+
+/* Paper tooth becomes light scatter. `multiply` over near-black is a no-op —
+   the texture simply vanishes — so the same grain is screened on instead. */
+body.grain:has(.app-dark)::after {
+  mix-blend-mode: screen;
+  opacity: 0.022;
+}
+
+/* The three utilities that hardcode ink, because on paper there was only one
+   direction a crease could go. All three flip to light. */
+.app-dark .edge-light::before {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.10), transparent);
+}
+
+.app-dark .ring-gradient::before {
+  background: var(
+    --ring,
+    linear-gradient(140deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.05) 42%, transparent 70%)
+  );
+}
+
+.app-dark .card-sheen {
+  background-image: linear-gradient(
+    152deg,
+    rgb(167 139 250 / 0.10),
+    rgb(167 139 250 / 0.03) 38%,
+    rgb(167 139 250 / 0) 68%
+  );
+}
+
+.app-dark .header-bloom {
+  background-image: radial-gradient(62% 140% at 0% 0%, rgb(139 92 246 / 0.22), transparent 64%);
+}
+
+.app-dark ::selection {
+  background: color-mix(in oklab, var(--color-royal) 30%, transparent);
+  color: var(--color-ink);
+}
+
+/* Solid accent and status fills carry a dark label.
+ *
+ * This is the one thing the tokens cannot say on their own. `royal` is both
+ * the colour of 23 pieces of accent text and the ground of 14 filled
+ * buttons, and on near-black those two pull in opposite directions: text
+ * has to be light to be read, and a light ground cannot carry white type
+ * (#a78bfa under white is 1.9:1).
+ *
+ * So the token goes light for the text, and the fills flip their label
+ * here — the standard dark-theme inversion, and 7.1:1 either way.
+ *
+ * Only opaque fills are matched. `bg-royal/10` and `bg-royal-tint` are
+ * different class names, and a violet wash still wants the light
+ * `text-royal` on top of it — which is why the verdict pills, built on the
+ * `-tint` rungs, keep their coloured text. `bg-royal-light` is left out too:
+ * it already states `text-deep`, and overriding an explicit choice to reach
+ * the same place is how a rule like this stops being predictable.
+ */
+.app-dark .bg-royal,
+.app-dark .bg-royal-mid,
+.app-dark .bg-accent,
+.app-dark .bg-ok,
+.app-dark .bg-warn,
+.app-dark .bg-danger {
+  color: #120d1f;
+}

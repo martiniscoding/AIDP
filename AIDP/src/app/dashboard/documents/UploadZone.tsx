@@ -4,6 +4,7 @@ import { useCallback, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { uploadFiles } from "@/lib/uploadthing";
 
 type Role = "reference" | "assessed";
 
@@ -129,10 +130,6 @@ export function UploadZone({
       // a queue, so parallel requests would be serialised a moment later anyway.
       for (const [index, file] of accepted.entries()) {
         const receiptId = queued[index]!.id;
-        const body = new FormData();
-        body.append("file", file);
-        body.append("role", role);
-        if (projectId) body.append("projectId", projectId);
 
         const settle = (state: Receipt["state"], message?: string) =>
           setReceipts((prev) =>
@@ -144,13 +141,24 @@ export function UploadZone({
         const discard = () => setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
 
         try {
-          const res = await fetch("/api/documents/upload", { method: "POST", body });
-          const json = (await res.json()) as { error?: string; duplicate?: boolean };
-          if (!res.ok) settle("error", json.error ?? "Upload failed");
-          else if (json.duplicate) settle("duplicate", "Already on record");
+          // Straight to object storage. The bytes do not pass through our own
+          // server: a Vercel function's request body is capped at 4.5MB, which
+          // is what used to reject an 8MB deck as "too large" while this panel
+          // advertised 64MB. Role and project ride along as headers and are
+          // re-checked server-side before a presigned URL is issued.
+          const [uploaded] = await uploadFiles("document", {
+            files: [file],
+            headers: {
+              "x-aidp-role": role,
+              ...(projectId ? { "x-aidp-project": projectId } : {}),
+            },
+          });
+          if (uploaded?.serverData?.duplicate) settle("duplicate", "Already on record");
           else discard();
-        } catch {
-          settle("error", "Network error");
+        } catch (error) {
+          // Refusals from the file route arrive as the message we wrote —
+          // "Only an administrator can add standards documents", and so on.
+          settle("error", error instanceof Error ? error.message : "Upload failed");
         }
       }
 
