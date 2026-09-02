@@ -36,12 +36,19 @@ _CHARS_PER_TOKEN = 3.8
 # clause as a "parent" — it is about duplication, not about importance.
 _MIN_SECTION_PROSE = 320
 
-# …but when a section carries no clause, table or figure, its prose is the only
-# record of that content anywhere. Dropping it makes the section unretrievable,
-# and an assessment then reports "absent" for something the document plainly
-# addresses — the exact false negative the analyse guards exist to prevent.
-# Observed on a design document: five sections, including one 3 characters
-# under the threshold, produced no chunk at all.
+# …but when a section carries no clause, its prose is the only record of that
+# content in words the document actually used. Dropping it makes the section
+# unretrievable, and an assessment then reports "absent" for something the
+# document plainly addresses — the exact false negative the analyse guards
+# exist to prevent. Observed on a design document: five sections, including one
+# 3 characters under the threshold, produced no chunk at all.
+#
+# Only a clause raises the floor, and the comment above says why: the guard is
+# about a parent chunk duplicating its own clause. A figure does not duplicate
+# the prose beside it — it is a model's reading of an image, and the two say
+# different things. Counting one as "this section is already covered" is what
+# silently deleted the text of every slide carrying a diagram, which on a
+# solution deck is every slide that matters.
 _MIN_ORPHAN_PROSE = 60
 
 
@@ -91,8 +98,13 @@ def handle(job: Job, heartbeat) -> None:
         raise RuntimeError("no chunks produced — the document parsed to nothing usable")
 
     heartbeat()
+    # The document's own purpose, written once from the whole of it. Done here
+    # rather than in parse because this is where the whole document is already
+    # assembled for the preambles, and it is one call either way.
+    summary = _summarise(document, sections)
+    heartbeat()
     _contextualise(document, sections, drafts)
-    _persist(job, document, drafts)
+    _persist(job, document, drafts, summary)
 
 
 class _Draft:
@@ -177,10 +189,9 @@ def _build(document, sections, clauses, table_blocks, figures) -> list[_Draft]:
             )
 
         prose = (section["introText"] or "").strip()
-        has_own_content = bool(
-            clauses.get(sid) or table_blocks.get(sid) or figures.get(sid)
-        )
-        floor = _MIN_SECTION_PROSE if has_own_content else _MIN_ORPHAN_PROSE
+        # A clause is drawn from this prose and can restate it; a table or a
+        # figure cannot. See the note on the thresholds above.
+        floor = _MIN_SECTION_PROSE if clauses.get(sid) else _MIN_ORPHAN_PROSE
         if len(prose) >= floor:
             drafts.append(
                 _Draft("section", sid, path, prose[:8000],
@@ -226,6 +237,36 @@ def _render_table(columns: list[str], rows: list[dict]) -> str:
     return "\n".join(out)
 
 
+def _document_text(sections: list[dict]) -> str:
+    return "\n\n".join(
+        f"{s['headingPath']}\n{(s['introText'] or '')[:4000]}" for s in sections
+    )
+
+
+def _summarise(document: dict, sections: list[dict]) -> str:
+    """What this document is for, in a few sentences.
+
+    Retrieval can say what a document contains and never what it is *for*. The
+    judge sees eight passages and is told it cannot see the rest — fine for a
+    standard, whose clauses are self-contained by construction, and wrong for a
+    submission. A deck comparing two vendors for a B2B programme reads, eight
+    passages at a time, as unrelated claims about two products, and a verdict
+    reached that way answers a question nobody asked.
+
+    One call per document, against a run of a hundred-odd judge calls that all
+    benefit from it.
+    """
+    text = _document_text(sections)
+    if not text.strip():
+        return ""
+    summary = llm.summarise(text, title=document["title"])
+    if summary:
+        logs.info(log, "document summarised", chars=len(summary))
+    else:
+        logs.warn(log, "no document summary — the judge will go without")
+    return summary
+
+
 def _contextualise(document: dict, sections: list[dict], drafts: list[_Draft]) -> None:
     """Ask the model to situate each chunk in its document.
 
@@ -240,9 +281,7 @@ def _contextualise(document: dict, sections: list[dict], drafts: list[_Draft]) -
         logs.warn(log, "no model API key configured, skipping contextual preambles")
         return
 
-    document_text = "\n\n".join(
-        f"{s['headingPath']}\n{(s['introText'] or '')[:4000]}" for s in sections
-    )
+    document_text = _document_text(sections)
     try:
         contexts = llm.contextualise_many(
             document_text, [d.body for d in drafts], title=document["title"]
@@ -264,7 +303,7 @@ def _set_status(document_id: str, status: str) -> None:
         )
 
 
-def _persist(job: Job, document: dict, drafts: list[_Draft]) -> None:
+def _persist(job: Job, document: dict, drafts: list[_Draft], summary: str = "") -> None:
     with db.transaction() as conn:
         # Re-chunking replaces wholesale; embeddings cascade off chunk rows.
         db.execute(conn, 'DELETE FROM "chunk" WHERE "documentId" = %s', (job.document_id,))
@@ -297,10 +336,13 @@ def _persist(job: Job, document: dict, drafts: list[_Draft]) -> None:
                 ),
             )
 
+        # Written in the same transaction as the chunks it was read from, so a
+        # document never carries a summary of a version it no longer has.
         db.execute(
             conn,
-            'UPDATE "document" SET "status" = \'embedding\', "updatedAt" = now() WHERE "id" = %s',
-            (job.document_id,),
+            'UPDATE "document" SET "status" = \'embedding\', "summary" = %s, '
+            '"updatedAt" = now() WHERE "id" = %s',
+            (summary or None, job.document_id),
         )
         queue.complete(conn, job)
 

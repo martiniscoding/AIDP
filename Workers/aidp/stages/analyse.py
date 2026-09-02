@@ -75,6 +75,13 @@ def handle(job: Job, heartbeat) -> None:
         if run is None:
             raise RuntimeError(f"assessment run {run_id} no longer exists")
         clauses = _framework_clauses(conn, run["frameworkId"])
+        # What the submitted document is, read once per run. The same string
+        # for every clause, so fetching it inside the loop would be a hundred
+        # round trips for one column.
+        submission = db.one(
+            conn, 'SELECT "summary" FROM "document" WHERE "id" = %s', (run["documentId"],)
+        )
+        document_context = (submission or {}).get("summary") or ""
         done = {
             r["clauseId"]
             for r in db.query(
@@ -97,8 +104,13 @@ def handle(job: Job, heartbeat) -> None:
         pending=len(pending),
     )
 
+    if document_context:
+        logs.info(log, "submission context in scope", runId=run_id, chars=len(document_context))
+    else:
+        logs.warn(log, "no submission summary — verdicts reached without document context")
+
     for index, clause in enumerate(pending, start=1):
-        _assess_one(run, clause)
+        _assess_one(run, clause, document_context)
         heartbeat()
         # Every clause, not every fifth. A clause takes around fifteen seconds,
         # so batching the write held the progress bar still for over a minute at
@@ -136,7 +148,7 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
     )
 
 
-def _assess_one(run: dict, clause: dict) -> None:
+def _assess_one(run: dict, clause: dict, document: str = "") -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
@@ -192,6 +204,7 @@ def _assess_one(run: dict, clause: dict) -> None:
             clause=_render_clause(clause),
             extracts=_render_extracts(candidates),
             precedents=decisions.render(precedents),
+            document=document,
         )
     except Exception as exc:  # noqa: BLE001 — one clause must not sink the run
         logs.warn(log, "judge failed for clause", clauseId=clause["id"], error=str(exc)[:200])

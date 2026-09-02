@@ -427,6 +427,22 @@ model Document {
   // "prose-clause" | "table-principle" | "mixed" — detected, not declared.
   profile   String?
 
+  /// What this document as a whole is trying to do, written once from the whole
+  /// of it — see the summarise pass in Workers/aidp/stages/chunk.py.
+  ///
+  /// Retrieval hands the judge eight passages and nothing else, and the judge
+  /// prompt says so: "you cannot see the rest of the document". That is
+  /// survivable for a standard, whose clauses are self-contained by
+  /// construction. It is not survivable for a submission. A deck comparing two
+  /// vendors for a B2B payments programme reads, eight passages at a time, as
+  /// unrelated claims about two products, and a verdict reached that way
+  /// answers a question nobody asked.
+  ///
+  /// So the document's own purpose is written down once and travels with every
+  /// clause. Null when no model was configured at chunk time; the judge simply
+  /// goes without, exactly as it did before this existed.
+  summary String?
+
   /// True when this document's structure was read by a model rather than parsed
   /// from its own formatting — see Workers/aidp/parsing/ai_structure.py.
   ///

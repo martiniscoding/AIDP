@@ -68,11 +68,31 @@ it belongs to and what it governs. Answer with the context only — no preamble,
 no repetition of the chunk."""
 
 
+_SUMMARY_PROMPT = """\
+Read this document and say what it is for.
+
+<document>
+{document}
+</document>
+
+Answer in three or four sentences, covering:
+
+- what kind of document it is, and what decision or work it exists to support
+- what it is about, named specifically — the systems, vendors, products or
+  programme it concerns
+- if it sets out options, alternatives or a comparison, say so and name what is
+  being compared against what
+
+Write it so that someone reading a single paragraph from this document, with no \
+other view of it, would understand what they are looking at. State only what the \
+document itself supports. No preamble, no headings."""
+
+
 _JUDGE_PROMPT = """\
 You are auditing a submitted design document against one clause of an enterprise \
 standard. Decide whether the design satisfies the clause, using only the extracts \
 provided. You cannot see the rest of the document.
-
+{document_context}
 <standard_clause>
 Reference: {reference}
 {clause}
@@ -188,6 +208,7 @@ class LLM(Protocol):
         self, image_png: bytes, *, heading_path: str, caption: str | None
     ) -> str: ...
     def contextualise(self, document_text: str, chunk_text: str, *, title: str) -> str: ...
+    def summarise(self, document_text: str, *, title: str) -> str: ...
     def judge(
         self,
         *,
@@ -195,6 +216,7 @@ class LLM(Protocol):
         clause: str,
         extracts: str,
         precedents: str = "",
+        document: str = "",
     ) -> dict: ...
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
@@ -205,6 +227,29 @@ class LLM(Protocol):
 # Without it the model returns plausible-looking but truncated JSON — observed
 # as `{"verdict": "covered", ""}` with a finish reason of STOP, which parses as
 # nothing and would silently cost a clause.
+
+def _document_block(summary: str) -> str:
+    """What the submitted document is, or contribute nothing.
+
+    Empty rather than "unknown", for the same reason as the register below: a
+    header announcing an absence costs tokens on every clause of every run and
+    invites the model to remark on it.
+
+    This is the one thing retrieval cannot supply. Eight passages can say what a
+    document contains and never what it is *for*, and a comparison deck read
+    that way looks like unrelated claims about two products.
+    """
+    if not summary.strip():
+        return ""
+    return (
+        "\n<what_this_document_is>\n"
+        "Written from the whole document, not from the extracts below. Use it to "
+        "read the extracts in context; do not treat it as evidence, and never "
+        "cite it.\n"
+        f"{summary.strip()}\n"
+        "</what_this_document_is>\n"
+    )
+
 
 def _precedent_block(precedents: str) -> str:
     """Wrap the register for the prompt, or contribute nothing.
@@ -414,6 +459,13 @@ class GeminiLLM:
             max_tokens=200,
         )
 
+    def summarise(self, document_text: str, *, title: str) -> str:
+        return self._generate(
+            [{"text": _SUMMARY_PROMPT.format(document=document_text[:120_000])}],
+            system=f"You are reading the document '{title}'.",
+            max_tokens=400,
+        )
+
 
     def judge(
         self,
@@ -422,6 +474,7 @@ class GeminiLLM:
         clause: str,
         extracts: str,
         precedents: str = "",
+        document: str = "",
     ) -> dict:
         text = self._generate(
             [
@@ -431,6 +484,7 @@ class GeminiLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
+                        document_context=_document_block(document),
                     )
                 }
             ],
@@ -563,6 +617,21 @@ class AnthropicLLM:
         )
         return self._text_of(data)
 
+    def summarise(self, document_text: str, *, title: str) -> str:
+        data = self._send(
+            {
+                "model": self.fast_model,
+                "max_tokens": 400,
+                "system": f"You are reading the document '{title}'.",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": _SUMMARY_PROMPT.format(document=document_text[:180_000]),
+                    }
+                ],
+            },
+        )
+        return self._text_of(data)
 
     def judge(
         self,
@@ -571,6 +640,7 @@ class AnthropicLLM:
         clause: str,
         extracts: str,
         precedents: str = "",
+        document: str = "",
     ) -> dict:
         data = self._send(
             {
@@ -585,6 +655,7 @@ class AnthropicLLM:
                             clause=clause,
                             extracts=extracts,
                             precedents=_precedent_block(precedents),
+                            document_context=_document_block(document),
                         ),
                     },
                     # Prefilling the opening brace is the closest equivalent to
@@ -701,6 +772,22 @@ def judge(
         extracts=extracts,
         precedents=precedents,
     )
+
+
+def summarise(document_text: str, *, title: str) -> str:
+    """One sentence-or-four on what a document is for. Empty when it cannot.
+
+    Never raises. A document with no summary is assessed exactly as it was
+    before this existed — the judge simply goes without — and failing a whole
+    ingest because one summarisation call timed out would be the worse trade.
+    """
+    if not available():
+        return ""
+    try:
+        return client().summarise(document_text, title=title).strip()
+    except Exception as exc:  # noqa: BLE001 — deliberate degrade-not-fail
+        logs.warn(log, "summary unavailable, continuing without", error=str(exc)[:200])
+        return ""
 
 
 def contextualise_many(
