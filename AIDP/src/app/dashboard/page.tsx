@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Archive } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireWorkspace } from "@/lib/access/gate";
@@ -16,14 +15,13 @@ import { PageHeader } from "@/components/ui/PageHeader";
  * thing anyone starts from: standards are set up once by an administrator, and
  * decisions are recorded from inside a report rather than sought out.
  *
- * Only *active* projects are listed. This page answers "what is live", and an
- * archive read every time you land somewhere is a filing cabinet in the way of
- * the desk. The projects page carries the full view, archive included — so the
- * split is between what is in front of you and what is on the record, and the
- * count below links across whenever there is anything on the other side of it.
+ * Every project lives here, active first and the archive folded in below.
+ * There is no second projects page: one existed, listed the same things, and
+ * having two routes answer the same question only raises the question of which
+ * one is missing something.
  *
- * The list and its rows are the projects page's, imported rather than
- * reimplemented, so the two cannot drift.
+ * The row is shared with the project detail route rather than reimplemented,
+ * so a project reads the same wherever it appears.
  */
 export default async function DashboardPage() {
   // `requireWorkspace` rather than a session lookup, and rather than the
@@ -67,7 +65,7 @@ export default async function DashboardPage() {
       {active.length === 0 ? (
         <p className="rounded-2xl border border-line bg-card px-4 py-10 text-center text-[13.5px] text-ink/58">
           {archived.length > 0
-            ? "Nothing active right now. Open a project, or look back through the archived ones."
+            ? "Nothing active right now. Open a project, or reopen an archived one below."
             : "No projects yet. Open one, then submit the designs that belong to it."}
         </p>
       ) : (
@@ -80,17 +78,20 @@ export default async function DashboardPage() {
         </ul>
       )}
 
-      {/* Archived work is not shown here, so it has to be *said* here. A count
-          that silently omits things is how someone concludes their project was
-          deleted. */}
       {archived.length > 0 && (
-        <Link
-          href="/dashboard/projects"
-          className="mt-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink/62 transition-colors hover:text-ink"
-        >
-          <Archive size={12} />
-          {archived.length} archived {archived.length === 1 ? "project" : "projects"} — see all
-        </Link>
+        <section className="mt-9">
+          <h2 className="mb-3 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[0.13em] text-ink/58">
+            <Archive size={12} />
+            Archived
+          </h2>
+          <ul className="space-y-2.5">
+            {archived.map((project) => (
+              <li key={project.id}>
+                <ProjectRow project={project} />
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </>
   );

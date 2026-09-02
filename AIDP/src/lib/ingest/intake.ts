@@ -30,6 +30,8 @@ const ZIP_MAGIC = "PK";
 
 export const PPTX_MIME =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+export const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** The largest file we will take. Enforced on our side of the upload, wherever
  *  the bytes came from — a storage service's own limit is configuration, not a
@@ -60,16 +62,20 @@ export function identify(bytes: Uint8Array): Format | Refusal {
     if (buffer.includes("ppt/presentation.xml")) {
       return { mimeType: PPTX_MIME, extension: "pptx" };
     }
-    if (buffer.includes("word/document.xml")) {
-      return { error: "Word documents aren't supported yet — PDF and PowerPoint only.", status: 415 };
-    }
     if (buffer.includes("xl/workbook.xml")) {
-      return { error: "Excel workbooks aren't supported yet — PDF and PowerPoint only.", status: 415 };
+      return { mimeType: XLSX_MIME, extension: "xlsx" };
+    }
+    if (buffer.includes("word/document.xml")) {
+      return {
+        error: "Word documents aren't supported yet — PDF, PowerPoint and Excel only.",
+        status: 415,
+      };
     }
   }
 
   return {
-    error: "That doesn't look like a PDF or a PowerPoint file. Only those can be ingested.",
+    error:
+      "That doesn't look like a PDF, PowerPoint or Excel file. Only those can be ingested.",
     status: 415,
   };
 }
@@ -181,11 +187,11 @@ export async function record(input: {
 
   // A readable placeholder until the parser reads the real title off the cover
   // page — or, for a deck, off the title of slide one. Leading dots and
-  // separators are stripped so "Data_Standards.pdf" and ".sample.pptx" both
+  // separators are stripped so "Data_Standards.pdf" and ".sample.xlsx" both
   // come out as something a person would recognise.
   const title =
     fileName
-      .replace(/\.(pdf|pptx)$/i, "")
+      .replace(/\.(pdf|pptx|xlsx)$/i, "")
       .replace(/[_-]+/g, " ")
       .replace(/\s+/g, " ")
       .replace(/^[.\s]+/, "")

@@ -39,9 +39,10 @@ export default async function DashboardLayout({
   // to the list it adds to. Profile is not in this list either: it lives on
   // the account block at the right, which is where people look for it.
   const links = [
+    // Home *is* the project list, so a "My Projects" entry beside it pointed at
+    // the same screen and only raised the question of how the two differed.
     { href: "/dashboard", label: "Home" },
     { href: "/dashboard/documents", label: "Reference Library" },
-    { href: "/dashboard/projects", label: "My Projects" },
     { href: "/dashboard/decisions", label: "Decisions" },
     ...(isOwner
       ? [

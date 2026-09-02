@@ -52,7 +52,7 @@ export default async function DocumentsPage() {
           projects, so this points at them rather than showing a second,
           ungrouped copy of the same list. */}
       <Link
-        href="/dashboard/projects"
+        href="/dashboard"
         className="group card-sheen mt-4 flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-card p-5 shadow-card transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-card-hover"
       >
         <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-royal-mid/30 bg-royal/10 text-royal">

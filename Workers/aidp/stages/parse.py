@@ -1,6 +1,6 @@
 """Parse stage — a document in, structured document out.
 
-Two source formats, two front halves, one back half. Everything from
+Three source formats, three front halves, one back half. Everything from
 `_Result` onwards — clause extraction, issues, persistence — is format-blind,
 so a new format only has to produce sections and clauses.
 
@@ -10,6 +10,11 @@ primitives, and a re-rendered table described by a vision model is expensive
 noise). The ToC is read before the body so the body parse has something to be
 checked against. Structure comes from typography, and a model reads it only when
 the typography said nothing.
+
+**XLSX.** A workbook is not prose. Most of what it says it says in a grid, so
+`sheets.py` splits each sheet into tables — headers bound to cells, the way the
+PDF path treats them — and the loose rows around them. The model pass reads the
+structure, as it does for a deck.
 
 **PPTX.** A deck states its own structure — `slides.py` reads the titles,
 outline depth and speaker notes straight out of the file — but stating it is not
@@ -29,7 +34,7 @@ from psycopg.types.json import Jsonb
 
 from .. import db, logs, queue, storage
 from ..ai import llm
-from ..parsing import ai_structure, furniture, sections, slides, spans, tables, toc
+from ..parsing import ai_structure, furniture, sections, sheets, slides, spans, tables, toc
 from ..parsing import clauses as clause_parser
 from ..parsing import figures as figure_parser
 from ..queue import Job
@@ -50,6 +55,19 @@ _MIN_TEXT_CHARS = 200
 _MIN_DECK_CHARS = 40
 
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# A workbook of nothing but numbers is still a document worth indexing, so this
+# is lower again than the deck's. It asks only whether there is *any* text: a
+# sheet of embedded images has none.
+_MIN_BOOK_CHARS = 20
+
+
+def _is_workbook(document: dict) -> bool:
+    """As `_is_deck`, for spreadsheets."""
+    if (document.get("mimeType") or "") == _XLSX_MIME:
+        return True
+    return str(document.get("storageKey") or "").lower().endswith(".xlsx")
 
 
 def _is_deck(document: dict) -> bool:
@@ -77,7 +95,9 @@ def handle(job: Job, heartbeat) -> None:
     _set_status(job.document_id, "parsing")
     raw = storage.storage().get(document["storageKey"])
 
-    if _is_deck(document):
+    if _is_workbook(document):
+        result = _parse_workbook(raw, document, heartbeat)
+    elif _is_deck(document):
         result = _parse_deck(raw, document, heartbeat)
     else:
         doc = fitz.open(stream=raw, filetype="pdf")
@@ -336,6 +356,86 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
             f"{deck.undecodable_images} image(s) are in a vector format this pipeline "
             "cannot read (usually EMF/WMF, from a drawing pasted out of Office). They "
             "are not indexed. Re-save them as PNG in the deck to include them.",
+        )
+
+    _flag_missed_obligations(out)
+    _flag_empty_sections(out)
+    _flag_no_clauses(out, document)
+    return out
+
+
+def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
+    """A .xlsx, split into grids and the prose around them.
+
+    The two halves are handled by the two things already built for them. Tables
+    go through `tables.Table` untouched, so a row still carries its headers into
+    the index and an empty cell still reads as "not specified" rather than as
+    the cell above it. What is left — sheet names, title rows, notes under a
+    grid — is prose, and prose has no structure a spreadsheet states, so the
+    model pass reads it exactly as it does for a deck.
+    """
+    out = _Result()
+    book = sheets.read(raw)
+    out.page_count = book.sheet_count
+
+    text_chars = sum(len(line.text) for line in book.lines)
+    cell_count = sum(len(table.rows) for table in book.tables)
+    if text_chars < _MIN_BOOK_CHARS and cell_count == 0:
+        raise RuntimeError(
+            f"no usable content in this workbook ({text_chars} characters across "
+            f"{book.sheet_count} sheets, and no tables) — a sheet of flattened "
+            "images needs OCR, which is not wired up"
+        )
+
+    out.title = book.title or document["title"]
+    out.profile = "workbook"
+    heartbeat()
+
+    read = ai_structure.structure(book.lines, document_title=out.title, hints=book.hints)
+    if read.sections:
+        _adopt_structure(
+            out,
+            read,
+            # Medium, not high: this is how every workbook is parsed, so the
+            # flag describes the format rather than a fault in this file.
+            severity="medium",
+            detail=(
+                f"A spreadsheet states no clause structure of its own, so this one was "
+                f"read by a model: {len(read.sections)} sections and "
+                f"{sum(len(c) for c in read.clauses.values())} rules across "
+                f"{book.sheet_count} sheet(s). Confirm them before assessing against them."
+            ),
+        )
+    else:
+        # Either no model is configured or it found nothing to mark. A
+        # requirements matrix is the ordinary case here — every rule is a row,
+        # and rows are not prose — so this is a normal outcome rather than a
+        # failure. The tables below still carry the content, and each row is
+        # still retrievable on its own.
+        out.sections = sections.whole_document(book.lines, document_title=out.title)
+        if not out.sections:
+            out.issue(
+                "high",
+                "no_sections",
+                "Nothing could be read from this workbook. It holds no text outside its "
+                "grids, so there was no prose to structure.",
+            )
+            return out
+
+    heartbeat()
+
+    for table in book.tables:
+        index = _section_for_page(out.sections, table.page_start)
+        out.tables.setdefault(index, []).append(table)
+
+    if book.truncated:
+        out.issue(
+            "high",
+            "sheet_truncated",
+            f"{', '.join(sorted(set(book.truncated)))} ran past "
+            f"{sheets.MAX_ROWS_PER_SHEET:,} rows and was read only that far. Anything "
+            "below that is not indexed and will not be assessed — split the sheet, or "
+            "submit the part that carries the requirements.",
         )
 
     _flag_missed_obligations(out)

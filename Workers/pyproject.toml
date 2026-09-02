@@ -15,6 +15,9 @@ dependencies = [
     # outline depth, speaker notes — and this reads it rather than inferring it
     # back from typography the way the PDF path has to.
     "python-pptx>=1.0",
+    # Excel parsing. A workbook says most of what it says in a grid, and the
+    # header-to-cell binding is the meaning — see parsing/sheets.py.
+    "openpyxl>=3.1",
     # Every outbound call — Gemini, embeddings, and storage via the app — goes
     # over plain HTTP rather than through a vendor SDK, so swapping providers is
     # a config change and the dependency list stays short.

@@ -43,7 +43,7 @@ export default async function ProjectPage({
   return (
     <>
       <Link
-        href="/dashboard/projects"
+        href="/dashboard"
         className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink/58 transition-colors hover:text-ink"
       >
         <ArrowLeft size={13} />

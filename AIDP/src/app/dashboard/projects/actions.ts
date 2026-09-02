@@ -24,7 +24,7 @@ async function run(work: (access: Awaited<ReturnType<typeof requireAccess>>) => 
   try {
     const access = await requireAccess();
     const result = await work(access);
-    revalidatePath("/dashboard/projects");
+    revalidatePath("/dashboard");
     return result;
   } catch (error) {
     if (error instanceof ProjectRefused) return { ok: false, message: error.message };
