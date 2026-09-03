@@ -80,6 +80,10 @@ class Doc:
     page_count: int = 1
     #: Images in a format that could not be read, reported rather than dropped.
     undecodable_images: int = 0
+    #: Running header and footer text. Not content — a Word document states its
+    #: sensitivity classification there, exactly as the PDF it is exported to
+    #: prints it on every page, and that is governance data rather than noise.
+    furniture: list[str] = field(default_factory=list)
 
 
 def _sig(size: float, bold: bool) -> tuple[str, float, bool, bool, int]:
@@ -229,10 +233,32 @@ def _images(document, doc: Doc, anchor: int, page: int) -> None:
         )
 
 
+def _furniture(document) -> list[str]:
+    """Header and footer text from every section of the document.
+
+    Kept out of `lines` on purpose: it is boilerplate that would otherwise land
+    in every chunk and drag the corpus toward itself, which is the same reason
+    the PDF path strips it. Read first, because the classification is in it.
+    """
+    out: list[str] = []
+    for section in document.sections:
+        for part in (section.header, section.footer,
+                     section.first_page_header, section.first_page_footer,
+                     section.even_page_header, section.even_page_footer):
+            if part is None:
+                continue
+            try:
+                out.extend(p.text for p in part.paragraphs if p.text.strip())
+            except Exception:  # noqa: BLE001 — an unlinked part is not a failure
+                continue
+    return out
+
+
 def read(raw: bytes) -> Doc:
     """Parse a .docx into lines, heading levels, tables and figures."""
     document = Document(io.BytesIO(raw))
     doc = Doc()
+    doc.furniture = _furniture(document)
 
     body = document.element.body
     paragraphs = {p._p: p for p in document.paragraphs}  # noqa: SLF001 — identity map

@@ -18,7 +18,7 @@ import sys
 # The project targets Python 3.11+, where datetime.UTC exists. Shimmed so this
 # also runs on an older local interpreter; the workers themselves are 3.11.
 if not hasattr(dt, "UTC"):
-    dt.UTC = dt.timezone.utc  # type: ignore[attr-defined]
+    dt.UTC = dt.UTC  # type: ignore[attr-defined]
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -30,7 +30,7 @@ for line in _ENV.read_text().splitlines():
 os.environ.setdefault("STAGE", "embed")
 os.environ.setdefault("GEMINI_API_KEY", "not-used-the-provider-is-stubbed")
 
-from aidp import cache, db, usage  # noqa: E402
+from aidp import db, usage  # noqa: E402
 from aidp.ai import embeddings  # noqa: E402
 
 passed = failed = 0
@@ -117,7 +117,8 @@ try:
     calls_before = stub.calls
     embeddings.embed_all(changed, "document")
     ok("provider called once more", stub.calls == calls_before + 1)
-    ok("only the changed text was sent", stub.texts_sent[-1] == changed[2], stub.texts_sent[-1][:50])
+    ok("only the changed text was sent", stub.texts_sent[-1] == changed[2],
+       stub.texts_sent[-1][:50])
 
     print("\n4. Query and document embeddings do not share an entry")
     calls_before = stub.calls
@@ -128,7 +129,9 @@ try:
     print("\n5. Repeats inside one call are paid for once")
     calls_before = stub.calls
     sent_before = len(stub.texts_sent)
-    repeated = embeddings.embed_all(["brand new line", "brand new line", "brand new line"], "document")
+    repeated = embeddings.embed_all(
+        ["brand new line", "brand new line", "brand new line"], "document"
+    )
     ok("one text sent, not three", len(stub.texts_sent) - sent_before == 1)
     ok("all three positions filled", len(repeated) == 3)
     ok("and they are the same vector", repeated[0] == repeated[1] == repeated[2])

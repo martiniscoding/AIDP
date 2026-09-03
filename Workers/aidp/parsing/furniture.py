@@ -63,15 +63,17 @@ def detect(lines: list[Line], page_count: int) -> set[int]:
     return furniture
 
 
-def sensitivity(lines: list[Line]) -> str | None:
-    """The classification printed on the page, e.g. 'Internal Use'.
+def classification_in(texts: list[str]) -> str | None:
+    """The classification stated anywhere in these strings, e.g. 'Internal Use'.
 
-    Read from the whole line list rather than only the furniture set, because
-    the cover page states it once outside the running footer.
+    Split out from `sensitivity` because a PDF states it on rendered pages and a
+    Word document states it in the running footer, which is not a page and not a
+    line — but it is the same fact, found by the same pattern, and two copies of
+    that pattern is how one of them drifts.
     """
     counts: dict[str, int] = defaultdict(int)
-    for line in lines:
-        match = _SENSITIVITY.search(line.text)
+    for text in texts:
+        match = _SENSITIVITY.search(text)
         if match:
             value = match.group(1).strip(" :.-")
             if value:
@@ -80,6 +82,15 @@ def sensitivity(lines: list[Line]) -> str | None:
         return None
     # The running footer wins over a one-off mention in body text.
     return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+def sensitivity(lines: list[Line]) -> str | None:
+    """The classification printed on the page.
+
+    Read from the whole line list rather than only the furniture set, because
+    the cover page states it once outside the running footer.
+    """
+    return classification_in([line.text for line in lines])
 
 
 def strip(lines: list[Line], page_count: int) -> tuple[list[Line], str | None]:

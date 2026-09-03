@@ -36,7 +36,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from docx import Document  # noqa: E402
 
 from aidp.parsing import clauses as clause_parser  # noqa: E402
-from aidp.parsing import docs, sections  # noqa: E402
+from aidp.parsing import docs, furniture, sections  # noqa: E402
 
 passed = failed = 0
 
@@ -53,6 +53,10 @@ def ok(name: str, condition: bool, extra: object = "") -> None:
 
 def build() -> bytes:
     d = Document()
+    # Where a real standards document states its classification, and where the
+    # PDF it is exported to prints it on every page.
+    d.sections[0].footer.paragraphs[0].text = "SENSITIVITY CLASSIFICATION: Internal Use"
+    d.sections[0].header.paragraphs[0].text = "Security Standards | Page 1"
     d.add_heading("Security Standards", 0)
 
     # A house template renames its styles. Matching on the name would miss it;
@@ -139,6 +143,13 @@ if read.tables:
     ok("Tier 4 is the last row", tier4["Tier"] == "Tier 4", tier4)
     ok("its empty RPO stays empty", tier4["RPO"] is None, tier4)
     ok("the value after it did not slide left", tier4["RTO"] == "24 hours", tier4)
+
+print("\n5. The running footer is read, then kept out of the content")
+ok("classification lifted", furniture.classification_in(
+    [line.text for line in read.lines] + read.furniture) == "Internal Use")
+body = " ".join(line.text for line in read.lines)
+ok("footer text is not content", "SENSITIVITY CLASSIFICATION" not in body)
+ok("header text is not content", "Page 1" not in body)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

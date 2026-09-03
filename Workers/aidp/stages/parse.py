@@ -326,6 +326,21 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
 
     out.title = read.title or document["title"]
     out.profile = "prose-clause"
+
+    # Governance data, not noise: the classification drives access control, and
+    # a Word document states it in the running footer exactly as its exported
+    # PDF prints it on every page. Body lines are searched too, because a cover
+    # page states it once outside the footer.
+    out.sensitivity = furniture.classification_in(
+        [line.text for line in read.lines] + read.furniture
+    )
+    if out.sensitivity is None:
+        out.issue(
+            "low",
+            "no_classification",
+            "No sensitivity classification found in this document or its running "
+            "footer. Access control will fall back to the organisation default.",
+        )
     heartbeat()
 
     out.sections, owner = sections.from_outline(
