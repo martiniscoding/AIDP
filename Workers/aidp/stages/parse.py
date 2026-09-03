@@ -294,8 +294,9 @@ def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
         out.issue(
             "medium",
             "structure_orphan_lines",
-            f"{len(read.orphan_lines)} lines before the first heading belong to "
-            "no section and were not indexed as part of any rule.",
+            f"{len(read.orphan_lines)} lines come before the first heading the model "
+            "marked. They are indexed as an opening section so nothing is lost, but "
+            "the reading started late and the structure around them is worth checking.",
         )
 
 

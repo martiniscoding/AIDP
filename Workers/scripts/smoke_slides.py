@@ -147,6 +147,31 @@ def stub_model(seen: dict) -> None:
     llm.available = lambda: True
 
 
+def stub_model_starting_late(skip: int) -> None:
+    """As above, but blind to the first `skip` headings.
+
+    What a model reading a deck actually does when the opening slides carry no
+    obvious heading: it starts marking partway down. Everything before the
+    first mark used to be discarded, and on a deck that is the title slide and
+    the agenda — the two slides that say what the deck is comparing and why.
+    """
+    marked = {"n": 0}
+
+    def structure(*, numbered: str, first_line: int, last_line: int, tags: str = "") -> dict:
+        markers = []
+        for row in numbered.split("\n"):
+            index = int(row.split(":", 1)[0])
+            if "[title]" in row or "[text]" in row:
+                marked["n"] += 1
+                if marked["n"] <= skip:
+                    continue
+                markers.append({"line": index, "role": "heading"})
+        return {"markers": markers}
+
+    llm.structure = structure
+    llm.available = lambda: True
+
+
 def main() -> int:
     raw = build_deck()
     deck = slides.read(raw)
@@ -221,6 +246,20 @@ def main() -> int:
     check("no line index outside the deck", all(i < len(deck.lines) for i in read.disputed_lines))
     sliced = " ".join(c.statement for group in read.clauses.values() for c in group)
     check("clause text came from the deck, not the model", "[title]" not in sliced)
+
+    print("\nNothing before the first heading is thrown away")
+    stub_model_starting_late(2)
+    late = ai_structure.structure(deck.lines, document_title="Deck", hints=deck.hints)
+
+    # Every section's own heading, plus every line under it. Anything in the
+    # deck that appears in neither was discarded.
+    kept = {section.title for section in late.sections}
+    kept |= {line.text for section in late.sections for line in section.lines}
+    lost = [line.text for line in deck.lines if line.text.strip() and line.text not in kept]
+
+    check("the late start is reported", bool(late.orphan_lines))
+    check("but no line is dropped", not lost, lost[:3])
+    check("the deck's opening is indexed", deck.lines[0].text in kept)
 
     print()
     if failures:

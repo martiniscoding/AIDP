@@ -198,6 +198,21 @@ def structure(
         return Structure()
 
     out = Structure(disputed_lines=disputed)
+
+    # Everything before the first heading. A model that starts marking halfway
+    # down has skipped whatever came before it, and on a deck that is the title
+    # slide and the agenda — which is exactly where a deck states what it is
+    # comparing and why. Dropping those made the most important slides in a
+    # submission the ones least likely to be indexed.
+    #
+    # So they are kept as a leading section rather than discarded, on the same
+    # reasoning as `sections.whole_document`: searchable beats absent. The
+    # orphan list is still reported, because a late start is still a signal
+    # that the reading is imperfect.
+    orphans = [i for i in content if i < heads[0]]
+    if orphans:
+        heads = [orphans[0]] + heads
+
     bounds = heads + [len(lines)]
 
     # Pairwise over the boundaries. Uneven by construction — the last heading
@@ -252,10 +267,7 @@ def structure(
         if not clause.is_empty:
             out.clauses[ordinal - 1] = [clause]
 
-    # Lines before the first heading belong to nothing. Reported, not dropped
-    # silently — a model that started marking halfway down a document has
-    # skipped whatever came before it.
-    out.orphan_lines = [i for i in content if i < heads[0]]
+    out.orphan_lines = orphans
 
     logs.info(
         log,
