@@ -264,9 +264,11 @@ def main() -> int:
     sliced = " ".join(c.statement for group in read.clauses.values() for c in group)
     check("clause text came from the deck, not the model", "[title]" not in sliced)
 
-    print("\nNothing before the first heading is thrown away")
+    print("\nNothing is dropped when the model starts marking late")
     stub_model_starting_late(2)
-    late = ai_structure.structure(deck.lines, document_title="Deck", hints=deck.hints)
+    late = ai_structure.structure(
+        deck.lines, document_title="Deck", hints=deck.hints, page_is_a_section=True
+    )
 
     # Every section's own heading, plus every line under it. Anything in the
     # deck that appears in neither was discarded.
@@ -274,9 +276,33 @@ def main() -> int:
     kept |= {line.text for section in late.sections for line in section.lines}
     lost = [line.text for line in deck.lines if line.text.strip() and line.text not in kept]
 
-    check("the late start is reported", bool(late.orphan_lines))
-    check("but no line is dropped", not lost, lost[:3])
+    check("no line is dropped", not lost, lost[:3])
     check("the deck's opening is indexed", deck.lines[0].text in kept)
+    check("the slides the model skipped got their own sections",
+          len(late.sections) >= deck.slide_count, len(late.sections))
+
+    print("\nA slide the model skipped still gets its own section")
+    # The model marks nothing at all. The deck's own title tags have to carry
+    # the structure on their own, or unmarked slides merge into the one above
+    # and a nine-slide section embeds as the average of nine subjects.
+    llm.structure = lambda **_: {"markers": []}
+    unmarked = ai_structure.structure(
+        deck.lines, document_title="Deck", hints=deck.hints, page_is_a_section=True
+    )
+    spans = [s.page_end - s.page_start + 1 for s in unmarked.sections]
+    check("sections were still built", bool(unmarked.sections), len(unmarked.sections))
+    check("none swallows a run of slides", spans and max(spans) == 1, spans)
+
+    print("\nA window the model never answered is counted, not read as empty")
+    def refuse(**_):
+        raise RuntimeError("quota exhausted")
+    llm.structure = refuse
+    refused = ai_structure.structure(
+        deck.lines, document_title="Deck", hints=deck.hints, page_is_a_section=True
+    )
+    check("failed windows counted", refused.failed_windows > 0, refused.failed_windows)
+    check("slide titles still carried the structure", bool(refused.sections),
+          len(refused.sections))
 
     print("\nA chart's data is read, not skipped for having no text frame")
     chart_lines = [

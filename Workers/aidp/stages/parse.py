@@ -285,6 +285,16 @@ def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
     out.structure_inferred = True
     out.issue(severity, "structure_inferred", detail)
 
+    if read.failed_windows:
+        out.issue(
+            "high",
+            "structure_partly_unread",
+            f"{read.failed_windows} of {read.windows} passes over this document did not "
+            "complete — usually a model quota or rate limit. Whatever those covered was "
+            "never read, so the sections around it are wider than they should be and its "
+            "content is harder to retrieve. Re-parse once the limit has cleared.",
+        )
+
     for line in read.disputed_lines[:20]:
         out.issue(
             "medium",
@@ -439,7 +449,11 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     heartbeat()
 
     read = ai_structure.structure(
-        deck.lines, document_title=out.title, hints=deck.hints
+        deck.lines,
+        document_title=out.title,
+        hints=deck.hints,
+        # A slide is a unit of argument, whether or not the model noticed it.
+        page_is_a_section=True,
     )
     if read.sections:
         _adopt_structure(

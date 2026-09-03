@@ -57,6 +57,11 @@ class Structure:
     #: reported by the parse stage rather than silently accepted.
     orphan_lines: list[int] = field(default_factory=list)
     disputed_lines: list[int] = field(default_factory=list)
+    #: Windows the model never answered — a quota refusal, a timeout, a reply
+    #: that would not parse. Each one is a stretch of the document nothing read,
+    #: and the sections around it are wider than they should be as a result.
+    failed_windows: int = 0
+    windows: int = 0
 
 
 @dataclass
@@ -105,8 +110,14 @@ def _numbered(lines: list[Line], start: int, end: int, hints: dict[int, str]) ->
     return "\n".join(rows)
 
 
-def _ask(lines: list[Line], start: int, end: int, hints: dict[int, str]) -> list[_Marker]:
-    """One window. Returns only markers that survive validation."""
+def _ask(lines: list[Line], start: int, end: int, hints: dict[int, str]) -> list[_Marker] | None:
+    """One window. Returns validated markers, or None when the call failed.
+
+    None and [] are different answers and must stay so: an empty list is a
+    window the model read and found nothing in, and None is a window nobody
+    read. Collapsing them is how a quota refusal comes to look like a document
+    with no headings in it.
+    """
     numbered = _numbered(lines, start, end, hints)
 
     try:
@@ -118,7 +129,7 @@ def _ask(lines: list[Line], start: int, end: int, hints: dict[int, str]) -> list
         )
     except Exception as exc:  # noqa: BLE001 — one window must not sink the document
         logs.warn(log, "structure call failed for window", start=start, error=str(exc)[:160])
-        return []
+        return None
 
     kept: list[_Marker] = []
     for item in raw.get("markers") or []:
@@ -175,21 +186,56 @@ def _text_from(lines: list[Line], start: int, stop: int, roles: dict[int, str]) 
 
 
 def structure(
-    lines: list[Line], *, document_title: str, hints: dict[int, str] | None = None
+    lines: list[Line],
+    *,
+    document_title: str,
+    hints: dict[int, str] | None = None,
+    page_is_a_section: bool = False,
 ) -> Structure:
     """Read a document's structure with a model. Empty when it cannot.
 
     `hints` is what the source format already knew about each line — populated
     for a deck, empty for a PDF, where the format knew nothing and this pass is
     the last rung.
+
+    `page_is_a_section` says the format's own pages are unit boundaries, and it
+    is deliberately not the default. A slide is a unit of argument: it was given
+    a title, it was laid out to be read alone, and the next slide is a new
+    subject. A PDF page is none of those — it is where the text happened to run
+    out, and a clause routinely straddles two — so splitting there would cut
+    rules in half. The caller knows which it has.
     """
     content = [i for i, line in enumerate(lines) if line.text.strip()]
     if not content or not llm.available():
         return Structure()
 
     marks = hints or {}
-    views = [_ask(lines, start, end, marks) for start, end in _windows(len(lines))]
+    asked = [_ask(lines, start, end, marks) for start, end in _windows(len(lines))]
+    views = [view for view in asked if view is not None]
     roles, disputed = _merge(views)
+
+    # A boundary the format already declared, which the model was free to miss.
+    #
+    # Sections run from one heading to the next, so a page the model left
+    # unmarked is absorbed into the one above it. On a real submission that
+    # merged nine slides into a single 5,000-character section — and a chunk
+    # that size embeds as the average of nine subjects, so it matches none of
+    # them strongly and the slides inside it stop being retrievable. Nothing
+    # was lost; it had been buried, which reads to a reader exactly like being
+    # missing.
+    #
+    # Only ever adds boundaries: a line the model did mark keeps its role.
+    if page_is_a_section:
+        first_on_page: dict[int, int] = {}
+        for index in content:
+            first_on_page.setdefault(lines[index].page, index)
+        marked_pages = {
+            lines[index].page for index, role in roles.items() if role == "heading"
+        }
+        for page, index in first_on_page.items():
+            if page not in marked_pages:
+                roles[index] = "heading"
+
     if not roles:
         return Structure()
 
@@ -197,7 +243,11 @@ def structure(
     if not heads:
         return Structure()
 
-    out = Structure(disputed_lines=disputed)
+    out = Structure(
+        disputed_lines=disputed,
+        failed_windows=sum(1 for view in asked if view is None),
+        windows=len(asked),
+    )
 
     # Everything before the first heading. A model that starts marking halfway
     # down has skipped whatever came before it, and on a deck that is the title
@@ -276,5 +326,7 @@ def structure(
         clauses=len(out.clauses),
         disputed=len(out.disputed_lines),
         orphans=len(out.orphan_lines),
+        failedWindows=out.failed_windows,
+        windows=out.windows,
     )
     return out
