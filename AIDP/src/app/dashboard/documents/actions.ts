@@ -286,6 +286,64 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
  * separate ones. Anything wrong at that point is fixed by correcting the source
  * document and reprocessing, which clears this again.
  */
+/** The longest a useful summary runs to. Four sentences, generously. */
+const MAX_SUMMARY = 1200;
+
+/**
+ * Correct what the system understood a document to be.
+ *
+ * The summary is not decoration: it is put in front of the model for every
+ * clause of every assessment, so a wrong one reaches every verdict in the run.
+ * A reviewer who can see that it is wrong and cannot change it is watching a
+ * bad assessment happen.
+ *
+ * Findings already written used the previous understanding and are not
+ * rewritten here — a stored verdict is a record of a judgement that was made,
+ * not a cache to be invalidated. Re-running the assessment is what applies a
+ * corrected summary, and the page says so.
+ */
+export async function setDocumentSummary(
+  documentId: string,
+  summary: string,
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { organisationId: true, role: true, title: true },
+    });
+    if (!document) return { ok: false, message: "That document no longer exists." };
+    const membership = await requireMembership(user.id, document.organisationId);
+    const refused = guardStandards(membership, document);
+    if (refused) return refused;
+
+    const trimmed = summary.trim().slice(0, MAX_SUMMARY);
+
+    await prisma.document.update({
+      where: { id: documentId },
+      // Empty clears it rather than storing a blank string, so the judge falls
+      // back to going without exactly as it does for a document that never had
+      // one — see the note on the column.
+      data: { summary: trimmed || null },
+    });
+
+    revalidatePath(`/dashboard/documents/${documentId}`);
+    return {
+      ok: true,
+      message: trimmed
+        ? "Saved. The next assessment run will use this."
+        : "Cleared. The next run will go without a summary.",
+    };
+  } catch (error) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that document." };
+    }
+    throw error;
+  }
+}
+
+
 export async function confirmStructure(documentId: string): Promise<ActionResult> {
   try {
     const user = await requireUser();

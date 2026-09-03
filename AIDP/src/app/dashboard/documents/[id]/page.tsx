@@ -14,6 +14,7 @@ import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Figures, type FigureView } from "./Figures";
+import { Understanding } from "./Understanding";
 import { ConfirmStructure } from "./ConfirmStructure";
 import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
@@ -184,6 +185,16 @@ export default async function DocumentPage({
           {document.failureReason}
         </p>
       )}
+
+      {/* Before everything, because it is the premise the rest rests on: a
+          reader who has not seen what the system took this document to be
+          cannot tell whether its findings are answering the right question. */}
+      <Understanding
+        documentId={document.id}
+        summary={document.summary}
+        editable={mayChange}
+        assessed={assessed}
+      />
 
       {/* Above the statistics on purpose: the counts below are meaningless
           until someone has agreed the reading that produced them. */}
