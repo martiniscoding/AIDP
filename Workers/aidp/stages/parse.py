@@ -262,6 +262,7 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    _flag_content_loss(out, content)
     _reconcile(out, toc_entries)
     return out
 
@@ -409,6 +410,7 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    _flag_content_loss(out, read.lines)
     return out
 
 
@@ -486,7 +488,61 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    _flag_content_loss(out, deck.lines)
     return out
+
+
+def _flag_content_loss(out: _Result, read_lines: list) -> None:
+    """Did everything we read reach a section?
+
+    The tripwire. Three separate defects had already lost deck content — slide
+    text dropped for carrying a diagram, everything before the model's first
+    heading discarded, chart data never read at all — and each was found by a
+    person noticing a specific slide was missing, which is the most expensive
+    way to find out.
+
+    This measures it instead. Nothing here can fix a loss; it makes one
+    impossible to ship in silence, which is the property that was missing.
+    """
+    if not read_lines:
+        return
+
+    kept: set[str] = {s.title.strip() for s in out.sections}
+    for section in out.sections:
+        kept.update(line.text.strip() for line in section.lines)
+    for clauses in out.clauses.values():
+        for clause in clauses:
+            kept.update(
+                part.strip()
+                for part in [clause.statement, clause.rationale, *clause.requirements,
+                             *clause.guidance]
+                if part
+            )
+
+    lost = [
+        line.text.strip()
+        for line in read_lines
+        if line.text.strip() and line.text.strip() not in kept
+    ]
+    if not lost:
+        return
+
+    read_chars = sum(len(line.text.strip()) for line in read_lines if line.text.strip())
+    lost_chars = sum(len(text) for text in lost)
+    share = lost_chars / read_chars if read_chars else 0.0
+
+    # A line or two falling out is normal — a clause's text is reassembled and
+    # reflowed, so a fragment need not match character for character. A tenth
+    # of the document is not that.
+    severity = "high" if share >= 0.10 else "low"
+    sample = "; ".join(text[:60] for text in lost[:3])
+    out.issue(
+        severity,
+        "content_not_indexed",
+        f"{len(lost)} of {len(read_lines)} lines read from this document "
+        f"({share:.0%} of its text) did not reach any section and are not "
+        f"searchable. First: {sample}",
+    )
 
 
 def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
@@ -566,6 +622,7 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    _flag_content_loss(out, book.lines)
     return out
 
 

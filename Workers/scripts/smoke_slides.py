@@ -35,6 +35,8 @@ from pathlib import Path
 
 import fitz
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Inches, Pt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -113,6 +115,19 @@ def build_deck() -> bytes:
     caption.text_frame.text = "Data Centre Estate"
     four.shapes.add_picture(io.BytesIO(photo), Inches(1), Inches(2), Inches(6), Inches(4))
 
+    # A cost chart. It carries no text frame, so the shape loop used to skip it
+    # and every number on the slide went with it.
+    five = prs.slides.add_slide(blank)
+    label = five.shapes.add_textbox(Inches(1), Inches(0.4), Inches(6), Inches(1))
+    label.text_frame.text = "Three Year Cost"
+    data = CategoryChartData()
+    data.categories = ["Year 1", "Year 2", "Year 3"]
+    data.add_series("On premise", (120, 130, 140))
+    data.add_series("Managed service", (200, 90, 80))
+    five.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(2), Inches(7), Inches(4), data
+    )
+
     # Branding on every slide, at logo size.
     for slide in prs.slides:
         slide.shapes.add_picture(
@@ -179,7 +194,9 @@ def main() -> int:
     texts = [line.text for line in deck.lines]
 
     print("Lines")
-    check("every slide contributed", deck.slide_count == 4, f"{deck.slide_count} slides")
+    check("every slide contributed", deck.slide_count == 5, f"{deck.slide_count} slides")
+    contributed = {line.page for line in deck.lines}
+    check("no slide read as empty", contributed == set(range(1, 6)), sorted(contributed))
     check("deck title read off slide one", deck.title == "Encryption at Rest", str(deck.title))
     check(
         "no footer or slide number survived",
@@ -260,6 +277,14 @@ def main() -> int:
     check("the late start is reported", bool(late.orphan_lines))
     check("but no line is dropped", not lost, lost[:3])
     check("the deck's opening is indexed", deck.lines[0].text in kept)
+
+    print("\nA chart's data is read, not skipped for having no text frame")
+    chart_lines = [
+        deck.lines[i].text for i, hint in deck.hints.items() if hint == "chart"
+    ]
+    check("chart series were read", bool(chart_lines), chart_lines)
+    check("values carry their categories",
+          any("Year 1" in line for line in chart_lines), chart_lines)
 
     print()
     if failures:

@@ -35,6 +35,9 @@ from .spans import Line
 
 log = logs.get(__name__)
 
+# DrawingML text run. Every shape that holds words holds them in one of these.
+_DRAWING_TEXT = "{http://schemas.openxmlformats.org/drawingml/2006/main}t"
+
 # PowerPoint names its own furniture, so none of the page-repetition heuristics
 # in furniture.py are needed here — these are simply not content.
 _FURNITURE = {PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.DATE}
@@ -211,6 +214,90 @@ def _read_table(deck: Deck, shape, *, slide: int) -> None:
         )
 
 
+def _read_chart(deck: Deck, shape, *, slide: int) -> None:
+    """A chart's data, as lines.
+
+    A chart carries no text frame, so the shape loop skipped it entirely and
+    everything it said went with it. On a commercials or comparison slide the
+    chart *is* the content — "Solution A 120, 130, 140 against Solution B 200,
+    90, 80" is the cost case, and a deck assessed without it has had its
+    numbers removed.
+
+    Read through the chart API rather than by scraping XML, because the values
+    live in a separate part of the package and are not in the shape's markup.
+    Each series becomes one line with its categories bound to its values, for
+    the same reason a table row carries its headers: the binding is the meaning,
+    and "120, 130, 140" on its own says nothing.
+    """
+    try:
+        chart = shape.chart
+        plot = chart.plots[0]
+        categories = [str(c) for c in plot.categories]
+    except Exception as exc:  # noqa: BLE001 — an unreadable chart is not fatal
+        logs.warn(log, "could not read a chart", slide=slide, error=str(exc)[:160])
+        return
+
+    top = _points(shape.top)
+    left = _points(shape.left)
+    offset = 0
+
+    title = ""
+    try:
+        if chart.has_title:
+            title = chart.chart_title.text_frame.text.strip()
+    except Exception:  # noqa: BLE001 — titles are optional and sometimes broken
+        title = ""
+    if title:
+        _emit(deck, title, slide=slide, hint="chart", size=_SIZE_BODY,
+              bold=False, y=top + offset, x0=left)
+        offset += 1
+
+    for series in plot.series:
+        try:
+            values = list(series.values)
+        except Exception:  # noqa: BLE001
+            continue
+        pairs = ", ".join(
+            f"{category} {value:g}"
+            # Not strict: a series legitimately carries fewer points than the
+            # chart has categories, and half a series beats none of it.
+            for category, value in zip(categories, values, strict=False)
+            if value is not None
+        )
+        if not pairs:
+            continue
+        name = (series.name or "Series").strip()
+        _emit(deck, f"{name}: {pairs}", slide=slide, hint="chart",
+              size=_SIZE_BODY, bold=False, y=top + offset, x0=left)
+        offset += 1
+
+
+def _read_remaining_text(deck: Deck, shape, *, slide: int) -> None:
+    """Any text in a shape none of the readers above understood.
+
+    The last net. SmartArt, embedded objects, ink annotations and whatever
+    PowerPoint adds next all arrive as shapes with no text frame and no table,
+    and the loop's `continue` used to be the end of them. Their text still sits
+    in the drawing markup as `a:t` runs, so it is scraped rather than lost.
+
+    Deliberately unstructured and tagged as such: this says a slide contains
+    these words, not what role they play. Better a line the structure pass has
+    to think about than a line nobody ever sees.
+    """
+    top = _points(shape.top)
+    left = _points(shape.left)
+    seen: set[str] = set()
+    offset = 0
+    for element in shape._element.iter(_DRAWING_TEXT):  # noqa: SLF001 — no public walk
+        text = (element.text or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        _emit(deck, text, slide=slide, hint="shape", size=_SIZE_BODY,
+              bold=False, y=top + offset, x0=left)
+        offset += 1
+
+
 def _read_notes(deck: Deck, slide_obj, *, slide: int) -> None:
     """Speaker notes.
 
@@ -333,7 +420,14 @@ def read(raw: bytes) -> Deck:
                 _read_table(deck, shape, slide=number)
                 continue
 
+            if getattr(shape, "has_chart", False):
+                _read_chart(deck, shape, slide=number)
+                continue
+
             if not getattr(shape, "has_text_frame", False):
+                # Not a shape any reader above understood. Scrape whatever text
+                # it holds rather than dropping it — see _read_remaining_text.
+                _read_remaining_text(deck, shape, slide=number)
                 continue
 
             if placeholder in _TITLE_PLACEHOLDERS:

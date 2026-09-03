@@ -136,6 +136,10 @@ def _by_section(rows: list[dict]) -> dict[str, list[dict]]:
 
 def _build(document, sections, clauses, table_blocks, figures) -> list[_Draft]:
     drafts: list[_Draft] = []
+    # Formats whose sections are short because the format is short, not because
+    # the content is thin. Recorded by the parse stage, so this reads it rather
+    # than guessing from the text.
+    terse_format = (document.get("profile") or "") in ("slide-deck", "workbook")
 
     for section in sections:
         sid = section["id"]
@@ -192,6 +196,14 @@ def _build(document, sections, clauses, table_blocks, figures) -> list[_Draft]:
         # A clause is drawn from this prose and can restate it; a table or a
         # figure cannot. See the note on the thresholds above.
         floor = _MIN_SECTION_PROSE if clauses.get(sid) else _MIN_ORPHAN_PROSE
+        if terse_format and not clauses.get(sid):
+            # A slide is a unit of meaning whatever its length, and a deck is
+            # terse by design: "Same-day settlement / No exit fee" is thirty
+            # characters and is the whole commercial case for a vendor. Held to
+            # the prose floor, that slide produces no chunk at all — and then
+            # its title, which is only ever carried *on* a chunk, is not
+            # indexed either, so the slide leaves no trace.
+            floor = 1
         if len(prose) >= floor:
             drafts.append(
                 _Draft("section", sid, path, prose[:8000],
