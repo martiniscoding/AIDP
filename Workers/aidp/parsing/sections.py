@@ -40,6 +40,16 @@ _CLAUSE_LABEL = re.compile(
     re.IGNORECASE,
 )
 
+# A deep subsection number — three parts or more — then the start of a title.
+_DEEP_NUMBERED = re.compile(r"^\d+(?:\.\d+){2,}\.?\s+[A-Z(]")
+
+# How far under body size a bold, deeply numbered line may be set and still be a
+# heading. See `_small_numbered_heading`.
+_SMALL_HEADING_SLACK = 1.5
+
+# Enough numbered headings to say how this document sets its headings.
+_MIN_NUMBERED = 5
+
 # Structural sections that carry no standards and should not become chunks.
 _SKIP_TITLES = {"table of contents", "contents", "revision history", "document control"}
 
@@ -54,6 +64,11 @@ class Section:
     page_start: int
     page_end: int
     lines: list[Line] = field(default_factory=list)
+    #: Where the heading sits on `page_start`. Several sections can open on one
+    #: page, and a table or figure on that page belongs to whichever heading is
+    #: above it — not simply to the last one on the page. 0.0 when the section
+    #: was not cut from positioned lines, which reads as "top of the page".
+    y_start: float = 0.0
 
     @property
     def text(self) -> str:
@@ -64,12 +79,32 @@ class Section:
         return self.title.strip().lower() in _SKIP_TITLES
 
 
+def _small_numbered_heading(line: Line, text: str, profile: FontProfile) -> bool:
+    """A bold, deeply numbered line set just under body size.
+
+    Word templates step their deepest heading styles down a point. One live
+    blueprint sets "3.4.3.1.1 Virtual Servers" in 11pt bold italic over 12pt
+    body, and five of its subsections vanished into their neighbours — two of
+    them then reported as missing from the table of contents. `profile_fonts`
+    cannot list 11pt bold as a level without also listing every bold word at
+    that size, so these are admitted on the strength of the number instead: a
+    three-part section number is not something body text opens with.
+    """
+    sig = line.sig
+    return (
+        bool(sig[2])
+        and not profile.body[2]
+        and sig[1] >= profile.body[1] - _SMALL_HEADING_SLACK
+        and bool(_DEEP_NUMBERED.match(text))
+    )
+
+
 def _classify(line: Line, profile: FontProfile) -> tuple[str | None, str] | None:
     """(number, title) when the line is a heading, else None."""
-    if profile.level_of(line.sig) is None:
+    text = line.text.strip()
+    if profile.level_of(line.sig) is None and not _small_numbered_heading(line, text, profile):
         return None
 
-    text = line.text.strip()
     if not text or len(text) > 160:
         return None
     if _CLAUSE_LABEL.match(text):
@@ -124,6 +159,27 @@ def build(
     under, as content, exactly as before.
     """
     skip_pages = skip_pages or set()
+
+    # Decided before the walk, because it needs the whole document: does this
+    # document set its numbered headings in bold? If every one of them is, an
+    # unnumbered "heading" that is not bold is something else set large — on
+    # one blueprint, the labels of embedded spreadsheets, at 18pt regular, each
+    # of which opened a section and pulled the server inventory under it.
+    candidates = [
+        None
+        if line.page in skip_pages or _in_region(line, not_headings)
+        else _classify(line, profile)
+        for line in lines
+    ]
+    numbered = [
+        lines[i]
+        for i, found in enumerate(candidates)
+        if found and found[0] and found[0][0].isdigit()
+    ]
+    bold_document = len(numbered) >= _MIN_NUMBERED and sum(
+        1 for line in numbered if line.sig[2]
+    ) >= 0.9 * len(numbered)
+
     sections: list[Section] = []
     stack: list[tuple[int, str]] = []  # (depth, title) for the heading path
     current: Section | None = None
@@ -131,11 +187,13 @@ def build(
     # Depth of the most recent numbered heading, or None before the first one.
     anchor: int | None = None
 
-    for line in lines:
+    for index, line in enumerate(lines):
         if line.page in skip_pages:
             continue
 
-        heading = None if _in_region(line, not_headings) else _classify(line, profile)
+        heading = candidates[index]
+        if heading is not None and heading[0] is None and bold_document and not line.sig[2]:
+            heading = None
         if heading is None:
             if current is not None:
                 current.lines.append(line)
@@ -173,6 +231,7 @@ def build(
             heading_path=path,
             page_start=line.page,
             page_end=line.page,
+            y_start=line.y,
         )
         sections.append(current)
 
@@ -288,6 +347,7 @@ def from_outline(
             heading_path=" › ".join([document_title, *(t for _, t in stack)]),
             page_start=line.page,
             page_end=line.page,
+            y_start=line.y,
         )
         sections.append(current)
         owner[index] = len(sections) - 1

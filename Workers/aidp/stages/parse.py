@@ -29,6 +29,8 @@ the handoff to chunking, so a crash leaves no half-parsed document behind.
 
 from __future__ import annotations
 
+import re
+
 import fitz
 from psycopg.types.json import Jsonb
 
@@ -216,10 +218,12 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
                 out.sections,
                 all_tables,
                 table_regions,
-                table_section=lambda table: _section_for_page(out.sections, table.page_start),
+                table_section=lambda table: _section_for_page(
+                out.sections, table.page_start, table.bbox[1]
+            ),
             )
             if not _read_rules(out, document, source, heartbeat):
-                _flag_missed_obligations(out)
+                _flag_missed_obligations(out, document)
             _flag_no_clauses(out, document)
             return out
 
@@ -245,22 +249,17 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     # figure exclusion, which placed every continuation page's table where the
     # first page's had been.
     exclude = table_regions
+    doubtful: list[tuple[int, tables.Table]] = []
     for table in all_tables:
-        index = _section_for_page(out.sections, table.page_start)
+        index = _section_for_page(out.sections, table.page_start, table.bbox[1])
         out.tables.setdefault(index, []).append(table)
         if table.confidence < tables.LOW_CONFIDENCE:
-            out.issue(
-                "medium",
-                "table_low_confidence",
-                f"Table on page {table.page_start} extracted at "
-                f"{table.confidence:.0%} confidence — headers or cells may be wrong.",
-                page=table.page_start,
-                ref=out.sections[index].heading_path if index < len(out.sections) else None,
-            )
+            doubtful.append((index, table))
+    _flag_doubtful_tables(out, doubtful, len(all_tables))
     heartbeat()
 
     for figure in figure_parser.extract(doc, exclude):
-        index = _section_for_page(out.sections, figure.page)
+        index = _section_for_page(out.sections, figure.page, figure.bbox[1])
         out.figures.setdefault(index, []).append(figure)
     heartbeat()
 
@@ -287,11 +286,13 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         out.sections,
         all_tables,
         table_regions,
-        table_section=lambda table: _section_for_page(out.sections, table.page_start),
+        table_section=lambda table: _section_for_page(
+                out.sections, table.page_start, table.bbox[1]
+            ),
     )
     if not _read_rules(out, document, source, heartbeat):
-        _flag_inferred_clauses(out, inferred)
-        _flag_missed_obligations(out)
+        _flag_inferred_clauses(out, inferred, document)
+        _flag_missed_obligations(out, document)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
     # The cover and the contents pages are skipped on purpose — the contents
@@ -571,8 +572,8 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
         )
 
     if not _read_rules(out, document, rules.word_source(read, owner), heartbeat):
-        _flag_inferred_clauses(out, inferred)
-        _flag_missed_obligations(out)
+        _flag_inferred_clauses(out, inferred, document)
+        _flag_missed_obligations(out, document)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
     # A standard opens with a cover — organisation, title, document code,
@@ -643,7 +644,7 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     heartbeat()
 
     for figure in deck.figures:
-        index = _section_for_page(out.sections, figure.page)
+        index = _section_for_page(out.sections, figure.page, figure.bbox[1])
         out.figures.setdefault(index, []).append(figure)
 
     if deck.undecodable_images:
@@ -655,7 +656,7 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
             "are not indexed. Re-save them as PNG in the deck to include them.",
         )
 
-    _flag_missed_obligations(out)
+    _flag_missed_obligations(out, document)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
     # Kept for a whole-document assessment, which reads every slide as it is.
@@ -777,7 +778,7 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
     heartbeat()
 
     for table in book.tables:
-        index = _section_for_page(out.sections, table.page_start)
+        index = _section_for_page(out.sections, table.page_start, table.bbox[1])
         out.tables.setdefault(index, []).append(table)
 
     if book.truncated:
@@ -790,14 +791,16 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
             "submit the part that carries the requirements.",
         )
 
-    _flag_missed_obligations(out)
+    _flag_missed_obligations(out, document)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
     # Kept for a whole-document assessment: every sheet's lines, then its grids.
     out.source_lines = rules.workbook_source(
         book,
         out.sections,
-        table_section=lambda table: _section_for_page(out.sections, table.page_start),
+        table_section=lambda table: _section_for_page(
+                out.sections, table.page_start, table.bbox[1]
+            ),
     ) or None
     _flag_content_loss(out, book.lines)
     return out
@@ -842,15 +845,65 @@ def _cover_title(lines: list, profile: spans.FontProfile) -> str | None:
     return title if 3 < len(title) <= 160 else None
 
 
-def _section_for_page(section_list: list, page: int) -> int:
-    """Index of the section a page-anchored artefact belongs to."""
+def _section_for_page(section_list: list, page: int, y: float | None = None) -> int:
+    """Index of the section a page-anchored artefact belongs to.
+
+    With `y`, an artefact goes to the last heading *above* it rather than the
+    last heading on its page. Several sections often open on one page, and the
+    page alone sent every table and diagram on it to the last of them: on one
+    blueprint the conceptual data model's diagram was filed under the section
+    after it, which left its own section reported as empty, and the table under
+    "Reporting" landed two sections further down. A section with no recorded
+    position reads as the top of its page — what page-only matching assumed.
+    """
     index = 0
     for i, section in enumerate(section_list):
-        if section.page_start <= page:
+        if y is None:
+            above = section.page_start <= page
+        else:
+            above = (section.page_start, getattr(section, "y_start", 0.0)) <= (page, y)
+        if above:
             index = i
         else:
             break
     return index
+
+
+# Prose longer than this is substance, whatever it says.
+_SUBSTANTIVE_PROSE = 200
+# Shorter than this it is a label or an echo of the heading, never the content.
+_SHORT_PROSE = 60
+# Text a template leaves for its author to replace.
+_PLACEHOLDER_TEXT = re.compile(
+    r"\b(?:TBD|TBC|N/A)\b"
+    r"|\bto be (?:confirmed|determined|decided|agreed|received|provided)\b"
+    r"|\btype here\b",
+    re.IGNORECASE,
+)
+_SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
+
+
+def _substantive(text: str) -> bool:
+    """Whether a section's own prose is enough to count as content.
+
+    Length alone was wrong both ways. Two complete sentences on availability
+    zones — 166 characters — were reported as an empty, incomplete section,
+    while a template's column titles strung together passed for prose once they
+    ran long enough. Between a label and a paragraph, prose counts when it reads
+    as sentences, is not a placeholder like "Details - TBD", and does more than
+    point at an attached file (which is reported on its own; see
+    `_attachment_label`).
+    """
+    text = text.strip()
+    if len(text) > _SUBSTANTIVE_PROSE:
+        return True
+    if len(text) < _SHORT_PROSE:
+        return False
+    return bool(
+        _SENTENCE_END.search(text)
+        and not _PLACEHOLDER_TEXT.search(text)
+        and not _ATTACHMENT.search(text.replace("\n", ""))
+    )
 
 
 def _empty_sections(out: _Result) -> set[int]:
@@ -873,7 +926,7 @@ def _empty_sections(out: _Result) -> set[int]:
             out.clauses.get(index)
             or out.tables.get(index)
             or out.figures.get(index)
-            or len(section.text) > 200
+            or _substantive(section.text)
         )
         if not has_content:
             empty.add(index)
@@ -904,7 +957,9 @@ def _flag_no_clauses(out: _Result, document: dict) -> None:
     )
 
 
-def _flag_inferred_clauses(out: _Result, inferred: set[int]) -> None:
+def _flag_inferred_clauses(
+    out: _Result, inferred: set[int], document: dict | None = None
+) -> None:
     """Say when a clause was read out of unlabelled prose rather than parsed.
 
     These are correct often enough to be worth having — the alternative is not
@@ -912,6 +967,9 @@ def _flag_inferred_clauses(out: _Result, inferred: set[int]) -> None:
     how much to trust a finding deserves to know which kind of clause it came
     from. Medium, not high: the content is present and being assessed.
     """
+    # As `_flag_missed_obligations`: a design's clauses are never queries.
+    if document is not None and document.get("role") != "reference":
+        return
     for index in sorted(inferred):
         section = out.sections[index]
         out.issue(
@@ -925,7 +983,44 @@ def _flag_inferred_clauses(out: _Result, inferred: set[int]) -> None:
         )
 
 
-def _flag_missed_obligations(out: _Result) -> None:
+# More doubtful tables than this and they are reported as one finding. A
+# reviewer handed 125 near-identical warnings reads none of them, and the few
+# that matter are the ones lost among the rest.
+_DOUBTFUL_TABLES_LISTED = 5
+
+# A contents page off by no more than this everywhere is stale, not wrong.
+_STALE_TOC_PAGES = 3
+
+
+def _flag_doubtful_tables(out: _Result, doubtful: list, total: int) -> None:
+    """Say which tables may bind values to the wrong column headers."""
+    if not doubtful:
+        return
+    if len(doubtful) <= _DOUBTFUL_TABLES_LISTED:
+        for index, table in doubtful:
+            out.issue(
+                "medium",
+                "table_low_confidence",
+                f"Table on page {table.page_start} extracted at "
+                f"{table.confidence:.0%} confidence — headers or cells may be wrong.",
+                page=table.page_start,
+                ref=out.sections[index].heading_path if index < len(out.sections) else None,
+            )
+        return
+    pages = sorted({table.page_start for _, table in doubtful})
+    shown = ", ".join(str(p) for p in pages[:12]) + ("…" if len(pages) > 12 else "")
+    out.issue(
+        "medium",
+        "table_low_confidence",
+        f"{len(doubtful)} of {total} tables were extracted with low confidence, on pages "
+        f"{shown}. Their rows may bind values to the wrong column headers. Their text is "
+        "still indexed with its section, so nothing is missing, but a finding that quotes "
+        "one of these rows is worth checking against the page.",
+        page=pages[0],
+    )
+
+
+def _flag_missed_obligations(out: _Result, document: dict | None = None) -> None:
     """A section that states a rule and yielded no clause is the worst case.
 
     It is not a wrong answer a reviewer can catch — the clause is simply never
@@ -933,6 +1028,12 @@ def _flag_missed_obligations(out: _Result) -> None:
     appears. `_flag_empty_sections` cannot catch it: the section is full of
     prose, so it does not look empty. This exists so the gap is visible.
     """
+    # Only a standard's rules are fired at anything. A design's clauses are never
+    # a query, so "nothing in this section will be assessed" is not true of a
+    # design, and raising it there — as often as not on a template's own
+    # instructions to its author — is noise at the highest severity.
+    if document is not None and document.get("role") != "reference":
+        return
     for index, section in enumerate(out.sections):
         if section.is_structural or out.clauses.get(index):
             continue
@@ -948,6 +1049,30 @@ def _flag_missed_obligations(out: _Result) -> None:
             )
 
 
+# A file name in a section that says little else: its content was embedded as an
+# attachment, which a PDF export carries only as an icon with a label.
+_ATTACHMENT = re.compile(
+    r"\S+\.(?:xlsx|xlsm|xls|csv|docx|doc|pdf|pptx|vsdx|vsd|msg|zip)\b", re.IGNORECASE
+)
+
+
+def _attachment_label(section) -> str | None:
+    """The embedded file a section points to, as the reader would see it named.
+
+    Word wraps a long file name under its icon, so the name arrives split across
+    lines with no space at the break — "Emerald_Servers_Mas" then "ter (Ample
+    Only).xlsx". A preceding fragment with no spaces in it is joined back on.
+    """
+    texts = [line.text.strip() for line in section.lines if line.text.strip()]
+    for i, text in enumerate(texts):
+        if _ATTACHMENT.search(text):
+            before = texts[i - 1] if i else ""
+            if before and " " not in before and not before.endswith((".", ":", ";")):
+                return (before + text)[:120]
+            return text[:120]
+    return None
+
+
 def _flag_empty_sections(out: _Result) -> None:
     """A section with nothing under it is reported, never silently dropped.
 
@@ -958,6 +1083,22 @@ def _flag_empty_sections(out: _Result) -> None:
     """
     for index in sorted(_empty_sections(out)):
         section = out.sections[index]
+        # Not incomplete: the substance is in a file the export could not carry.
+        # Saying "the source appears incomplete" sends someone to fix the
+        # document; this sends them to the attachment.
+        attachment = _attachment_label(section)
+        if attachment:
+            out.issue(
+                "medium",
+                "section_attachment",
+                f"Section '{section.title}' points to an embedded attachment "
+                f"({attachment}) and says little else. A PDF carries an attachment "
+                "only as an icon, so its contents are not indexed and cannot be "
+                "assessed. If they matter, put them in the document itself.",
+                page=section.page_start,
+                ref=section.heading_path,
+            )
+            continue
         out.issue(
             "high",
             "section_empty",
@@ -990,13 +1131,30 @@ def _reconcile(out: _Result, entries: list) -> None:
             page=entry.page,
             ref=entry.number,
         )
-    for title, expected, found in report.page_drift:
+    drift = list(report.page_drift)
+    # A contents page nobody refreshed after the last edit points its later
+    # entries a page or two away. That is a fact about the file rather than the
+    # parse — every section was still matched by its title — so it is said once,
+    # quietly, instead of once per entry.
+    if drift and all(abs(found - expected) <= _STALE_TOC_PAGES for _, expected, found in drift):
+        furthest = max(abs(found - expected) for _, expected, found in drift)
+        sample = ", ".join(f"'{t}' ({e} → {f})" for t, e, f in drift[:3])
         out.issue(
-            "medium",
+            "low",
             "toc_mismatch",
-            f"'{title}' is listed on page {expected} but was parsed at page {found}.",
-            page=expected,
+            f"The table of contents looks out of date: {len(drift)} entries point up to "
+            f"{furthest} page(s) from where their sections now start — {sample}. "
+            "Sections were matched by title, so nothing was missed.",
+            page=drift[0][1],
         )
+    else:
+        for title, expected, found in drift:
+            out.issue(
+                "medium",
+                "toc_mismatch",
+                f"'{title}' is listed on page {expected} but was parsed at page {found}.",
+                page=expected,
+            )
     logs.info(
         log,
         "reconciled against table of contents",
