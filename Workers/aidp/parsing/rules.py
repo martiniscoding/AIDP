@@ -265,6 +265,88 @@ def word_source(doc, owner: list[int]) -> list[SourceLine]:
     return out.lines
 
 
+def _owners(lines: list[Line], section_list: list[Section]) -> tuple[dict[int, int], list[int]]:
+    """Which section each line falls in, by index.
+
+    A heading is not among its own section's lines, and neither is a cover or
+    contents line. Each takes the section of the next line that has one — a
+    heading introduces what follows it — and anything after the last owned line
+    stays with the section before it. Returns the owned lines by identity as
+    well, which is how a caller tells a heading from body text.
+    """
+    owner: dict[int, int] = {}
+    for index, section in enumerate(section_list):
+        for line in section.lines:
+            owner[id(line)] = index
+
+    section_of: list[int | None] = [owner.get(id(line)) for line in lines]
+    following: int | None = None
+    for i in range(len(lines) - 1, -1, -1):
+        if section_of[i] is None:
+            section_of[i] = following
+        else:
+            following = section_of[i]
+    preceding = 0
+    for i, value in enumerate(section_of):
+        if value is None:
+            section_of[i] = preceding
+        else:
+            preceding = value
+    return owner, [value or 0 for value in section_of]
+
+
+def deck_source(deck, section_list: list[Section]) -> list[SourceLine]:
+    """Source lines for a .pptx — every line of every slide, the slide as page.
+
+    `slides.py` already tags each line with what the file said it was: a slide
+    title reads as a heading, a table row (already `a | b | c`) as a row, and
+    everything else — bullets, notes, chart data, shape text — as text.
+    """
+    _, section_of = _owners(deck.lines, section_list)
+    out = _Builder()
+    for index, line in enumerate(deck.lines):
+        hint = str(deck.hints.get(index, ""))
+        if hint == "title":
+            kind = "heading"
+        elif hint.startswith("table"):
+            kind = "table_row"
+        else:
+            kind = "text"
+        out.text(line.text, kind=kind, page=line.page, section=section_of[index])
+    return out.lines
+
+
+def workbook_source(
+    book, section_list: list[Section], *, table_section: Callable[[Table], int]
+) -> list[SourceLine]:
+    """Source lines for a .xlsx — each sheet's loose lines, then its tables.
+
+    A sheet is the page. Within one, the prose around the grids comes first and
+    the grids after it, rows bound to their headers exactly as a PDF table's are.
+    """
+    _, section_of = _owners(book.lines, section_list)
+    by_sheet: dict[int, list[int]] = {}
+    for index, line in enumerate(book.lines):
+        by_sheet.setdefault(line.page, []).append(index)
+    tables_by_sheet: dict[int, list[Table]] = {}
+    for table in book.tables:
+        tables_by_sheet.setdefault(table.page_start, []).append(table)
+
+    out = _Builder()
+    for sheet in sorted(set(by_sheet) | set(tables_by_sheet)):
+        for index in by_sheet.get(sheet, []):
+            hint = str(book.hints.get(index, ""))
+            out.text(
+                book.lines[index].text,
+                kind="heading" if hint in ("sheet", "title") else "text",
+                page=sheet,
+                section=section_of[index],
+            )
+        for table in tables_by_sheet.get(sheet, []):
+            out.table(table, section=table_section(table))
+    return out.lines
+
+
 def pdf_source(
     lines: list[Line],
     section_list: list[Section],
@@ -282,27 +364,7 @@ def pdf_source(
     keeps its raw lines instead — duplicated text costs tokens, while a table
     missing from both forms would cost a rule.
     """
-    owner: dict[int, int] = {}
-    for index, section in enumerate(section_list):
-        for line in section.lines:
-            owner[id(line)] = index
-
-    # A heading is not among its own section's lines, and neither is a cover
-    # or contents line. Each takes the section of the next line that has one:
-    # a heading introduces what follows it.
-    section_of: list[int | None] = [owner.get(id(line)) for line in lines]
-    following: int | None = None
-    for i in range(len(lines) - 1, -1, -1):
-        if section_of[i] is None:
-            section_of[i] = following
-        else:
-            following = section_of[i]
-    preceding = 0
-    for i, value in enumerate(section_of):
-        if value is None:
-            section_of[i] = preceding
-        else:
-            preceding = value
+    owner, section_of = _owners(lines, section_list)
 
     # By title alone: a section stores "Governance Standards" for a line printed
     # "2. Governance Standards", and only lines no section claims are candidates.
@@ -1012,24 +1074,6 @@ def stats(source: list[SourceLine], reading: Reading, clauses: dict[int, list[Cl
         "numbersChecked": reading.checked,
         "numbersInvalid": reading.invalid,
     }
-
-
-def summary(source: list[SourceLine], reading: Reading, clauses: dict[int, list[Clause]]) -> str:
-    figures = stats(source, reading, clauses)
-    set_aside = ", ".join(
-        f"{LABEL_WORDS[label]} ({count})"
-        for label, count in figures["labelledLines"].items()
-        if count
-    )
-    return (
-        f"This standard's rules were read by a model and checked line by line against "
-        f"the source: {figures['rules']} rules carrying {figures['requirements']} "
-        f"requirements, with {figures['covered']} of {figures['lines']} lines accounted "
-        f"for. "
-        + (f"Set aside as not rules, each with a stated reason: {set_aside}. " if set_aside else "")
-        + "Every word of every rule is the document's own. Confirm the rules before "
-        "assessing anything against them."
-    )
 
 
 def review(

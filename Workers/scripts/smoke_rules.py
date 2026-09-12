@@ -534,8 +534,8 @@ kinds = {issue["kind"]: issue for issue in out.issues}
 ok("a reading that holds up replaces the parser's clauses",
    out.clauses and all(c.origin == "model" for g in out.clauses.values() for c in g),
    {i: [c.origin for c in g] for i, g in out.clauses.items()})
-ok("and puts them behind the confirmation gate", out.structure_inferred is True)
-ok("and says what it did", "rules_by_model" in kinds, list(kinds))
+ok("and records that a model read them", out.structure_inferred is True)
+ok("without a notice saying so on every upload", "rules_by_model" not in kinds, list(kinds))
 ok("the parser's own guesses are not reported over it",
    "clause_not_extracted" not in kinds and "clause_inferred" not in kinds, list(kinds))
 ok("source lines and readings kept for storage",
@@ -548,7 +548,7 @@ out = parse._parse_word(raw, reference, lambda: None)
 kinds = {issue["kind"]: issue for issue in out.issues}
 ok("a reading that fails keeps the parser's clauses",
    out.clauses and all(c.origin == "parser" for g in out.clauses.values() for c in g))
-ok("and is reported high, and nothing is gated on it",
+ok("and is reported high, and not recorded as model-read",
    kinds.get("rules_model_failed", {}).get("severity") == "high"
    and out.structure_inferred is False, list(kinds))
 
@@ -565,8 +565,8 @@ ok("and the reading is recorded as not adopted",
 
 script = install(Script(good_reply(source)))
 out = parse._parse_word(raw, {"title": "Design", "role": "assessed"}, lambda: None)
-ok("a submitted design is never read for rules",
-   not script.calls and out.source_lines is None
+ok("a submitted design is never read for rules, but its lines are kept to be read whole",
+   not script.calls and out.source_lines is not None and out.rule_outcome is None
    and all(c.origin == "parser" for g in out.clauses.values() for c in g))
 
 script = install(Script(good_reply(source)))
@@ -574,7 +574,7 @@ parse._rules_schema = lambda: False
 out = parse._parse_word(raw, reference, lambda: None)
 kinds = {issue["kind"] for issue in out.issues}
 ok("an unmigrated database falls back to the parser and says how to fix it",
-   not script.calls and "rules_schema_missing" in kinds and out.source_lines is None, kinds)
+   not script.calls and "rules_schema_missing" in kinds and out.rule_outcome is None, kinds)
 
 
 # ---------------------------------------------------------------------------

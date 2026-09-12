@@ -21,10 +21,13 @@ gap into production.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+
 from psycopg.types.json import Jsonb
 
-from .. import db, decisions, logs, queue, retrieval
+from .. import db, decisions, logs, queue, retrieval, usage, whole_document
 from ..ai import llm
+from ..config import get_config
 from ..queue import Job
 from . import embed as embed_stage
 
@@ -99,24 +102,41 @@ def handle(job: Job, heartbeat) -> None:
     if healed:
         logs.info(log, "embedded missing chunks before assessing", runId=run_id, chunks=healed)
 
+    mode, note, whole = _resolve_mode(run)
+
     pending = [c for c in clauses if c["id"] not in done]
-    _start(run_id, total=len(clauses), completed=len(done), model=llm.model_name()[1])
+    _start(
+        run_id,
+        total=len(clauses),
+        completed=len(done),
+        model=llm.model_name()[1],
+        mode=mode,
+        note=note,
+    )
     logs.info(
         log,
         "assessment started",
         runId=run_id,
+        mode=mode,
         clauses=len(clauses),
         resuming=len(done),
         pending=len(pending),
     )
+    if note:
+        logs.warn(log, "whole-document assessment fell back to search", runId=run_id, reason=note)
 
-    if document_context:
+    if whole is not None:
+        logs.info(log, "reading the whole document", runId=run_id, tokens=whole.tokens)
+    elif document_context:
         logs.info(log, "submission context in scope", runId=run_id, chars=len(document_context))
     else:
         logs.warn(log, "no submission summary — verdicts reached without document context")
 
     for index, clause in enumerate(pending, start=1):
-        _assess_one(run, clause, document_context)
+        if whole is not None:
+            _assess_document_one(run, clause, whole, document_context)
+        else:
+            _assess_one(run, clause, document_context)
         heartbeat()
         # Every clause, not every fifth. A clause takes around fifteen seconds,
         # so batching the write held the progress bar still for over a minute at
@@ -125,6 +145,18 @@ def handle(job: Job, heartbeat) -> None:
         # UPDATE per clause against a row already in cache, spaced fifteen
         # seconds apart; the model call beside it dwarfs it.
         _progress(run_id, len(done) + index)
+
+    # "Compare both": this run is done, and the other mode's run is opened in
+    # the same transaction and carried on by this same job. See
+    # `_complete_and_follow` for why they cannot both be queued up front.
+    follow = job.payload.get("then")
+    if follow in MODES:
+        next_id = _complete_and_follow(job, run, len(clauses), follow)
+        attribution = usage.current()
+        if attribution is not None:
+            usage.bind(replace(attribution, run_id=next_id))
+        handle(replace(job, payload={"runId": next_id}), heartbeat)
+        return
 
     _complete(job, run_id)
 
@@ -154,18 +186,88 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
     )
 
 
+@dataclass
+class _Judged:
+    """A verdict after its guards, not yet written."""
+
+    verdict: str
+    confidence: float
+    rationale: str
+    evidence: list[dict]
+    applied: list[dict]
+    best: float
+
+
 def _assess_one(run: dict, clause: dict, document: str = "") -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
     )
-    reference = f"{clause['documentTitle']} — {clause['headingPath']}"
 
     # One embedding for the clause, shared by both lookups below. They search
     # different tables with the same question, and paying for it twice would
     # double the embedding bill of every run.
     vector = retrieval.embed_query(query)
+    precedents = _precedents(run, clause, query, vector)
+    judged = _judge_by_search(
+        run, clause, query=query, vector=vector, precedents=precedents, document=document
+    )
+    _write(
+        run["id"],
+        clause,
+        verdict=judged.verdict,
+        confidence=judged.confidence,
+        rationale=judged.rationale,
+        evidence=judged.evidence,
+        retrieval_score=judged.best,
+        applied=judged.applied,
+    )
 
+
+def _precedents(run: dict, clause: dict, query: str, vector: str) -> list:
+    """What this organisation has already settled about this clause."""
+    with db.connection() as conn:
+        return decisions.for_clause(
+            conn,
+            organisation_id=run["organisationId"],
+            clause_ref=str(clause["numberText"] or clause["headingPath"] or ""),
+            query=query,
+            limit=PRECEDENTS,
+            vector=vector,
+        )
+
+
+def _applied(precedents: list, claimed: list[str]) -> tuple[list[dict], list[str]]:
+    """(decisions the model applied that it was given, ids it invented).
+
+    Only decisions that were actually in the prompt count. A model naming an id
+    it was never given has invented a precedent, which is worse than having
+    none: a fabricated policy citation in a compliance report.
+    """
+    offered = {d.id: d for d in precedents}
+    applied = [
+        {"id": d.id, "title": d.title, "effect": d.effect}
+        for cid in claimed
+        if (d := offered.get(cid))
+    ]
+    return applied, [cid for cid in claimed if cid not in offered]
+
+
+def _judge_by_search(
+    run: dict,
+    clause: dict,
+    *,
+    query: str,
+    vector: str,
+    precedents: list,
+    document: str = "",
+) -> _Judged:
+    """The passages a search finds for the clause, judged and guarded.
+
+    The whole of a retrieval-mode assessment, and the second opinion a
+    whole-document assessment asks for before it will call anything absent.
+    """
+    reference = f"{clause['documentTitle']} — {clause['headingPath']}"
     with db.connection() as conn:
         candidates = retrieval.search_document(
             conn,
@@ -175,34 +277,16 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
             limit=CANDIDATES,
             vector=vector,
         )
-        # What this organisation has already settled about this clause. Looked
-        # up in the same connection as the passages, because a run that can
-        # read one and not the other would silently drop the memory.
-        precedents = decisions.for_clause(
-            conn,
-            organisation_id=run["organisationId"],
-            clause_ref=str(clause["numberText"] or clause["headingPath"] or ""),
-            query=query,
-            limit=PRECEDENTS,
-            vector=vector,
-        )
 
     best = candidates[0].score if candidates else 0.0
 
     if not candidates:
         # Nothing in the submitted document at all. Only reachable when it has
         # no chunks, which the caller should have prevented.
-        _write(
-            run["id"],
-            clause,
-            verdict="needs_review",
-            confidence=0.0,
-            rationale="No content was retrieved from the submitted document.",
-            evidence=[],
-            retrieval_score=0.0,
-            applied=[],
+        return _Judged(
+            "needs_review", 0.0, "No content was retrieved from the submitted document.",
+            [], [], 0.0,
         )
-        return
 
     try:
         raw = llm.judge(
@@ -214,17 +298,14 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
         )
     except Exception as exc:  # noqa: BLE001 — one clause must not sink the run
         logs.warn(log, "judge failed for clause", clauseId=clause["id"], error=str(exc)[:200])
-        _write(
-            run["id"],
-            clause,
-            verdict="needs_review",
-            confidence=0.0,
-            rationale=f"The model could not be reached for this clause: {str(exc)[:160]}",
-            evidence=[],
-            retrieval_score=best,
-            applied=[],
+        return _Judged(
+            "needs_review",
+            0.0,
+            f"The model could not be reached for this clause: {str(exc)[:160]}",
+            [],
+            [],
+            best,
         )
-        return
 
     verdict, confidence, rationale, cited, claimed = _normalise(raw)
     by_id = {c.chunk_id: c for c in candidates}
@@ -245,16 +326,7 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
         if (c := by_id.get(cid))
     ]
 
-    # Only decisions that were actually in the prompt count. A model naming an
-    # id it was never given has invented a precedent, which is worse than
-    # having none: a fabricated policy citation in a compliance report.
-    offered = {d.id: d for d in precedents}
-    applied = [
-        {"id": d.id, "title": d.title, "effect": d.effect}
-        for cid in claimed
-        if (d := offered.get(cid))
-    ]
-    fabricated = [cid for cid in claimed if cid not in offered]
+    applied, fabricated = _applied(precedents, claimed)
 
     verdict, rationale = _guard(
         verdict, confidence, evidence, best, rationale, cited_generated=set(cited) & generated,
@@ -262,6 +334,127 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
         fabricated=fabricated,
         conflicted=decisions.conflicting(precedents),
     )
+    return _Judged(verdict, confidence, rationale, evidence, applied, best)
+
+
+# ---------------------------------------------------------------------------
+# Whole-document mode
+# ---------------------------------------------------------------------------
+
+MODES = ("retrieval", "document")
+
+# Quotes checked per verdict. A reply quoting more than this is padding, and
+# every quote is a search through the whole document.
+MAX_QUOTES = 8
+
+
+def _resolve_mode(run: dict) -> tuple[str, str | None, whole_document.WholeDocument | None]:
+    """(mode this run can use, why it is not the one asked for, the document).
+
+    A whole-document run that cannot read the whole document says so and falls
+    back to search rather than failing — a report by the older method is worth
+    more than none, as long as nobody mistakes which method produced it.
+    """
+    if (run.get("mode") or "retrieval") != "document":
+        return "retrieval", None, None
+    with db.connection() as conn:
+        row = db.one(conn, 'SELECT "title" FROM "document" WHERE "id" = %s', (run["documentId"],))
+        whole = whole_document.load(conn, run["documentId"], (row or {}).get("title") or "")
+    if whole is None:
+        return (
+            "retrieval",
+            "Assessed by search, not by reading the whole document: this document was "
+            "processed before its pages were stored. Reprocess it, then run the "
+            "whole-document assessment again.",
+            None,
+        )
+    limit = get_config().whole_document_max_tokens
+    if whole.tokens > limit:
+        return (
+            "retrieval",
+            f"Assessed by search, not by reading the whole document: it is about "
+            f"{whole.tokens:,} tokens, more than the {limit:,} a whole-document "
+            "assessment reads at once.",
+            None,
+        )
+    return "document", None, whole
+
+
+def _assess_document_one(
+    run: dict,
+    clause: dict,
+    whole: whole_document.WholeDocument,
+    document_context: str = "",
+) -> None:
+    """Read the whole document, judge, check every quote, commit — one clause.
+
+    Search is not gone from this path; it changes job. It no longer decides what
+    the judge sees. It is the second opinion on "absent", the one verdict a
+    reading of the whole document can still get wrong without quoting anything.
+    That second opinion is given the document summary exactly as a search-mode
+    run is, so the two modes' search verdicts on a clause are the same question.
+    """
+    query = retrieval.clause_query(
+        clause["statement"], clause["requirements"] or [], clause["title"]
+    )
+    reference = f"{clause['documentTitle']} — {clause['headingPath']}"
+    vector = retrieval.embed_query(query)
+    precedents = _precedents(run, clause, query, vector)
+
+    try:
+        raw = llm.judge_document(
+            document=whole.text,
+            reference=reference,
+            clause=_render_clause(clause),
+            precedents=decisions.render(precedents),
+        )
+    except Exception as exc:  # noqa: BLE001 — one clause must not sink the run
+        logs.warn(log, "judge failed for clause", clauseId=clause["id"], error=str(exc)[:200])
+        _write(
+            run["id"],
+            clause,
+            verdict="needs_review",
+            confidence=0.0,
+            rationale=f"The model could not be reached for this clause: {str(exc)[:160]}",
+            evidence=[],
+            retrieval_score=0.0,
+            applied=[],
+        )
+        return
+
+    verdict, confidence, rationale, _, claimed = _normalise(raw)
+    evidence, unverified = _checked_quotes(raw, whole)
+    applied, fabricated = _applied(precedents, claimed)
+    verdict, rationale = _guard_document(
+        verdict,
+        confidence,
+        rationale,
+        evidence=evidence,
+        unverified=unverified,
+        fabricated=fabricated,
+        conflicted=decisions.conflicting(precedents),
+    )
+
+    score = 0.0
+    if verdict == "absent":
+        second = _judge_by_search(
+            run,
+            clause,
+            query=query,
+            vector=vector,
+            precedents=precedents,
+            document=document_context,
+        )
+        score = second.best
+        if second.verdict in CITING_VERDICTS and second.evidence:
+            verdict = "needs_review"
+            rationale = (
+                "Reading the whole document found nothing on this clause, but a search of "
+                f"the same document found passages judged to address it ({second.verdict}: "
+                f"{second.rationale}) One of the two readings missed something — check the "
+                f"passages below. Whole-document reading: {rationale}"
+            )
+            evidence = second.evidence
 
     _write(
         run["id"],
@@ -270,9 +463,178 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
         confidence=confidence,
         rationale=rationale,
         evidence=evidence,
-        retrieval_score=best,
+        retrieval_score=score,
         applied=applied,
     )
+
+
+def _page_number(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _checked_quotes(
+    raw: dict, whole: whole_document.WholeDocument
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """(evidence from verified quotes, [(quote, why not)] for the rest).
+
+    A verified quote is stored in the same shape as a retrieved passage, so a
+    finding renders the same way whichever mode reached it — with the page it
+    was actually found on, which is not always the page the model named.
+    """
+    items = raw.get("evidence") or []
+    if not isinstance(items, list):
+        items = [items]
+    evidence: list[dict] = []
+    unverified: list[tuple[str, str]] = []
+    for item in items[:MAX_QUOTES]:
+        if isinstance(item, dict):
+            quote = " ".join(str(item.get("quote") or "").split())
+            page = _page_number(item.get("page"))
+        else:
+            quote, page = " ".join(str(item or "").split()), None
+        if not quote:
+            continue
+        check = whole.verify(quote, page)
+        if check.verified:
+            pieces = [(quote, check)]
+        else:
+            # A model sometimes joins two real sentences that are not next to
+            # each other into one quote. When every sentence is the document's
+            # own, each is kept as its own piece of evidence — never as one
+            # passage, which would claim they sit together. One invented
+            # sentence refuses the lot.
+            split = [(part, whole.verify(part, page)) for part in whole.sentences(quote)]
+            pieces = split if len(split) > 1 and all(c.verified for _, c in split) else []
+        if not pieces:
+            # Logged in full: the finding keeps only the first words, and a
+            # quote refused wrongly is a verification bug worth finding.
+            logs.warn(
+                log,
+                "quote not found in the document",
+                reason=check.reason,
+                page=page,
+                quote=quote[:600],
+            )
+            unverified.append((quote, check.reason))
+            continue
+        for text, found in pieces:
+            evidence.append(
+                {
+                    "chunkId": f"quote-{len(evidence) + 1}",
+                    "headingPath": "",
+                    "page": found.page,
+                    "excerpt": text[:1500],
+                    "sourceKind": "quote",
+                    "figureId": None,
+                    "claimedPage": page,
+                }
+            )
+    return evidence, unverified
+
+
+def _guard_document(
+    verdict: str,
+    confidence: float,
+    rationale: str,
+    *,
+    evidence: list[dict],
+    unverified: list[tuple[str, str]],
+    fabricated: list[str],
+    conflicted: bool,
+) -> tuple[str, str]:
+    """The same standard of proof as `_guard`, where the proof is a quote.
+
+    A chunk id can only point at a passage the search really returned; a quote
+    can say anything at all. So a quote counts only once it has been found in
+    the document word for word, and a verdict that needs evidence and has none
+    that checks out is not a verdict.
+    """
+    if verdict in CITING_VERDICTS and not evidence:
+        if unverified:
+            quote, reason = unverified[0]
+            return (
+                "needs_review",
+                f"Reported as '{verdict}', but the passage it quoted could not be found in "
+                f"the document ({reason}: “{quote[:140]}”), so the claim could not be "
+                "checked. " + rationale,
+            )
+        return (
+            "needs_review",
+            f"Reported as '{verdict}' but quoted nothing from the document, so the claim "
+            "could not be grounded. " + rationale,
+        )
+
+    # Everything else `_guard` checks applies unchanged. Retrieval strength does
+    # not: nothing was retrieved, so it is passed as strong.
+    verdict, rationale = _guard(
+        verdict,
+        confidence,
+        evidence,
+        1.0,
+        rationale,
+        fabricated=fabricated,
+        conflicted=conflicted,
+    )
+
+    if unverified and evidence and verdict != "needs_review":
+        count = len(unverified)
+        rationale = (
+            f"{rationale} ({count} further quoted passage{'s' if count != 1 else ''} could "
+            f"not be found in the document and {'were' if count != 1 else 'was'} set aside.)"
+        )
+    return verdict, rationale
+
+
+def _complete_and_follow(job: Job, run: dict, total: int, follow: str) -> str:
+    """Finish this run and open its comparison run, in one transaction.
+
+    A document can have only one live run, so the two modes of a comparison
+    cannot both be queued up front. The second is created the moment the first
+    completes, and the job's payload is moved onto it in the same transaction:
+    a worker that dies after this resumes the second run, never the first.
+    """
+    next_id = db.new_id()
+    with db.transaction() as conn:
+        db.execute(
+            conn,
+            """
+            UPDATE "assessment_run"
+               SET "state" = 'complete', "completedClauses" = "totalClauses",
+                   "completedAt" = now()
+             WHERE "id" = %s
+            """,
+            (run["id"],),
+        )
+        db.execute(
+            conn,
+            """
+            INSERT INTO "assessment_run"
+                ("id","organisationId","documentId","frameworkId","state","totalClauses",
+                 "mode","comparedWithId")
+            VALUES (%s,%s,%s,%s,'queued',%s,%s,%s)
+            """,
+            (
+                next_id,
+                run["organisationId"],
+                run["documentId"],
+                run["frameworkId"],
+                total,
+                follow,
+                run["id"],
+            ),
+        )
+        db.execute(
+            conn,
+            'UPDATE "job" SET "payload" = %s, "updatedAt" = now() WHERE "id" = %s',
+            (Jsonb({"runId": next_id}), job.id),
+        )
+    logs.info(log, "assessment complete, comparison run opened", runId=run["id"], next=next_id)
+    return next_id
 
 
 def _guard(
@@ -463,17 +825,28 @@ def _write(
         )
 
 
-def _start(run_id: str, *, total: int, completed: int, model: str) -> None:
+def _start(
+    run_id: str,
+    *,
+    total: int,
+    completed: int,
+    model: str,
+    mode: str = "retrieval",
+    note: str | None = None,
+) -> None:
+    # `mode` is the mode actually used, which a whole-document run that fell
+    # back to search is not — so the results never claim a method that did not
+    # produce them, and `note` says why.
     with db.connection() as conn:
         db.execute(
             conn,
             """
             UPDATE "assessment_run"
                SET "state" = 'running', "totalClauses" = %s, "completedClauses" = %s,
-                   "model" = %s, "failureReason" = NULL
+                   "model" = %s, "failureReason" = NULL, "mode" = %s, "note" = %s
              WHERE "id" = %s
             """,
-            (total, completed, model, run_id),
+            (total, completed, model, mode, note, run_id),
         )
 
 

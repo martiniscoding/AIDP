@@ -52,6 +52,10 @@ export type RunView = {
   frameworkVersion: number;
   model: string | null;
   failureReason: string | null;
+  /** How the judge saw the design: "retrieval" (search) or "document" (read whole). */
+  mode: string;
+  /** Why the run did not use the mode it was asked for, when it did not. */
+  note: string | null;
 } | null;
 
 const TONE: Record<string, string> = {
@@ -60,6 +64,14 @@ const TONE: Record<string, string> = {
   unknown: "border-line bg-card text-ink/72",
   good: "border-royal-mid/30 bg-royal/8 text-royal",
 };
+
+/** The quieter buttons beside "Run assessment". */
+const SECONDARY = [
+  "inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/80 transition-colors",
+  "hover:border-ink/30 hover:text-ink",
+  "disabled:cursor-not-allowed disabled:opacity-55",
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+].join(" ");
 
 /**
  * The assessment surface for a submitted design.
@@ -115,9 +127,9 @@ export function Assessment({
   const folded = lens === "attention" ? counts.covered : 0;
 
 
-  const begin = () =>
+  const begin = (mode: "retrieval" | "document" | "both") =>
     startTransition(async () => {
-      const result = await startAssessment(documentId);
+      const result = await startAssessment(documentId, mode);
       setMessage(result.message);
       router.refresh();
     });
@@ -132,7 +144,8 @@ export function Assessment({
           <p className="mt-1 text-[12.5px] text-ink/64">
             {run
               ? `${run.frameworkName} v${run.frameworkVersion}` +
-                (run.model ? ` · ${run.model}` : "")
+                (run.model ? ` · ${run.model}` : "") +
+                (run.mode === "document" ? " · read the whole document" : " · by search")
               : "Measure this design against every clause in the standards library."}
             {decisionsInForce > 0 && (
               <>
@@ -149,30 +162,53 @@ export function Assessment({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={begin}
-          disabled={pending || inFlight}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors",
-            "border-royal/40 bg-royal-tint text-royal-deep hover:bg-royal/15",
-            "disabled:cursor-not-allowed disabled:opacity-55",
-            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
-          )}
-        >
-          {pending || inFlight ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <Play size={13} />
-          )}
-          {queued
-            ? "Queued…"
-            : assessing
-              ? "Running…"
-              : run
-                ? "Re-run assessment"
-                : "Run assessment"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => begin("retrieval")}
+            disabled={pending || inFlight}
+            title="For each clause, the judge sees the passages a search found."
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors",
+              "border-royal/40 bg-royal-tint text-royal-deep hover:bg-royal/15",
+              "disabled:cursor-not-allowed disabled:opacity-55",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+            )}
+          >
+            {pending || inFlight ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Play size={13} />
+            )}
+            {queued
+              ? "Queued…"
+              : assessing
+                ? "Running…"
+                : run
+                  ? "Re-run assessment"
+                  : "Run assessment"}
+          </button>
+          {/* The whole-document mode is offered beside search rather than in
+              place of it until the comparison has shown which is right. */}
+          <button
+            type="button"
+            onClick={() => begin("document")}
+            disabled={pending || inFlight}
+            title="The judge reads the whole document and quotes it. Every quote is checked word for word against the document."
+            className={cn(SECONDARY)}
+          >
+            Read whole document
+          </button>
+          <button
+            type="button"
+            onClick={() => begin("both")}
+            disabled={pending || inFlight}
+            title="Assess by search, then by reading the whole document, and compare the verdicts clause by clause."
+            className={cn(SECONDARY)}
+          >
+            Compare both
+          </button>
+        </div>
       </div>
 
       {message && <p className="mb-3 text-[12.5px] text-ink/68">{message}</p>}
@@ -180,6 +216,14 @@ export function Assessment({
       {run?.failureReason && (
         <p className="mb-4 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
           {run.failureReason}
+        </p>
+      )}
+
+      {/* A whole-document run that fell back to search says so, so its
+          verdicts are never mistaken for a reading of the whole document. */}
+      {run?.note && (
+        <p className="mb-4 rounded-xl border border-line bg-card px-4 py-3 text-[13px] text-ink/74">
+          {run.note}
         </p>
       )}
 
@@ -524,7 +568,13 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 >
                   <div className="px-3 py-2.5">
                     <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-ink/62">
-                      <span>{item.headingPath}</span>
+                      {/* A quote from a whole-document reading has no heading;
+                          what a reviewer needs to know is that it was checked. */}
+                      <span>
+                        {item.sourceKind === "quote"
+                          ? "Quoted from the document, checked word for word"
+                          : item.headingPath}
+                      </span>
                       {item.page != null && <span>· page {item.page}</span>}
                       {item.figureId && (
                         <span

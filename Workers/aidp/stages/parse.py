@@ -144,8 +144,8 @@ class _Result:
         self.tables: dict[int, list] = {}
         self.figures: dict[int, list] = {}
         self.issues: list[dict] = []
-        # True when a model read the structure. Persisted so the app can gate
-        # assessment on a human confirming it.
+        # True when a model read the structure or the rules. Persisted as a record
+        # of how the document was read; nothing gates on it.
         self.structure_inferred = False
         # A reference standard's numbered source lines and every reading of its
         # rules, for rules.py. None when that did not run — a submitted design,
@@ -210,17 +210,7 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         # runs on a document that would otherwise be worth nothing.
         read = ai_structure.structure(content, document_title=out.title)
         if read.sections:
-            _adopt_structure(
-                out,
-                read,
-                severity="high",
-                detail=(
-                    f"No headings could be detected, so the document's structure was read "
-                    f"by a model rather than parsed: {len(read.sections)} sections and "
-                    f"{sum(len(c) for c in read.clauses.values())} rules. Confirm these "
-                    "before assessing anything against them."
-                ),
-            )
+            _adopt_structure(out, read)
             source = rules.pdf_source(
                 content,
                 out.sections,
@@ -351,6 +341,11 @@ def _read_rules(out: _Result, document: dict, source: list, heartbeat) -> bool:
     Only for reference standards. A submitted design is not a rulebook; it is
     what the rules are assessed against.
     """
+    # Every document's lines are kept, whatever happens below: a standard's
+    # rules are read from them, and a submitted design is read whole from them
+    # at assessment (see aidp/whole_document.py). `_persist` writes them only
+    # when the database has the table.
+    out.source_lines = source or None
     cfg = get_config()
     if document.get("role") != "reference" or not cfg.rules_by_model or not source:
         return False
@@ -421,30 +416,28 @@ def _read_rules(out: _Result, document: dict, source: list, heartbeat) -> bool:
             finding.severity, finding.kind, finding.detail, page=finding.page, ref=finding.ref
         )
     out.clauses = found
-    # The gate the app already has: nothing is assessed against these until an
-    # administrator has looked at them and confirmed.
+    # Recorded, not announced — see `_adopt_structure`. The review findings just
+    # above still say wherever this reading is doubtful.
     out.structure_inferred = True
-    out.issue("medium", "rules_by_model", rules.summary(source, outcome.reading, found))
     return True
 
 
-def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
-    """Take a model-read structure, and say so.
+def _adopt_structure(out: _Result, read) -> None:
+    """Take a model-read structure.
 
-    Shared by both formats because the caveats are identical once the structure
-    exists — only how alarming it is differs. On a PDF this is the last rung
-    after typography failed, and worth stopping a reviewer over. On a deck it is
-    the designed path, and a high-severity flag on every single upload would
-    teach reviewers to skim past the one that means something.
+    Not announced. A model reads the structure of every deck and workbook, and
+    the rules of every standard, so a notice saying so sat on every upload — and
+    a flag that is always there teaches reviewers to skim past the ones that
+    mean something. What is still reported is where the reading went *wrong*:
+    passes that did not complete, lines two readings disagreed about, and text
+    that came before the first heading.
 
-    `structure_inferred` is set either way. It gates assessment on a human
-    confirming the clauses, and clauses a model located are exactly what that
-    gate exists for, however routine the route to them was.
+    `structure_inferred` is still recorded, as a fact about how the document was
+    read. Nothing gates on it any more.
     """
     out.sections = read.sections
     out.clauses = read.clauses
     out.structure_inferred = True
-    out.issue(severity, "structure_inferred", detail)
 
     if read.failed_windows:
         out.issue(
@@ -631,19 +624,7 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
         page_is_a_section=True,
     )
     if read.sections:
-        _adopt_structure(
-            out,
-            read,
-            # Medium, not high: this is how every deck is parsed, so the flag
-            # describes the format rather than a fault in this file.
-            severity="medium",
-            detail=(
-                f"A deck states no clause structure of its own, so this one was read "
-                f"by a model: {len(read.sections)} sections and "
-                f"{sum(len(c) for c in read.clauses.values())} rules across "
-                f"{deck.slide_count} slides. Confirm them before assessing against them."
-            ),
-        )
+        _adopt_structure(out, read)
     else:
         # Either no model is configured or it found nothing to mark. The text is
         # still worth indexing — searchable beats absent — but nothing in it can
@@ -677,6 +658,8 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    # Kept for a whole-document assessment, which reads every slide as it is.
+    out.source_lines = rules.deck_source(deck, out.sections) or None
     _flag_content_loss(out, deck.lines)
     return out
 
@@ -774,19 +757,7 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
 
     read = ai_structure.structure(book.lines, document_title=out.title, hints=book.hints)
     if read.sections:
-        _adopt_structure(
-            out,
-            read,
-            # Medium, not high: this is how every workbook is parsed, so the
-            # flag describes the format rather than a fault in this file.
-            severity="medium",
-            detail=(
-                f"A spreadsheet states no clause structure of its own, so this one was "
-                f"read by a model: {len(read.sections)} sections and "
-                f"{sum(len(c) for c in read.clauses.values())} rules across "
-                f"{book.sheet_count} sheet(s). Confirm them before assessing against them."
-            ),
-        )
+        _adopt_structure(out, read)
     else:
         # Either no model is configured or it found nothing to mark. A
         # requirements matrix is the ordinary case here — every rule is a row,
@@ -822,6 +793,12 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
     _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
+    # Kept for a whole-document assessment: every sheet's lines, then its grids.
+    out.source_lines = rules.workbook_source(
+        book,
+        out.sections,
+        table_section=lambda table: _section_for_page(out.sections, table.page_start),
+    ) or None
     _flag_content_loss(out, book.lines)
     return out
 

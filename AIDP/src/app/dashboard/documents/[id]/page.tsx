@@ -13,9 +13,10 @@ import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
+import { Comparison } from "./Comparison";
+import { compareModes } from "@/lib/ingest/comparison";
 import { Figures, type FigureView } from "./Figures";
 import { Understanding } from "./Understanding";
-import { ConfirmStructure } from "./ConfirmStructure";
 import { SetAside } from "./SetAside";
 import { setAside } from "@/lib/ingest/rules";
 import { Decide, type OutcomeView } from "./Decide";
@@ -56,12 +57,6 @@ export default async function DocumentPage({
     document.role === "assessed" || canManageStandards(membership.role);
 
   const clauses = document.sections.reduce((n, s) => n + s.clauses.length, 0);
-  // Rules a model read line by line, rather than a structure inferred wholesale
-  // because the formatting said nothing. It changes what the confirmation is
-  // asking for, and it is what puts the set-aside lines in front of a reviewer.
-  const readByModel = document.sections.some((s) =>
-    s.clauses.some((c) => c.origin !== "parser"),
-  );
   const setAsideView =
     document.role === "reference" ? await setAside(session.user.id, document.id) : null;
   const tables = document.sections.reduce((n, s) => n + s.tables.length, 0);
@@ -103,8 +98,13 @@ export default async function DocumentPage({
         frameworkVersion: run.framework.version,
         model: run.model,
         failureReason: run.failureReason,
+        mode: run.mode,
+        note: run.note,
       }
     : null;
+
+  // Search and whole-document verdicts side by side, once both have run.
+  const comparison = assessed ? await compareModes(session.user.id, document.id) : null;
 
   // Which of these reviews were already kept as decisions, so the report can
   // say so rather than inviting the same ruling to be recorded twice.
@@ -206,18 +206,6 @@ export default async function DocumentPage({
         assessed={assessed}
       />
 
-      {/* Above the statistics on purpose: the counts below are meaningless
-          until someone has agreed the reading that produced them. */}
-      {document.structureInferred && mayChange && (
-        <ConfirmStructure
-          documentId={document.id}
-          clauseCount={clauses}
-          confirmedAt={document.structureConfirmedAt?.toISOString() ?? null}
-          confirmedBy={document.structureConfirmedBy}
-          readByModel={readByModel}
-        />
-      )}
-
       <dl className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Sections" value={document.sections.length} />
         <Stat label="Clauses" value={clauses} />
@@ -234,6 +222,8 @@ export default async function DocumentPage({
           decisionsInForce={decisionsInForce}
         />
       )}
+
+      {comparison && <Comparison view={comparison} />}
 
       {/* The decision comes after the findings: it is the conclusion drawn from
           them, and offering it above the evidence invites a decision taken

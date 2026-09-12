@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { canManageStandards } from "@/lib/access/roles";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { resolveFramework, unconfirmedStructure } from "@/lib/ingest/assessment";
+import { resolveFramework } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
 import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
 import { isOutcome } from "@/lib/ingest/outcomes-vocabulary";
@@ -162,9 +162,25 @@ export async function reprocessDocument(documentId: string): Promise<ActionResul
  * insert fails and this reports the run already under way rather than starting
  * a second one that would double the model spend.
  */
-export async function startAssessment(documentId: string): Promise<ActionResult> {
+/**
+ * Start an assessment.
+ *
+ * `mode` is how the judge sees the design: "retrieval" shows it the passages a
+ * search found for each clause; "document" has it read the whole document and
+ * quote it, every quote checked; "both" runs one and then the other, so their
+ * verdicts can be compared clause by clause.
+ */
+export async function startAssessment(
+  documentId: string,
+  mode: "retrieval" | "document" | "both" = "retrieval",
+): Promise<ActionResult> {
   try {
     const user = await requireUser();
+
+    // A Server Action is reachable by direct POST, so the mode is untrusted input.
+    if (!["retrieval", "document", "both"].includes(mode)) {
+      return { ok: false, message: "That is not a way this document can be assessed." };
+    }
 
     const document = await prisma.document.findUnique({
       where: { id: documentId },
@@ -177,7 +193,7 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
       },
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
-    const membership = await requireMembership(user.id, document.organisationId);
+    await requireMembership(user.id, document.organisationId);
 
     if (document.role !== "assessed") {
       return {
@@ -193,29 +209,18 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
       };
     }
 
-    // A model-read standard is a proposal until a person confirms it. Blocking
-    // here rather than warning: a report citing clauses nobody has checked is
-    // worse than no report, and this is the last point at which it can be
-    // stopped.
-    const unconfirmed = await unconfirmedStructure(document.organisationId);
-    if (unconfirmed.length > 0) {
-      const names = unconfirmed.map((d) => d.title).join(", ");
-      // Only an administrator can confirm a standard's structure, so telling a
-      // member to go and do it would strand them on an instruction they cannot
-      // follow. Same block either way; different next step.
-      const yours = canManageStandards(membership.role);
-      const remedy = yours
-        ? unconfirmed.length === 1
-          ? "Open it and confirm the rules before assessing against them."
-          : "Confirm them before assessing."
-        : "Ask an administrator of this workspace to confirm the rules before assessing against them.";
-      return {
-        ok: false,
-        message:
-          unconfirmed.length === 1
-            ? `The structure of "${names}" was read by a model and has not been confirmed. ${remedy}`
-            : `${unconfirmed.length} reference standards had their structure read by a model and are not yet confirmed: ${names}. ${remedy}`,
-      };
+    // Reading a design whole needs the page text the parse stage stores. A
+    // document processed before that has none and would only fall back to
+    // search, so say so before anything is queued.
+    if (mode !== "retrieval") {
+      const pages = await prisma.sourceLine.count({ where: { documentId } });
+      if (pages === 0) {
+        return {
+          ok: false,
+          message:
+            "This document was processed before its pages were stored, so it cannot be read whole yet. Reprocess it, then try again.",
+        };
+      }
     }
 
     const framework = await resolveFramework(document.organisationId);
@@ -234,6 +239,9 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
           documentId,
           frameworkId: framework.id,
           totalClauses: framework.clauseCount,
+          // "both" starts with search; the worker opens the whole-document run
+          // when this one completes, since a document can have one live run.
+          mode: mode === "document" ? "document" : "retrieval",
         },
         select: { id: true },
       });
@@ -243,16 +251,22 @@ export async function startAssessment(documentId: string): Promise<ActionResult>
           documentId,
           stage: "analyse",
           correlationId: randomUUID(),
-          payload: { runId: run.id },
+          payload: mode === "both" ? { runId: run.id, then: "document" } : { runId: run.id },
         },
       });
       return run.id;
     });
 
+    const scope = `${framework.clauseCount} clauses from ${framework.name} v${framework.version}`;
     revalidatePath(`/dashboard/documents/${documentId}`);
     return {
       ok: true,
-      message: `Assessing against ${framework.clauseCount} clauses from ${framework.name} v${framework.version}.`,
+      message:
+        mode === "document"
+          ? `Reading the whole document against ${scope}.`
+          : mode === "both"
+            ? `Assessing against ${scope} twice — by search, then by reading the whole document — so the two can be compared.`
+            : `Assessing against ${scope}.`,
       runId,
     };
   } catch (error) {
@@ -343,42 +357,6 @@ export async function setDocumentSummary(
   }
 }
 
-
-export async function confirmStructure(documentId: string): Promise<ActionResult> {
-  try {
-    const user = await requireUser();
-
-    const document = await prisma.document.findUnique({
-      where: { id: documentId },
-      select: { organisationId: true, role: true, title: true, structureInferred: true },
-    });
-    if (!document) return { ok: false, message: "That document no longer exists." };
-    const membership = await requireMembership(user.id, document.organisationId);
-    const refused = guardStandards(membership, document);
-    if (refused) return refused;
-
-    if (!document.structureInferred) {
-      return { ok: false, message: "That document's structure was parsed, not inferred." };
-    }
-
-    await prisma.document.update({
-      where: { id: documentId },
-      data: {
-        structureConfirmedAt: new Date(),
-        structureConfirmedBy: user.name || user.email,
-      },
-    });
-
-    revalidatePath(`/dashboard/documents/${documentId}`);
-    revalidatePath("/dashboard/documents");
-    return { ok: true, message: `Confirmed. "${document.title}" can now be assessed against.` };
-  } catch (error) {
-    if (error instanceof NotAMember || error instanceof NoAccess) {
-      return { ok: false, message: "You do not have access to that document." };
-    }
-    return { ok: false, message: "Could not confirm that structure." };
-  }
-}
 
 class AlreadyRestored extends Error {}
 

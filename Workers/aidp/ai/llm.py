@@ -242,6 +242,9 @@ class LLM(Protocol):
     def read_rules(
         self, *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
     ) -> str: ...
+    def judge_document(
+        self, *, document: str, reference: str, clause: str, precedents: str = ""
+    ) -> dict: ...
 
 
 # Verdict shape, enforced by the API rather than requested in the prompt.
@@ -574,6 +577,114 @@ def _rules_prompt(*, document: str, title: str, first: int, last: int, whole: bo
     )
 
 
+_DOCUMENT_JUDGE_SYSTEM = """\
+You are auditing a submitted design document against an enterprise standard, one \
+clause at a time. The complete design document is below, page by page, exactly as it \
+was read from the file. In a slide deck a page is a slide; in a workbook it is a sheet.
+
+{document}
+
+For each clause you are given, decide whether this design satisfies it, using only the \
+document above.
+
+Choose exactly one verdict:
+- "covered"      - the document addresses every requirement in the clause
+- "partial"      - it addresses the clause but leaves at least one requirement unmet
+- "contradicts"  - it states something the clause forbids, or forbids something the
+                   clause requires
+- "absent"       - nothing in the document addresses this clause
+- "needs_review" - you cannot tell: the document touches the subject but is
+                   ambiguous, or the only support is a figure description
+
+Rules that matter more than being decisive:
+
+1. Evidence is quotations copied exactly, character for character, from the document \
+text above, each with the page it is on. Never paraphrase, never join words from two \
+places into one quote, and never quote a figure description or these instructions. \
+Every quote is checked against the document, and a quote that is not there word for \
+word throws the verdict out.
+2. "covered", "partial" and "contradicts" MUST give at least one quote: the passage \
+that decides it, a full sentence or table row where there is one.
+3. "covered" means every requirement of the clause is met, so give a quote for each \
+one. A requirement with no passage that meets it makes the verdict "partial", and the \
+rationale must name it. A general statement ("data is encrypted") does not meet a \
+specific requirement ("TLS 1.2 or higher"). A wrong "covered" hides a gap from the \
+people relying on this report; when in doubt, it is "partial".
+4. A quote must bear on what the clause requires. A passage about a neighbouring \
+subject is not partial compliance: authentication quoted for an encryption clause, or \
+logging quoted for an access-control clause, meets none of it. If nothing in the \
+document addresses any requirement of the clause itself, the verdict is "absent" or \
+"needs_review", not "partial".
+5. Choose "absent" only when the whole document is silent on what the clause requires. \
+If it discusses that subject but leaves a requirement unmet, that is "partial" or \
+"needs_review", never "absent".
+6. "contradicts" comes first. If the document states that the design does something \
+the clause forbids, or will not do something it requires, the verdict is \
+"contradicts" — even when other requirements are met, and even when the document calls \
+it temporary or agreed.
+6. Judge only what the clause requires. Do not reward the design for good practice the \
+clause does not ask for.
+7. Standing decisions, where any are given, are this organisation's own settled \
+rulings and outrank your general judgement. If one resolves the clause, follow it and \
+list its id in appliedDecisions. Never list an id you were not given. A decision \
+marked "on a related clause" can inform a verdict but cannot settle one on its own.
+8. confidence is your own certainty in the verdict, 0 to 1.
+
+Reply with JSON only, no prose around it:
+{{"verdict": "...", "confidence": 0.0, "rationale": "one or two sentences",
+  "evidence": [{{"quote": "exact words from the document", "page": 12}}],
+  "appliedDecisions": ["decision id", ...]}}"""
+
+_DOCUMENT_JUDGE_CLAUSE = """\
+<standard_clause>
+Reference: {reference}
+{clause}
+</standard_clause>
+{precedents}
+Give your verdict on this clause for the design document."""
+
+_DOCUMENT_VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {
+            "type": "string",
+            "enum": ["covered", "partial", "absent", "contradicts", "needs_review"],
+        },
+        "confidence": {"type": "number"},
+        "rationale": {"type": "string"},
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer", "nullable": True},
+                },
+                "required": ["quote", "page"],
+                "propertyOrdering": ["quote", "page"],
+            },
+        },
+        "appliedDecisions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
+    "propertyOrdering": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
+}
+
+
+def _document_judge_messages(
+    *, document: str, reference: str, clause: str, precedents: str
+) -> tuple[str, str]:
+    """(system, user). The document lives in the system half and nowhere else,
+    so every clause of a run sends an identical prefix — which is what lets a
+    provider's prompt cache charge for the document once rather than per clause."""
+    return (
+        _DOCUMENT_JUDGE_SYSTEM.format(document=document),
+        _DOCUMENT_JUDGE_CLAUSE.format(
+            reference=reference, clause=clause, precedents=_precedent_block(precedents)
+        ),
+    )
+
+
 class GeminiLLM:
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -756,6 +867,22 @@ class GeminiLLM:
         if not text:
             raise RuntimeError("gemini returned no reading of the rules")
         return text
+
+    def judge_document(
+        self, *, document: str, reference: str, clause: str, precedents: str = ""
+    ) -> dict:
+        system, user = _document_judge_messages(
+            document=document, reference=reference, clause=clause, precedents=precedents
+        )
+        text = self._generate(
+            [{"text": user}],
+            system=system,
+            max_tokens=2048,
+            schema=_DOCUMENT_VERDICT_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned an empty verdict")
+        return _parse_json(text)
 
 
 class AnthropicLLM:
@@ -959,6 +1086,29 @@ class AnthropicLLM:
         if not text:
             raise RuntimeError("claude returned no reading of the rules")
         return "{" + text
+
+    def judge_document(
+        self, *, document: str, reference: str, clause: str, precedents: str = ""
+    ) -> dict:
+        system, user = _document_judge_messages(
+            document=document, reference=reference, clause=clause, precedents=precedents
+        )
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": 2048,
+                "temperature": 0,
+                # The document is the same for every clause of a run.
+                "system": [
+                    {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+                ],
+                "messages": [
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
 
 
 def _strict_schema(schema: dict) -> dict:
@@ -1173,7 +1323,9 @@ class OpenRouterLLM:
                     ),
                 }
             ],
-            max_tokens=1024,
+            # As on Gemini. At 1024 a client deck's verdict was cut off mid-reply,
+            # failed to parse, and cost that clause its verdict.
+            max_tokens=2048,
             schema=_VERDICT_SCHEMA,
             name="verdict",
         )
@@ -1226,6 +1378,22 @@ class OpenRouterLLM:
         if not text:
             raise RuntimeError("openrouter returned no reading of the rules")
         return text
+
+    def judge_document(
+        self, *, document: str, reference: str, clause: str, precedents: str = ""
+    ) -> dict:
+        system, user = _document_judge_messages(
+            document=document, reference=reference, clause=clause, precedents=precedents
+        )
+        text = self._chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            max_tokens=2048,
+            schema=_DOCUMENT_VERDICT_SCHEMA,
+            name="verdict",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned an empty verdict")
+        return _parse_json(text)
 
 
 _client: LLM | None = None
@@ -1350,6 +1518,18 @@ def judge(
         extracts=extracts,
         precedents=precedents,
         document=document,
+    )
+
+
+def judge_document(*, document: str, reference: str, clause: str, precedents: str = "") -> dict:
+    """A verdict on one clause from the whole document, with quotes to check.
+
+    See `whole_document.py`: the reply's quotes are evidence only once found in
+    the document word for word, which the analyse stage checks before believing
+    any of them.
+    """
+    return client().judge_document(
+        document=document, reference=reference, clause=clause, precedents=precedents
     )
 
 

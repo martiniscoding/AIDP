@@ -27,6 +27,17 @@ export function isTerminal(status: string): boolean {
   return status === "ready" || status === "failed";
 }
 
+/**
+ * Notices kept out of what a reader sees.
+ *
+ * Both say "a model read this document's structure", which is now true of every
+ * standard, deck and workbook — a notice on every upload is noise, and it
+ * teaches people to skip the ones that matter. The worker no longer writes
+ * them; this also hides the ones already stored, and any written by a worker
+ * that has not been redeployed yet.
+ */
+const UNANNOUNCED = ["structure_inferred", "rules_by_model"];
+
 export async function listDocuments(userId: string, organisationId: string) {
   await requireMembership(userId, organisationId);
 
@@ -55,7 +66,7 @@ export async function listDocuments(userId: string, organisationId: string) {
   // document an organisation has, and issue counts are shown on each row.
   const issues = await prisma.ingestIssue.groupBy({
     by: ["documentId", "severity"],
-    where: { document: { organisationId } },
+    where: { document: { organisationId }, kind: { notIn: UNANNOUNCED } },
     _count: { _all: true },
   });
 
@@ -78,7 +89,10 @@ export async function getDocument(userId: string, documentId: string) {
   const document = await prisma.document.findUnique({
     where: { id: documentId },
     include: {
-      issues: { orderBy: [{ severity: "asc" }, { page: "asc" }] },
+      issues: {
+        where: { kind: { notIn: UNANNOUNCED } },
+        orderBy: [{ severity: "asc" }, { page: "asc" }],
+      },
       sections: {
         orderBy: { ordinal: "asc" },
         include: {

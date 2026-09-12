@@ -443,14 +443,15 @@ model Document {
   /// goes without, exactly as it did before this existed.
   summary String?
 
-  /// True when this document's structure was read by a model rather than parsed
-  /// from its own formatting — see Workers/aidp/parsing/ai_structure.py.
+  /// True when this document's structure or rules were read by a model rather
+  /// than parsed from its own formatting — see Workers/aidp/parsing/ai_structure.py
+  /// and rules.py.
   ///
-  /// A model reading a shapeless document is inference, however good it is. The
-  /// rules it produces are a proposal, and a framework built from an unreviewed
-  /// proposal would generate confident findings against clauses nobody has ever
-  /// checked. So this gates rather than warns: `startAssessment` refuses while
-  /// any reference document in the framework is inferred and unconfirmed.
+  /// A record of how the document was read, and nothing more. It once gated
+  /// assessment on a person confirming the reading, but a model now reads every
+  /// standard, deck and workbook, so the gate stood in front of every upload.
+  /// The two confirmation columns stay so documents confirmed under it still
+  /// say so; nothing writes them any more.
   structureInferred    Boolean   @default(false)
   structureConfirmedAt DateTime?
   structureConfirmedBy String?
@@ -920,6 +921,17 @@ model AssessmentRun {
   /// reached it, and these will be re-run as models change.
   model         String?
   failureReason String?
+
+  // How the judge saw the design. "retrieval": the passages a search found for
+  // each clause. "document": the whole document, quoted, with every quote
+  // checked word for word against it. See Workers/aidp/whole_document.py.
+  mode           String  @default("retrieval")
+  // Anything a reader of these results needs to know about how they were
+  // reached — above all, a whole-document run that fell back to search.
+  note           String?
+  // The run this one was started alongside, when both modes were run to be
+  // compared.
+  comparedWithId String?
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?

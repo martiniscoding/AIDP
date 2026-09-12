@@ -75,6 +75,11 @@ class Config:
     # the two readings disagree about are put in front of a reviewer. One
     # halves the cost and loses that check.
     rules_readings: int = 2
+    # The largest document a whole-document assessment reads at once, in
+    # tokens. Above it the run falls back to search and says so. Well inside
+    # the model's context; the ceiling is cost, since every clause of a run
+    # sends the whole document (cached after the first).
+    whole_document_max_tokens: int = 250_000
 
     # OpenRouter: one key for every model call, OpenAI's models behind it.
     openrouter_api_key: str | None = None
@@ -155,6 +160,7 @@ class Config:
             rules_by_model=os.environ.get("RULES_BY_MODEL", "on").lower()
             not in ("0", "off", "false", "no"),
             rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
+            whole_document_max_tokens=max(1_000, _int("WHOLE_DOCUMENT_MAX_TOKENS", 250_000)),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
             openrouter_model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
             openrouter_fast_model=os.environ.get("OPENROUTER_FAST_MODEL", "openai/gpt-4.1-nano"),
