@@ -67,6 +67,11 @@ class Clause:
     guidance: list[str] = field(default_factory=list)
     page_start: int | None = None
     page_end: int | None = None
+    #: "parser" when this module found the clause by its shape, "model" when
+    #: rules.py read it. Stored, so a reviewer knows which kind they are trusting.
+    origin: str = "parser"
+    #: For a model-read clause, the source line refs each part was sliced from.
+    source: dict | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -168,10 +173,31 @@ def from_table(section: Section, rows: list[dict[str, str | None]]) -> list[Clau
         cells = {(k or "").strip().lower(): (v or "") for k, v in row.items()}
 
         title = _first(cells, ("principle name", "principle", "name"))
-        body = _first(cells, ("statement and rationale", "statement", "description"))
-        implications = _first(cells, ("implications", "requirements", "implication"))
+        # Line by line, not collapsed. A Word cell puts "Statement" and
+        # "Rationale" on lines of their own and lists its implications one per
+        # line with no glyph; joined into one run, every rationale in a client's
+        # principle grid stayed inside its statement, and three implications
+        # became a single requirement that no design could half-meet.
+        body = _first(cells, ("statement and rationale", "statement", "description"), lines=True)
+        implications = _first(cells, ("implications", "requirements", "implication"), lines=True)
         if not (body or implications):
             continue
+        # A row is a rule only when it carries an obligation: a column for one,
+        # or obligation language in its text. A Description column alone
+        # describes. Without this, every catalogue with a Description column
+        # became rules — a patterns reference ("Separates presentation, business
+        # logic, and data access") and an ADR template ("A short, descriptive
+        # title for the decision") turned into eighteen clauses that every
+        # submitted design would then have been assessed against.
+        if not implications and not _NORMATIVE.search(body):
+            continue
+
+        if not title:
+            # The row's own name beats "principle 3" — a classification grid
+            # names each row in its first column.
+            first = " ".join(str(next(iter(row.values()), "") or "").split())
+            if first and first != " ".join(body.split()) and len(first) <= 80:
+                title = f"{section.title} — {first}"
 
         statement, rationale = _split_statement_rationale(body)
         clause = Clause(
@@ -179,7 +205,7 @@ def from_table(section: Section, rows: list[dict[str, str | None]]) -> list[Clau
             title=title or f"{section.title} — principle {index}",
             statement=statement,
             rationale=rationale,
-            requirements=_bullets(implications),
+            requirements=_items(implications),
             page_start=section.page_start,
             page_end=section.page_end,
         )
@@ -188,12 +214,46 @@ def from_table(section: Section, rows: list[dict[str, str | None]]) -> list[Clau
     return clauses
 
 
-def _first(cells: dict[str, str], keys: tuple[str, ...]) -> str:
+def _first(cells: dict[str, str], keys: tuple[str, ...], *, lines: bool = False) -> str:
+    """The first cell whose column name contains one of `keys`.
+
+    Whitespace is collapsed, within each line only when `lines` is set — a
+    cell's line breaks are sometimes the only thing separating its parts.
+    """
     for key in keys:
         for actual, value in cells.items():
             if key in actual:
-                return " ".join(value.split())
+                if not lines:
+                    return " ".join(value.split())
+                return "\n".join(
+                    " ".join(part.split()) for part in value.splitlines() if part.strip()
+                )
     return ""
+
+
+def _items(text: str) -> list[str]:
+    """Separate obligations from one cell.
+
+    A cell with bullets divides at its bullets. One without divides at its line
+    breaks, which in a Word cell are paragraphs, each its own item. A single run
+    of prose — a PDF cell, whose breaks the extractor has already flattened —
+    divides into its sentences, so "Keys must be rotated. Keys must never be
+    shared." is two things a design can each fail.
+    """
+    if not text:
+        return []
+    parts = [line for line in text.splitlines() if line.strip()]
+    if any(_BULLET.match(line) or _BULLET_ALONE.match(line) for line in parts):
+        return _bullets(text)
+    if len(parts) == 1:
+        parts = _sentences(parts[0])
+    return [item for item in (" ".join(p.split()).strip(" ;.") for p in parts) if item]
+
+
+# "…built. Rationale: Reuse lowers cost." — the label mid-line, after a sentence
+# ends. The colon is required here, unlike at a line start, so a sentence that
+# merely mentions a rationale is never cut in two.
+_INLINE_RATIONALE = re.compile(r"(?<=[.;!?])\s*\bRationales?\s*:\s*", re.IGNORECASE)
 
 
 def _split_statement_rationale(body: str) -> tuple[str, str]:
@@ -202,7 +262,7 @@ def _split_statement_rationale(body: str) -> tuple[str, str]:
     statement rather than being guessed at."""
     if not body:
         return "", ""
-    match = _LABELS["rationale"].search(body)
+    match = _LABELS["rationale"].search(body) or _INLINE_RATIONALE.search(body)
     if not match:
         return " ".join(_LABELS["statement"].sub("", body, count=1).split()), ""
     statement = _LABELS["statement"].sub("", body[: match.start()], count=1)
@@ -230,10 +290,35 @@ def _sentences(text: str) -> list[str]:
 
     Lines are joined first: a sentence broken across two lines by the PDF is one
     sentence, and splitting on the newline would leave half an obligation.
+
+    Bullets are boundaries in their own right. A bulleted list carries no full
+    stop between its items, so joining every line and splitting on punctuation
+    fused a whole list into one "sentence". In every standard of a client's set
+    the Compliance section's four obligations became a single 557-character run,
+    failed the length check below, and produced no clause at all.
     """
-    joined = " ".join(line.strip() for line in text.splitlines() if line.strip())
-    parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", joined)
-    return [" ".join(p.split()) for p in parts if p.strip()]
+    units: list[list[str]] = [[]]
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _BULLET_ALONE.match(line):
+            units.append([])
+        elif _BULLET.match(line):
+            units.append([_BULLET.sub("", line, count=1)])
+        else:
+            # A continuation joins whatever unit it belongs to: the bullet above
+            # it, or the running paragraph when there is no bullet.
+            units[-1].append(line)
+
+    out: list[str] = []
+    for unit in units:
+        joined = " ".join(unit)
+        if not joined:
+            continue
+        parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", joined)
+        out.extend(" ".join(part.split()) for part in parts if part.strip())
+    return out
 
 
 def from_normative_prose(section: Section) -> list[Clause]:

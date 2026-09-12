@@ -34,7 +34,19 @@ from psycopg.types.json import Jsonb
 
 from .. import db, logs, queue, storage
 from ..ai import llm
-from ..parsing import ai_structure, docs, furniture, sections, sheets, slides, spans, tables, toc
+from ..config import get_config
+from ..parsing import (
+    ai_structure,
+    docs,
+    furniture,
+    rules,
+    sections,
+    sheets,
+    slides,
+    spans,
+    tables,
+    toc,
+)
 from ..parsing import clauses as clause_parser
 from ..parsing import figures as figure_parser
 from ..queue import Job
@@ -135,6 +147,11 @@ class _Result:
         # True when a model read the structure. Persisted so the app can gate
         # assessment on a human confirming it.
         self.structure_inferred = False
+        # A reference standard's numbered source lines and every reading of its
+        # rules, for rules.py. None when that did not run — a submitted design,
+        # a format it does not cover, or the feature switched off.
+        self.source_lines: list[rules.SourceLine] | None = None
+        self.rule_outcome: rules.Outcome | None = None
 
     def issue(self, severity: str, kind: str, detail: str, *, page=None, ref=None) -> None:
         self.issues.append(
@@ -173,8 +190,18 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     toc_entries = toc.parse(lines)
     skip = _toc_pages(lines) | _cover_pages(lines)
 
+    # Before the section tree, not after it: where the tables sit decides which
+    # lines are allowed to be headings at all. See `not_headings` on
+    # sections.build. The same regions keep figure detection off tables below.
+    all_tables, table_regions = tables.extract_with_regions(doc)
+    heartbeat()
+
     out.sections = sections.build(
-        content, profile, document_title=out.title, skip_pages=skip
+        content,
+        profile,
+        document_title=out.title,
+        skip_pages=skip,
+        not_headings=table_regions,
     )
     if not out.sections:
         # Nothing in the document's own formatting marked a heading. Ask a model
@@ -194,7 +221,15 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
                     "before assessing anything against them."
                 ),
             )
-            _flag_missed_obligations(out)
+            source = rules.pdf_source(
+                content,
+                out.sections,
+                all_tables,
+                table_regions,
+                table_section=lambda table: _section_for_page(out.sections, table.page_start),
+            )
+            if not _read_rules(out, document, source, heartbeat):
+                _flag_missed_obligations(out)
             _flag_no_clauses(out, document)
             return out
 
@@ -216,14 +251,13 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     out.profile = sections.detect_profile(out.sections)
     heartbeat()
 
-    # Tables first: their regions are excluded from figure detection below.
-    all_tables = tables.extract(doc)
-    exclude: dict[int, list] = {}
+    # Extracted above. The per-page regions replace the stitched outline for
+    # figure exclusion, which placed every continuation page's table where the
+    # first page's had been.
+    exclude = table_regions
     for table in all_tables:
         index = _section_for_page(out.sections, table.page_start)
         out.tables.setdefault(index, []).append(table)
-        for page in range(table.page_start, table.page_end + 1):
-            exclude.setdefault(page, []).append(table.bbox)
         if table.confidence < tables.LOW_CONFIDENCE:
             out.issue(
                 "medium",
@@ -258,13 +292,140 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         if found:
             out.clauses[index] = found
 
-    _flag_inferred_clauses(out, inferred)
-    _flag_missed_obligations(out)
+    source = rules.pdf_source(
+        content,
+        out.sections,
+        all_tables,
+        table_regions,
+        table_section=lambda table: _section_for_page(out.sections, table.page_start),
+    )
+    if not _read_rules(out, document, source, heartbeat):
+        _flag_inferred_clauses(out, inferred)
+        _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
-    _flag_content_loss(out, content)
+    # The cover and the contents pages are skipped on purpose — the contents
+    # has already been consumed as ground truth — so their lines were never
+    # meant to reach a section. Counting them made a clean parse report its own
+    # table of contents as unsearchable text.
+    _flag_content_loss(out, [line for line in content if line.page not in skip])
     _reconcile(out, toc_entries)
     return out
+
+
+# Set once the database has the tables and columns rules.py writes to. Checked
+# rather than assumed, so a worker deployed ahead of `prisma migrate deploy`
+# keeps parsing standards with the rule-based parser — and says why — instead of
+# failing every one of them on an insert.
+_rules_schema_ready = False
+
+
+def _rules_schema() -> bool:
+    global _rules_schema_ready
+    if not _rules_schema_ready:
+        with db.connection() as conn:
+            row = db.one(
+                conn,
+                """
+                SELECT to_regclass('source_line') IS NOT NULL
+                   AND to_regclass('rule_extraction') IS NOT NULL
+                   AND to_regclass('line_label') IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'clause' AND column_name = 'sourceRefs'
+                   ) AS "ready"
+                """,
+            )
+        _rules_schema_ready = bool(row and row["ready"])
+    return _rules_schema_ready
+
+
+def _read_rules(out: _Result, document: dict, source: list, heartbeat) -> bool:
+    """Have a model read a reference standard's rules, and adopt them if they hold.
+
+    True when the model's rules replaced the parser's clauses. False leaves the
+    parser's clauses exactly as they were, and the caller runs the parser's own
+    checks over them — so every way this can fail degrades to what the pipeline
+    did before it existed, and says so.
+
+    Only for reference standards. A submitted design is not a rulebook; it is
+    what the rules are assessed against.
+    """
+    cfg = get_config()
+    if document.get("role") != "reference" or not cfg.rules_by_model or not source:
+        return False
+
+    parser_count = sum(len(found) for found in out.clauses.values())
+    if not llm.available():
+        # The text is still kept, so it is there to be read once a key is.
+        # `_persist` writes it only if the database has somewhere to put it.
+        out.source_lines = source
+        out.issue(
+            "medium",
+            "rules_model_unavailable",
+            "No model API key is configured, so this standard's rules were taken from "
+            "the rule-based parser alone, which only recognises the layouts it was built "
+            "for. Configure a key and re-parse to have every line read.",
+        )
+        return False
+
+    if not _rules_schema():
+        out.issue(
+            "high",
+            "rules_schema_missing",
+            "This standard's rules were taken from the rule-based parser alone, because "
+            "the database has not been migrated for rules read by a model. Run "
+            "`npm run db:deploy` in the app, then re-parse this document.",
+        )
+        return False
+
+    out.source_lines = source
+
+    outcome = rules.read(
+        source,
+        title=out.title or document["title"],
+        readings=cfg.rules_readings,
+        heartbeat=heartbeat,
+    )
+    out.rule_outcome = outcome
+
+    if outcome.reading is None:
+        out.issue(
+            "high",
+            "rules_model_failed",
+            f"The model's reading of this standard's rules could not be used "
+            f"({(outcome.error or 'no reply')[:300]}). The rule-based parser's "
+            f"{parser_count} clause(s) are used instead, and it only recognises the "
+            "layouts it was built for. The text is stored; re-parse to try again.",
+        )
+        return False
+
+    found = rules.to_clauses(source, outcome.reading, out.sections)
+    if not found and parser_count:
+        # Zero rules against a parser that found some is far more often a bad
+        # reading than a rulebook with nothing in it. Keep what we had.
+        adopted = outcome.adopted
+        if adopted is not None:
+            adopted.adopted = False
+        out.issue(
+            "high",
+            "rules_model_found_none",
+            f"The model found no rules in this standard, while the rule-based parser "
+            f"found {parser_count}. The parser's clauses are kept. Check whether the "
+            "document states rules a design can meet, then re-parse.",
+        )
+        return False
+
+    for finding in rules.review(source, outcome, out.clauses, out.sections):
+        out.issue(
+            finding.severity, finding.kind, finding.detail, page=finding.page, ref=finding.ref
+        )
+    out.clauses = found
+    # The gate the app already has: nothing is assessed against these until an
+    # administrator has looked at them and confirmed.
+    out.structure_inferred = True
+    out.issue("medium", "rules_by_model", rules.summary(source, outcome.reading, found))
+    return True
 
 
 def _adopt_structure(out: _Result, read, *, severity: str, detail: str) -> None:
@@ -416,11 +577,25 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
             "are not indexed. Re-save them as PNG to include them.",
         )
 
-    _flag_inferred_clauses(out, inferred)
-    _flag_missed_obligations(out)
+    if not _read_rules(out, document, rules.word_source(read, owner), heartbeat):
+        _flag_inferred_clauses(out, inferred)
+        _flag_missed_obligations(out)
     _flag_empty_sections(out)
     _flag_no_clauses(out, document)
-    _flag_content_loss(out, read.lines)
+    # A standard opens with a cover — organisation, title, document code,
+    # effective date — before its first heading, and those lines belong to no
+    # section. The PDF path skips its cover page for the same reason; counting
+    # them reported every Word standard as holding unsearchable text. Only a
+    # short, cover-shaped opening is excused: real prose before the first
+    # heading is genuinely unindexed and still counts.
+    first_heading = min(read.levels) if read.levels else 0
+    opening = read.lines[:first_heading]
+    cover_shaped = (
+        len(opening) <= 12
+        and all(len(line.text) <= 100 for line in opening)
+        and sum(len(line.text) for line in opening) <= 600
+    )
+    _flag_content_loss(out, read.lines[first_heading:] if cover_shaped else read.lines)
     return out
 
 
@@ -533,10 +708,21 @@ def _flag_content_loss(out: _Result, read_lines: list) -> None:
                 if part
             )
 
+    def reached(text: str) -> bool:
+        if text in kept:
+            return True
+        # A section stores its heading without the number — "1.1 Purpose" is
+        # kept as "Purpose" — so the heading line itself never matched and
+        # every numbered heading in a PDF was reported as lost text.
+        for pattern in (sections._NUMBERED, sections._APPENDIX):  # noqa: SLF001
+            if match := pattern.match(text):
+                return (match.group("title") or "").strip() in kept
+        return False
+
     lost = [
         line.text.strip()
         for line in read_lines
-        if line.text.strip() and line.text.strip() not in kept
+        if line.text.strip() and not reached(line.text.strip())
     ]
     if not lost:
         return
@@ -908,12 +1094,23 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
                 "Diagrams with no text layer contribute nothing to retrieval until they are.",
             )
 
+    rules_schema = _rules_schema()
+
     with db.transaction() as conn:
         # Re-parsing replaces: sections cascade to clauses, tables and figures.
         db.execute(
             conn, 'DELETE FROM "document_section" WHERE "documentId" = %s', (job.document_id,)
         )
         db.execute(conn, 'DELETE FROM "ingest_issue" WHERE "documentId" = %s', (job.document_id,))
+        if rules_schema:
+            # The lines and readings of the last parse describe what the rules
+            # were read from then, which a re-parse no longer is. Labels cascade.
+            db.execute(
+                conn, 'DELETE FROM "source_line" WHERE "documentId" = %s', (job.document_id,)
+            )
+            db.execute(
+                conn, 'DELETE FROM "rule_extraction" WHERE "documentId" = %s', (job.document_id,)
+            )
 
         for index, section in enumerate(out.sections):
             section_id = db.new_id()
@@ -944,26 +1141,36 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
             for clause in out.clauses.get(index, []):
                 clause_id = db.new_id()
                 clause_ids.append(clause_id)
+                columns = [
+                    "id", "sectionId", "ordinal", "title", "statement", "rationale",
+                    "requirements", "guidance", "pageStart", "pageEnd",
+                ]
+                values: list = [
+                    clause_id,
+                    section_id,
+                    clause.ordinal,
+                    (clause.title or "")[:500] or None,
+                    clause.statement,
+                    clause.rationale,
+                    clause.requirements,
+                    clause.guidance,
+                    clause.page_start,
+                    clause.page_end,
+                ]
+                if rules_schema:
+                    columns += ["origin", "sourceRefs"]
+                    values += [
+                        clause.origin,
+                        Jsonb(clause.source) if clause.source is not None else None,
+                    ]
                 db.execute(
                     conn,
-                    """
-                    INSERT INTO "clause"
-                        ("id","sectionId","ordinal","title","statement","rationale",
-                         "requirements","guidance","pageStart","pageEnd")
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        clause_id,
-                        section_id,
-                        clause.ordinal,
-                        (clause.title or "")[:500] or None,
-                        clause.statement,
-                        clause.rationale,
-                        clause.requirements,
-                        clause.guidance,
-                        clause.page_start,
-                        clause.page_end,
-                    ),
+                    'INSERT INTO "clause" ('
+                    + ",".join('"' + column + '"' for column in columns)
+                    + ") VALUES ("
+                    + ",".join(["%s"] * len(values))
+                    + ")",
+                    values,
                 )
 
             # A table belongs to the clause when the section holds exactly one —
@@ -1059,7 +1266,110 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
             ),
         )
 
+        if rules_schema and out.source_lines:
+            _persist_rules(conn, job.document_id, out)
+
         queue.complete(conn, job)
+
+
+def _persist_rules(conn, document_id: str, out: _Result) -> None:
+    """The evidence behind a standard's rules: its lines as read, and every reading.
+
+    Written for a refused reading as much as for an adopted one — a reading that
+    was not believed is exactly the one someone will want to look at. Inside the
+    parse's own transaction, so the evidence and the clauses it explains can
+    never describe two different parses.
+    """
+    source = out.source_lines or []
+    ordinal_of = [section.ordinal for section in out.sections]
+    line_rows = [
+        (
+            db.new_id(),
+            document_id,
+            line.ordinal,
+            line.ref,
+            line.kind,
+            line.page,
+            line.text.replace("\x00", ""),
+            ordinal_of[line.section] if 0 <= line.section < len(ordinal_of) else None,
+            line.depth,
+        )
+        for line in source
+    ]
+    if line_rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO "source_line"
+                    ("id","documentId","ordinal","ref","kind","page","text",
+                     "sectionOrdinal","depth")
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                line_rows,
+            )
+
+    outcome = out.rule_outcome
+    if outcome is None:
+        return
+    provider, model = llm.model_name()
+    for attempt in outcome.attempts:
+        reading = attempt.reading
+        stats: dict = {}
+        if reading is not None:
+            found = (
+                out.clauses
+                if attempt.adopted
+                else rules.to_clauses(source, reading, out.sections)
+            )
+            stats = rules.stats(source, reading, found)
+
+        extraction_id = db.new_id()
+        db.execute(
+            conn,
+            """
+            INSERT INTO "rule_extraction"
+                ("id","documentId","attempt","status","adopted","provider","model",
+                 "promptVersion","error","stats","calls")
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                extraction_id,
+                document_id,
+                attempt.number,
+                attempt.status,
+                attempt.adopted,
+                provider,
+                model,
+                rules.PROMPT_VERSION,
+                attempt.error[:2000] if attempt.error else None,
+                Jsonb(stats),
+                Jsonb([call.as_json() for call in attempt.calls]),
+            ),
+        )
+
+        label_rows = [
+            (
+                db.new_id(),
+                extraction_id,
+                document_id,
+                label.start,
+                label.end,
+                label.label,
+                label.reason.replace("\x00", ""),
+            )
+            for label in (reading.labels if reading is not None else [])
+        ]
+        if label_rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO "line_label"
+                        ("id","extractionId","documentId","fromOrdinal","toOrdinal",
+                         "label","reason")
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    label_rows,
+                )
 
     logs.info(
         log,

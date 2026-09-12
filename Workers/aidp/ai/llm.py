@@ -7,9 +7,10 @@
 2. Contextual preambles. One or two sentences situating each chunk in its
    document, prepended before embedding.
 
-Provider is a config switch. Gemini is the default; Anthropic is kept because
-the choice was described as "for now", and behind this interface swapping back
-is one environment variable rather than an edit.
+Provider is a config switch. OpenRouter is what is deployed — one key, OpenAI's
+models behind it, every request sent with `data_collection: deny` and pinned to
+the model's own vendor. Gemini and Anthropic are kept, and swapping between the
+three is one environment variable rather than an edit.
 
 Both are reached over plain HTTP rather than through a vendor SDK, which keeps
 the dependency list short and the two providers symmetrical.
@@ -139,7 +140,12 @@ Reply with JSON only, no prose around it:
 
 
 class QuotaExhausted(RuntimeError):
-    """A per-day quota is spent. Retrying will not help until tomorrow."""
+    """A per-day quota is spent, or a paid account's credit is. Retrying will
+    not help until someone adds more."""
+
+
+class _Refused(RuntimeError):
+    """A request the provider turned down outright. Repeating it cannot help."""
 
 
 def _quota_detail(body: dict) -> tuple[bool, float | None]:
@@ -169,6 +175,18 @@ def _post(url: str, headers: dict, payload: dict, attempts: int = 4) -> dict:
             with httpx.Client(timeout=TIMEOUT) as client:
                 res = client.post(url, headers=headers, json=payload)
 
+            if res.status_code == 402:
+                # OpenRouter's answer when the account's credit has run out.
+                # Like a spent daily quota, repeating the request cannot help.
+                raise QuotaExhausted(
+                    "the model provider account is out of credits; add credits and re-run"
+                )
+            if 400 <= res.status_code < 500 and res.status_code not in (408, 409, 429):
+                # Refused outright — a bad key, a schema the model will not
+                # accept, a model that does not exist. Sending it again returns
+                # the same refusal three more times, with a backoff between each.
+                raise _Refused(f"{res.status_code}: {res.text[:300]}")
+
             if res.status_code == 429:
                 try:
                     body = res.json()
@@ -192,7 +210,7 @@ def _post(url: str, headers: dict, payload: dict, attempts: int = 4) -> dict:
                 raise RuntimeError(f"{res.status_code}: {res.text[:200]}")
             res.raise_for_status()
             return res.json()
-        except QuotaExhausted:
+        except (QuotaExhausted, _Refused):
             raise
         except Exception as exc:  # noqa: BLE001 — retried, re-raised below
             last = exc
@@ -221,6 +239,9 @@ class LLM(Protocol):
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
     ) -> dict: ...
+    def read_rules(
+        self, *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
+    ) -> str: ...
 
 
 # Verdict shape, enforced by the API rather than requested in the prompt.
@@ -362,6 +383,197 @@ _VERDICT_SCHEMA = {
 }
 
 
+_RULES_PROMPT = """\
+You are reading an enterprise standard so that submitted designs can be assessed \
+against its rules. The document "{title}" is below, one numbered line per row{part}.
+
+Tags in square brackets are hints from the file, not part of the text: [heading N] \
+was styled as a level-N heading, [bullet] was a list item, and [T2 columns] and \
+[T2 row] are the column line and a row of table T2, each cell written as \
+"Column: value". A "--- page N ---" row marks where a page starts and is not a line.
+
+You never write or reword any of the document. You answer only with line numbers; \
+the text is taken from the document by those numbers afterwards.
+
+Account for every line from {first} to {last}. Each line falls inside exactly one \
+rule span or exactly one label range. Section headings are also listed in \
+"sections", whether or not they sit inside a rule or a label.
+
+RULES. A rule is something a submitted design can meet or fail: a constraint on \
+what a system, solution, architecture or its data must, should or must not do. \
+For each rule give:
+- "heading": the line naming the rule, if it has one; otherwise null
+- "from", "to": the first and last line of everything that belongs to the rule - \
+its heading, part labels such as "Requirements:", statement, rationale, \
+requirements, guidance, and any table listing its requirements
+- "statement": the line(s) stating the rule itself
+- "rationale": the line(s) explaining why the rule exists; empty if none
+- "requirements": each separately testable obligation as its own entry, with the \
+line(s) it spans and its strength - "must" (must, shall, required, prohibited, \
+must not, never), "should" (should, recommended), "may" (may, optional). A table \
+row stating an obligation is its own entry.
+- "guidance": lines on how to implement the rule, when the document keeps them \
+apart from its requirements; empty otherwise
+- "references": lines elsewhere in the document this rule relies on to be \
+understood, such as a classification table or a definition it names; empty if none
+
+LABELS. Every line that is not part of a rule goes in a labelled range, with a \
+reason of at most 12 words saying what it is:
+- "furniture": cover page, document control, version or revision history, table of \
+contents, approvals, sign-off, running headers and footers
+- "scope": purpose, scope, audience, introduction, how the document is organised
+- "reference": definitions, glossary, classification schemes, catalogues, \
+templates, lists of related documents - material rules point to, not rules
+- "process_rule": obligations about running the standard rather than about a \
+design - exceptions and waivers, approvals, review cycles, compliance, \
+enforcement, ownership of the document
+- "guidance": advice, examples or patterns not attached to any one rule
+- "other": anything else; the reason must say what it is
+
+What matters most:
+1. Use only line numbers from {first} to {last}. Ranges include both ends. Rule \
+spans and label ranges must not overlap.
+2. A line saying "must", "shall" or "required" belongs to a rule unless it plainly \
+is not an obligation on a design. If you label it instead, the reason must say why.
+3. Never merge two rules. A new heading or a new numbered rule normally starts a \
+new rule; each gets its own entry.
+4. A section that only describes, defines or introduces holds no rule. Never turn \
+a description into a rule to fill a section.
+5. When each row of a table is a rule of its own - a catalogue of principles or \
+controls with a statement per row - make each row its own rule, and put the \
+column line in the first row's span. Otherwise a table belongs whole to one rule \
+or one label range.
+
+Reply with JSON only, in this shape:
+{{"sections": [{{"line": 5, "depth": 1}}],
+  "labels": [{{"from": 0, "to": 4, "label": "furniture",
+              "reason": "cover page and revision history"}}],
+  "rules": [{{"heading": 6, "from": 6, "to": 14, "statement": [7], "rationale": [8],
+             "requirements": [{{"lines": [10], "strength": "must"}},
+                              {{"lines": [11, 12], "strength": "should"}}],
+             "guidance": [], "references": []}}]}}
+
+<document>
+{numbered}
+</document>"""
+
+_LINES = {"type": "array", "items": {"type": "integer"}}
+
+_RULES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"line": {"type": "integer"}, "depth": {"type": "integer"}},
+                "required": ["line", "depth"],
+                "propertyOrdering": ["line", "depth"],
+            },
+        },
+        "labels": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "integer"},
+                    "to": {"type": "integer"},
+                    "label": {
+                        "type": "string",
+                        "enum": [
+                            "furniture",
+                            "scope",
+                            "reference",
+                            "process_rule",
+                            "guidance",
+                            "other",
+                        ],
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["from", "to", "label", "reason"],
+                "propertyOrdering": ["from", "to", "label", "reason"],
+            },
+        },
+        "rules": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "heading": {"type": "integer", "nullable": True},
+                    "from": {"type": "integer"},
+                    "to": {"type": "integer"},
+                    "statement": _LINES,
+                    "rationale": _LINES,
+                    "requirements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "lines": _LINES,
+                                "strength": {"type": "string", "enum": ["must", "should", "may"]},
+                            },
+                            "required": ["lines", "strength"],
+                            "propertyOrdering": ["lines", "strength"],
+                        },
+                    },
+                    "guidance": _LINES,
+                    "references": _LINES,
+                },
+                "required": [
+                    "from",
+                    "to",
+                    "statement",
+                    "rationale",
+                    "requirements",
+                    "guidance",
+                    "references",
+                ],
+                "propertyOrdering": [
+                    "heading",
+                    "from",
+                    "to",
+                    "statement",
+                    "rationale",
+                    "requirements",
+                    "guidance",
+                    "references",
+                ],
+            },
+        },
+    },
+    "required": ["sections", "labels", "rules"],
+    "propertyOrdering": ["sections", "labels", "rules"],
+}
+
+# A reply names every line of a standard once, so it grows with the document.
+# Well inside both providers' output limits, and far above what a part of
+# `rules.MAX_LINES_PER_CALL` lines needs.
+_RULES_MAX_TOKENS = 32_000
+
+
+def _rules_temperature(attempt: int) -> float:
+    """The first reading is deterministic. The second is the cross-check, so it
+    is sampled rather than repeated: at temperature 0 both readings would make
+    the same mistakes, and their agreeing would prove nothing."""
+    return 0.0 if attempt <= 1 else 0.5
+
+
+def _rules_prompt(*, document: str, title: str, first: int, last: int, whole: bool) -> str:
+    part = (
+        ""
+        if whole
+        else f" (this is one part of it, lines {first} to {last}; the rest is read separately)"
+    )
+    return _RULES_PROMPT.format(
+        title=title.replace('"', "'"),
+        part=part,
+        first=first,
+        last=last,
+        numbered=document,
+    )
+
+
 class GeminiLLM:
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -386,10 +598,12 @@ class GeminiLLM:
         system: str | None,
         max_tokens: int,
         schema: dict | None = None,
+        temperature: float | None = None,
+        attempts: int = 4,
     ) -> str:
         config: dict = {
             "maxOutputTokens": max_tokens,
-            "temperature": 0.0 if schema else 0.2,
+            "temperature": temperature if temperature is not None else (0.0 if schema else 0.2),
             "thinkingConfig": {"thinkingBudget": self.thinking_budget},
         }
         if schema:
@@ -407,6 +621,7 @@ class GeminiLLM:
             f"{self.BASE}/{self.model}:generateContent",
             {"x-goog-api-key": self.api_key, "content-type": "application/json"},
             payload,
+            attempts=attempts,
         )
 
         # Recorded here rather than in each of the three callers: this is the
@@ -518,6 +733,29 @@ class GeminiLLM:
         if not text:
             raise RuntimeError("gemini returned no structure")
         return _parse_json(text)
+
+    def read_rules(
+        self, *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
+    ) -> str:
+        text = self._generate(
+            [
+                {
+                    "text": _rules_prompt(
+                        document=document, title=title, first=first, last=last, whole=whole
+                    )
+                }
+            ],
+            system=None,
+            max_tokens=_RULES_MAX_TOKENS,
+            schema=_RULES_SCHEMA,
+            temperature=_rules_temperature(attempt),
+            # rules.py retries a refused range itself, on smaller pieces. Four
+            # transport retries of a three-minute call would outlive the lease.
+            attempts=2,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no reading of the rules")
+        return text
 
 
 class AnthropicLLM:
@@ -691,6 +929,304 @@ class AnthropicLLM:
         )
         return _parse_json("{" + self._text_of(data))
 
+    def read_rules(
+        self, *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
+    ) -> str:
+        payload = {
+            "model": self.model,
+            "max_tokens": _RULES_MAX_TOKENS,
+            "temperature": _rules_temperature(attempt),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _rules_prompt(
+                        document=document, title=title, first=first, last=last, whole=whole
+                    ),
+                },
+                {"role": "assistant", "content": "{"},
+            ],
+        }
+        data = _post(self.BASE, self._headers(), payload, attempts=2)
+        input_tokens, output_tokens = usage.from_anthropic(data)
+        usage.record(
+            kind="llm",
+            provider="anthropic",
+            model=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        text = self._text_of(data)
+        if not text:
+            raise RuntimeError("claude returned no reading of the rules")
+        return "{" + text
+
+
+def _strict_schema(schema: dict) -> dict:
+    """A Gemini response schema, rewritten as strict JSON Schema.
+
+    The schemas above are written for Gemini. OpenAI's strict mode — which is
+    what makes a reply conform rather than merely try to — wants every object
+    closed with `additionalProperties: false` and every property listed as
+    required, spells an optional value as a union with null instead of
+    `nullable`, and rejects `propertyOrdering`. One source of truth for the
+    shape, converted, rather than two copies that drift.
+    """
+
+    def convert(node, *, is_properties: bool = False):
+        if isinstance(node, list):
+            return [convert(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        if is_properties:
+            # Property names, not schema keywords: a field called "type" is a field.
+            return {name: convert(value) for name, value in node.items()}
+        out = {
+            key: convert(value, is_properties=key == "properties")
+            for key, value in node.items()
+            if key not in ("propertyOrdering", "nullable")
+        }
+        if node.get("nullable") and "type" in out:
+            kind = out["type"]
+            out["type"] = [*kind, "null"] if isinstance(kind, list) else [kind, "null"]
+        if out.get("type") == "object" and isinstance(out.get("properties"), dict):
+            out["additionalProperties"] = False
+            out["required"] = list(out["properties"])
+        return out
+
+    return convert(schema)
+
+
+class OpenRouterLLM:
+    """Models reached through OpenRouter's OpenAI-compatible API.
+
+    Two things go with every request, because these are client documents:
+    `data_collection: deny`, so no host that trains on prompts is ever chosen,
+    and `only`, so the request is served by the model's own vendor rather than
+    whichever host is cheapest that minute.
+
+    Prompt caching on OpenAI's models is automatic for a repeated prefix, which
+    is why `contextualise` puts the document first and the chunk last: every
+    preamble in a document reuses the same leading tokens at a fraction of the
+    price.
+    """
+
+    URL = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        fast_model: str,
+        *,
+        providers: tuple[str, ...] = (),
+        zdr: bool = False,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.fast_model = fast_model
+        self.providers = tuple(providers)
+        self.zdr = zdr
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "AIDP",
+        }
+
+    def _chat(
+        self,
+        messages: list[dict],
+        *,
+        max_tokens: int,
+        model: str | None = None,
+        temperature: float = 0.0,
+        schema: dict | None = None,
+        name: str = "reply",
+        attempts: int = 4,
+    ) -> str:
+        chosen = model or self.model
+        provider: dict = {"data_collection": "deny"}
+        if self.providers:
+            provider["only"] = list(self.providers)
+        if self.zdr:
+            provider["zdr"] = True
+        payload: dict = {
+            "model": chosen,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "provider": provider,
+        }
+        if schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": name, "strict": True, "schema": _strict_schema(schema)},
+            }
+            # Never route a schema request to a host that would ignore the schema.
+            provider["require_parameters"] = True
+
+        data = _post(self.URL, self._headers(), payload, attempts=attempts)
+        if isinstance(data.get("error"), dict):
+            raise RuntimeError(f"openrouter refused the request: {str(data['error'])[:200]}")
+
+        input_tokens, output_tokens = usage.from_openai(data)
+        usage.record(
+            kind="llm",
+            provider="openrouter",
+            model=chosen,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+        choices = data.get("choices") or []
+        if not choices:
+            logs.warn(log, "openrouter returned no choices", model=chosen)
+            return ""
+        if choices[0].get("finish_reason") == "length":
+            # Not raised: the caller's parse fails on a cut-off reply and its
+            # own retry decides what to do. Logged so the cause is findable.
+            logs.warn(log, "reply cut off at the output limit", model=chosen)
+        content = (choices[0].get("message") or {}).get("content") or ""
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        return str(content).strip()
+
+    def describe_figure(self, image_png: bytes, *, heading_path: str, caption: str | None) -> str:
+        where = f"Location in document: {heading_path}"
+        if caption:
+            where += f"\nCaption as printed: {caption}"
+        text = self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"{where}\n\n{_FIGURE_PROMPT}"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,"
+                                + base64.b64encode(image_png).decode()
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=1200,
+            temperature=0.2,
+        )
+        return "" if text.strip() == "NO_INFORMATION" else text
+
+    def contextualise(self, document_text: str, chunk_text: str, *, title: str) -> str:
+        return self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are indexing the document '{title}'.\n\n"
+                        f"<document>\n{document_text[:120_000]}\n</document>"
+                    ),
+                },
+                {"role": "user", "content": _CONTEXT_PROMPT.format(chunk=chunk_text[:6000])},
+            ],
+            model=self.fast_model,
+            max_tokens=200,
+            temperature=0.2,
+        )
+
+    def summarise(self, document_text: str, *, title: str) -> str:
+        # The main model, not the fast one: one call per document, and every
+        # verdict on that document is reached with this paragraph in view.
+        return self._chat(
+            [
+                {"role": "system", "content": f"You are reading the document '{title}'."},
+                {
+                    "role": "user",
+                    "content": _SUMMARY_PROMPT.format(document=document_text[:200_000]),
+                },
+            ],
+            max_tokens=400,
+            temperature=0.2,
+        )
+
+    def judge(
+        self,
+        *,
+        reference: str,
+        clause: str,
+        extracts: str,
+        precedents: str = "",
+        document: str = "",
+    ) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": _JUDGE_PROMPT.format(
+                        reference=reference,
+                        clause=clause,
+                        extracts=extracts,
+                        precedents=_precedent_block(precedents),
+                        document_context=_document_block(document),
+                    ),
+                }
+            ],
+            max_tokens=1024,
+            schema=_VERDICT_SCHEMA,
+            name="verdict",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned an empty verdict")
+        return _parse_json(text)
+
+    def structure(
+        self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
+    ) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": _STRUCTURE_PROMPT.format(
+                        numbered=numbered,
+                        first_line=first_line,
+                        last_line=last_line,
+                        tags=tags,
+                    ),
+                }
+            ],
+            max_tokens=4096,
+            schema=_STRUCTURE_SCHEMA,
+            name="structure",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no structure")
+        return _parse_json(text)
+
+    def read_rules(
+        self, *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
+    ) -> str:
+        text = self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": _rules_prompt(
+                        document=document, title=title, first=first, last=last, whole=whole
+                    ),
+                }
+            ],
+            max_tokens=_RULES_MAX_TOKENS,
+            temperature=_rules_temperature(attempt),
+            schema=_RULES_SCHEMA,
+            name="rules",
+            # rules.py retries a refused range itself, on smaller pieces.
+            attempts=2,
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no reading of the rules")
+        return text
+
 
 _client: LLM | None = None
 
@@ -720,7 +1256,10 @@ def _parse_json(raw: str) -> dict:
 
 def available() -> bool:
     cfg = get_config()
-    if cfg.llm_provider.lower() == "anthropic":
+    provider = cfg.llm_provider.lower()
+    if provider == "openrouter":
+        return bool(cfg.openrouter_api_key)
+    if provider == "anthropic":
         return bool(cfg.anthropic_api_key)
     return bool(cfg.gemini_api_key)
 
@@ -730,7 +1269,17 @@ def client() -> LLM:
     if _client is None:
         cfg = get_config()
         provider = cfg.llm_provider.lower()
-        if provider == "anthropic":
+        if provider == "openrouter":
+            if not cfg.openrouter_api_key:
+                raise RuntimeError("OPENROUTER_API_KEY is not set")
+            _client = OpenRouterLLM(
+                cfg.openrouter_api_key,
+                cfg.openrouter_model,
+                cfg.openrouter_fast_model,
+                providers=cfg.openrouter_providers,
+                zdr=cfg.openrouter_zdr,
+            )
+        elif provider == "anthropic":
             if not cfg.anthropic_api_key:
                 raise RuntimeError("ANTHROPIC_API_KEY is not set")
             _client = AnthropicLLM(cfg.anthropic_api_key, cfg.claude_model, cfg.claude_fast_model)
@@ -759,18 +1308,48 @@ def structure(*, numbered: str, first_line: int, last_line: int, tags: str = "")
     )
 
 
+def read_rules(
+    *, document: str, title: str, first: int, last: int, whole: bool, attempt: int
+) -> str:
+    """The raw reply, unparsed — rules.py stores it whether or not it is believed."""
+    return client().read_rules(
+        document=document, title=title, first=first, last=last, whole=whole, attempt=attempt
+    )
+
+
+def parse_json(raw: str) -> dict:
+    """`_parse_json`, for a caller that keeps the raw reply as well as the parse."""
+    return _parse_json(raw)
+
+
+def model_name() -> tuple[str, str]:
+    """(provider, model) as configured — recorded against a run and a reading."""
+    cfg = get_config()
+    provider = cfg.llm_provider.lower()
+    if provider == "openrouter":
+        return "openrouter", cfg.openrouter_model
+    if provider == "anthropic":
+        return "anthropic", cfg.claude_model
+    return "gemini", cfg.gemini_model
+
+
 def judge(
     *,
     reference: str,
     clause: str,
     extracts: str,
     precedents: str = "",
+    document: str = "",
 ) -> dict:
+    # `document` has to be passed through here. Without it the analyse stage's
+    # `document=` raised TypeError on every clause, which its per-clause guard
+    # caught — so every clause of every run failed, quietly.
     return client().judge(
         reference=reference,
         clause=clause,
         extracts=extracts,
         precedents=precedents,
+        document=document,
     )
 
 

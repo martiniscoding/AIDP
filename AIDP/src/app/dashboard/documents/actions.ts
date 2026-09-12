@@ -380,6 +380,169 @@ export async function confirmStructure(documentId: string): Promise<ActionResult
   }
 }
 
+class AlreadyRestored extends Error {}
+
+type StoredLine = { ref: string; kind: string; text: string; page: number | null };
+
+// Part labels and printed numbering, which are layout rather than the rule's
+// words. Mirrors `_PART_LABEL` and the heading patterns in the worker.
+const PART_LABEL =
+  /^\s*(?:statements?|rationales?|requirements?|implications?|guidance|notes?)\s*:\s*/i;
+const NUMBERED_HEADING = /^(?:\d+(?:\.\d+)*\.?|Appendix\s+[A-Z]\s*[:.]?)\s+(\S.*)$/i;
+
+/**
+ * A rule from stored source lines: the heading names it, the first passage is
+ * its statement, and every later passage is a requirement.
+ *
+ * A passage is one paragraph, bullet or table row. A PDF wraps one sentence
+ * over several lines, so a text line that does not end a sentence runs on into
+ * the next rather than becoming a requirement of its own.
+ */
+function draftRule(lines: StoredLine[]) {
+  const heading = lines.find((line) => line.kind === "heading");
+  const passages: { refs: string[]; text: string; kind: string }[] = [];
+  for (const line of lines) {
+    if (line.kind === "heading" || line.kind === "table_header") continue;
+    const text = (line.kind === "table_row" ? line.text : line.text.replace(PART_LABEL, "")).trim();
+    if (!text) continue;
+    const previous = passages[passages.length - 1];
+    const startsItem = line.kind === "bullet" || line.kind === "table_row";
+    if (previous && !startsItem && previous.kind === "text" && !/[.;:!?]$/.test(previous.text)) {
+      previous.refs.push(line.ref);
+      previous.text = `${previous.text} ${text}`;
+    } else {
+      passages.push({ refs: [line.ref], text, kind: line.kind });
+    }
+  }
+  if (passages.length === 0) return null;
+
+  const [statement, ...requirements] = passages;
+  const pages = lines.map((line) => line.page).filter((page): page is number => page != null);
+  const headingText = heading?.text.trim() ?? "";
+  return {
+    title: headingText ? (NUMBERED_HEADING.exec(headingText)?.[1] ?? headingText) : null,
+    headingRef: heading?.ref ?? null,
+    statement,
+    requirements,
+    pageStart: pages.length ? Math.min(...pages) : null,
+    pageEnd: pages.length ? Math.max(...pages) : null,
+  };
+}
+
+/**
+ * Make lines the model set aside into a rule of the standard.
+ *
+ * The reviewer's answer to the one mistake the rules on the page cannot show: a
+ * rule wrongly read as not being one, which no assessment would ever check.
+ *
+ * The client names the range and nothing else. Every word of the new rule is
+ * read back from the stored source lines, so this cannot put text into a
+ * standard that the document does not contain — the same guarantee the model
+ * reading gives.
+ */
+export async function restoreRule(labelId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+
+    const label = await prisma.lineLabel.findUnique({
+      where: { id: labelId },
+      select: {
+        id: true,
+        documentId: true,
+        fromOrdinal: true,
+        toOrdinal: true,
+        restoredAt: true,
+        extraction: { select: { adopted: true } },
+        document: { select: { organisationId: true, role: true } },
+      },
+    });
+    if (!label) {
+      return {
+        ok: false,
+        message: "Those lines are no longer on record — the document may have been re-parsed.",
+      };
+    }
+    const membership = await requireMembership(user.id, label.document.organisationId);
+    const refused = guardStandards(membership, label.document);
+    if (refused) return refused;
+    if (label.document.role !== "reference") {
+      return { ok: false, message: "Only a reference standard has rules." };
+    }
+    if (label.restoredAt) return { ok: false, message: "Those lines are already a rule." };
+    if (!label.extraction.adopted) {
+      return { ok: false, message: "Those lines belong to a reading of the rules that was not used." };
+    }
+
+    const lines = await prisma.sourceLine.findMany({
+      where: {
+        documentId: label.documentId,
+        ordinal: { gte: label.fromOrdinal, lte: label.toOrdinal },
+      },
+      orderBy: { ordinal: "asc" },
+      select: { ref: true, kind: true, text: true, page: true, sectionOrdinal: true },
+    });
+    const drafted = draftRule(lines);
+    if (!drafted) return { ok: false, message: "Those lines hold no text to make a rule from." };
+
+    const sectionOrdinal = lines.find((line) => line.sectionOrdinal != null)?.sectionOrdinal;
+    const section = await prisma.documentSection.findFirst({
+      where: {
+        documentId: label.documentId,
+        ...(sectionOrdinal != null ? { ordinal: sectionOrdinal } : {}),
+      },
+      orderBy: { ordinal: "asc" },
+      select: { id: true, title: true },
+    });
+    if (!section) return { ok: false, message: "That document has no section to hold a rule." };
+
+    const by = user.name || user.email;
+    await prisma.$transaction(async (tx) => {
+      const last = await tx.clause.findFirst({
+        where: { sectionId: section.id },
+        orderBy: { ordinal: "desc" },
+        select: { ordinal: true },
+      });
+      const clause = await tx.clause.create({
+        data: {
+          sectionId: section.id,
+          ordinal: (last?.ordinal ?? 0) + 1,
+          title: drafted.title ?? section.title,
+          statement: drafted.statement.text,
+          requirements: drafted.requirements.map((passage) => passage.text),
+          pageStart: drafted.pageStart,
+          pageEnd: drafted.pageEnd,
+          origin: "restored",
+          sourceRefs: {
+            span: [lines[0].ref, lines[lines.length - 1].ref],
+            heading: drafted.headingRef,
+            statement: drafted.statement.refs,
+            requirements: drafted.requirements.map((passage) => ({ refs: passage.refs })),
+            restoredFrom: label.id,
+          },
+        },
+        select: { id: true },
+      });
+      // Conditional, so two reviewers pressing at once make one rule, not two.
+      const marked = await tx.lineLabel.updateMany({
+        where: { id: label.id, restoredAt: null },
+        data: { restoredAt: new Date(), restoredBy: by, restoredClauseId: clause.id },
+      });
+      if (marked.count !== 1) throw new AlreadyRestored();
+    });
+
+    revalidatePath(`/dashboard/documents/${label.documentId}`);
+    return { ok: true, message: `Added as a rule under “${section.title}”.` };
+  } catch (error) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that document." };
+    }
+    if (error instanceof AlreadyRestored) {
+      return { ok: false, message: "Those lines are already a rule." };
+    }
+    return { ok: false, message: "Could not make those lines a rule." };
+  }
+}
+
 /**
  * Record what was decided about a submission.
  *

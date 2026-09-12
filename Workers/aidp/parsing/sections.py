@@ -85,29 +85,57 @@ def _classify(line: Line, profile: FontProfile) -> tuple[str | None, str] | None
     return None
 
 
+def _in_region(line: Line, regions: dict[int, list] | None) -> bool:
+    """Whether a line's centre falls inside any region on its page."""
+    if not regions:
+        return False
+    x0, y0, x1, y1 = line.bbox
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return any(
+        left <= cx <= right and top <= cy <= bottom
+        for left, top, right, bottom in regions.get(line.page, [])
+    )
+
+
 def build(
     lines: list[Line],
     profile: FontProfile,
     *,
     document_title: str,
     skip_pages: set[int] | None = None,
+    not_headings: dict[int, list] | None = None,
 ) -> list[Section]:
     """Walk lines in reading order and cut them into sections.
 
     `skip_pages` drops the contents pages: they look like dense content and are
     entirely redundant, having already been consumed as ground truth by toc.py.
+
+    `not_headings` is regions, by page, where no line may open a section — the
+    tables. A column header is set bold at body size, which is exactly the
+    signature `profile_fonts` has to accept as a heading level for real
+    subsection titles, and it is short, capitalised and unpunctuated, which is
+    exactly what `_TITLE_LIKE` accepts. Typography and shape both agree, and
+    both are wrong. Only position can tell the difference. On a 96-page
+    architecture blueprint — a template that is mostly tables — 259 of 444
+    heading candidates were header cells, including fragments a narrow column
+    had hyphenated ("Estima", "Transactio"), and each opened an empty section.
+
+    A line in a region is not dropped. It stays in whichever section it falls
+    under, as content, exactly as before.
     """
     skip_pages = skip_pages or set()
     sections: list[Section] = []
     stack: list[tuple[int, str]] = []  # (depth, title) for the heading path
     current: Section | None = None
     ordinal = 0
+    # Depth of the most recent numbered heading, or None before the first one.
+    anchor: int | None = None
 
     for line in lines:
         if line.page in skip_pages:
             continue
 
-        heading = _classify(line, profile)
+        heading = None if _in_region(line, not_headings) else _classify(line, profile)
         if heading is None:
             if current is not None:
                 current.lines.append(line)
@@ -115,7 +143,21 @@ def build(
             continue
 
         number, title = heading
-        depth = (number.count(".") + 1) if number and number[0].isdigit() else 1
+        if number and number[0].isdigit():
+            depth = number.count(".") + 1
+            anchor = depth
+        elif number:
+            # An appendix is top-level by definition, and anchors whatever
+            # unnumbered headings follow it.
+            depth = anchor = 1
+        else:
+            # An unnumbered heading in a numbered document is a sub-heading of
+            # the numbered one above it. Treating it as top-level used to pop
+            # every numbered ancestor off the stack: a blueprint's "Deployment"
+            # under "4 SOLUTION DELIVERY APPROACH" left the next section's path
+            # reading "Deployment › 4.2 Approach to Migration", with its real
+            # parent gone from every citation until the next chapter number.
+            depth = anchor + 1 if anchor else 1
 
         while stack and stack[-1][0] >= depth:
             stack.pop()

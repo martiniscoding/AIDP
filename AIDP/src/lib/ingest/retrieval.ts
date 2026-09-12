@@ -102,6 +102,44 @@ export async function embedText(
     return json.data[0]!.embedding;
   }
 
+  if (provider === "openrouter") {
+    const key = process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+    // Kept in step with OpenRouterProvider in Workers/aidp/ai/embeddings.py:
+    // the same model, width and routing, or a query lands in a different space
+    // from the passages it is searching and finds nothing.
+    const only = (process.env.OPENROUTER_PROVIDERS ?? "openai,azure")
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+    const zdr = ["1", "on", "true", "yes"].includes(
+      (process.env.OPENROUTER_ZDR ?? "off").toLowerCase(),
+    );
+    const res = await fetch("https://openrouter.ai/api/v1/embeddings", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+        "x-title": "AIDP",
+      },
+      body: JSON.stringify({
+        model,
+        input: [text],
+        dimensions: dims,
+        provider: {
+          data_collection: "deny",
+          ...(only.length ? { only } : {}),
+          ...(zdr ? { zdr: true } : {}),
+        },
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenRouter embeddings failed: ${res.status}`);
+    const json = (await res.json()) as { data?: { embedding: number[] }[] };
+    const vector = json.data?.[0]?.embedding;
+    if (!vector) throw new Error("OpenRouter returned no embedding");
+    return vector;
+  }
+
   if (provider === "openai") {
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error("OPENAI_API_KEY is not set");

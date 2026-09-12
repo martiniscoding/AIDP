@@ -467,6 +467,12 @@ model Document {
   jobs     Job[]
   issues   IngestIssue[]
 
+  // A reference standard's text as numbered lines, and every model reading of
+  // its rules. See Workers/aidp/parsing/rules.py.
+  sourceLines     SourceLine[]
+  ruleExtractions RuleExtraction[]
+  lineLabels      LineLabel[]
+
   // Reference documents belong to frameworks; assessed documents get runs.
   frameworks FrameworkDocument[]
   runs       AssessmentRun[]
@@ -536,11 +542,113 @@ model Clause {
   pageStart Int?
   pageEnd   Int?
 
+  // "parser" when the rule-based parser found it by its shape; "model" when a
+  // model pointed at the lines and code sliced the text (see
+  // Workers/aidp/parsing/rules.py); "restored" when a reviewer promoted lines
+  // the model had set aside.
+  origin     String @default("parser")
+  // For a model-read or restored clause, the source line refs each part came
+  // from: { span, heading, statement, rationale,
+  // requirements: [{ refs, strength }], guidance, references }.
+  sourceRefs Json?
+
   tables TableBlock[]
 
   @@unique([sectionId, ordinal])
   @@index([sectionId])
   @@map("clause")
+}
+
+// ---------------------------------------------------------------------------
+// Rules read by a model
+//
+// A standard's rules are read by a model that is only allowed to point: it sees
+// numbered lines and answers with line numbers. Code checks every number and
+// slices the words itself, so no rule can contain text the document does not.
+// These tables keep the evidence — the text as read, every reading, and what
+// was set aside with the model's stated reason — so a reviewer can see why a
+// line is or is not a rule, and a disagreement can be traced after the fact.
+// ---------------------------------------------------------------------------
+
+model SourceLine {
+  id String @id @default(cuid())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Position in the document from 0 — the number the model saw and answered in.
+  ordinal Int
+  // The same position for people: "L12" is the twelfth paragraph, "T3-r4" the
+  // fourth row of the third table, "T3-h" that table's column line.
+  ref     String
+  // "text" | "heading" | "bullet" | "table_header" | "table_row"
+  kind    String
+  page    Int?
+  text    String
+  // The section the line falls in, by ordinal, as the parse left it.
+  sectionOrdinal Int?
+  // Heading depth, when the document declared one.
+  depth   Int?
+
+  @@unique([documentId, ordinal])
+  @@map("source_line")
+}
+
+model RuleExtraction {
+  id String @id @default(cuid())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // 1 is the first reading; 2 is the cross-check, or the retry when 1 failed.
+  attempt       Int
+  // "accepted" | "failed"
+  status        String
+  // Whether this reading's rules are the clauses stored for the document.
+  adopted       Boolean @default(false)
+  provider      String
+  model         String
+  promptVersion String
+  error         String?
+  // Lines, lines covered, rules, requirements, lines set aside per label.
+  stats         Json    @default("{}")
+  // Every request made for this reading: the line range, whether it was
+  // believed and why not, and the raw reply — line numbers and short reasons.
+  calls         Json    @default("[]")
+
+  createdAt DateTime @default(now())
+
+  labels LineLabel[]
+
+  @@index([documentId])
+  @@map("rule_extraction")
+}
+
+model LineLabel {
+  id String @id @default(cuid())
+
+  extractionId String
+  extraction   RuleExtraction @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Inclusive range of SourceLine ordinals.
+  fromOrdinal Int
+  toOrdinal   Int
+  // "furniture" | "scope" | "reference" | "process_rule" | "guidance" | "other"
+  label       String
+  // The model's own words for what these lines are.
+  reason      String  @default("")
+
+  // Set when a reviewer decided these lines are a rule after all.
+  restoredAt       DateTime?
+  restoredBy       String?
+  restoredClauseId String?
+
+  @@index([documentId])
+  @@index([extractionId])
+  @@map("line_label")
 }
 
 model TableBlock {

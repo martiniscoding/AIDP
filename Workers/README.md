@@ -94,13 +94,24 @@ insert error.
 
 ## Model providers
 
-Two jobs need a model: describing figures whose text layer is empty, and writing
-the one-line contextual preamble each chunk carries into its embedding.
+Models read a standard's rules, judge each clause, describe figures, summarise
+documents and write the contextual preamble each chunk carries into its
+embedding. Embeddings are a separate call.
 
-**Gemini is the default and covers both halves**, embeddings included, so one
-API key does everything. Anthropic remains available via `LLM_PROVIDER=anthropic`
-— but note that Claude has no embeddings endpoint at all, so that path needs a
-second vendor (Voyage or OpenAI) purely for vectors.
+**OpenRouter is the default and covers all of it with one key**:
+`openai/gpt-4.1-mini` for anything a verdict or a rule rests on,
+`openai/gpt-4.1-nano` for the per-chunk preambles, and
+`openai/text-embedding-3-large` at 1024 dims for vectors. Every request sends
+`data_collection: deny` and is pinned to `OPENROUTER_PROVIDERS` (OpenAI and
+Azure by default), so client documents never reach a host that trains on prompts.
+Gemini (`LLM_PROVIDER=gemini`) and Anthropic (`LLM_PROVIDER=anthropic`, with a
+separate embeddings vendor) remain available.
+
+**Changing the embedding model** makes every stored vector invisible to search,
+because vectors are only ever compared with vectors from the same model. Run
+`python scripts/reembed.py` (a dry run), then `--apply` with the embed worker
+running, then `--drop-old` once it has finished. Assessment embeds its own
+submission first regardless, so no run judges against an empty search.
 
 Without a key the pipeline still completes: figures are stored but not
 described, and chunks embed without a preamble. Both are recorded as ingest

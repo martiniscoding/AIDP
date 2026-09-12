@@ -28,10 +28,15 @@ adapter over it and asserts on the result:
 from __future__ import annotations
 
 import io
+import os
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+# No database and no network: a real key in Workers/.env would otherwise send
+# the reference standard below to a model. Rules read by a model have their
+# own test, smoke_rules.py, with the model scripted.
+os.environ["RULES_BY_MODEL"] = "off"
 
 from docx import Document  # noqa: E402
 
@@ -150,6 +155,85 @@ ok("classification lifted", furniture.classification_in(
 body = " ".join(line.text for line in read.lines)
 ok("footer text is not content", "SENSITIVITY CLASSIFICATION" not in body)
 ok("header text is not content", "Page 1" not in body)
+
+print("\n6. A document with no default paragraph style does not crash")
+# Generators other than Word often omit the default paragraph style, and then
+# every body paragraph reports its style as None. Three of four real client
+# standards were built that way and crashed on their first body paragraph.
+from docx.enum.style import WD_STYLE_TYPE  # noqa: E402
+from docx.oxml.ns import qn  # noqa: E402
+
+bare = Document()
+for style in bare.styles:
+    if style.element.get(qn("w:default")) == "1":
+        style.element.attrib.pop(qn("w:default"))
+ok("fixture really has no default paragraph style",
+   bare.styles.default(WD_STYLE_TYPE.PARAGRAPH) is None)
+bare.add_paragraph("Enterprise Information Security")
+bare.add_heading("1. Introduction", level=1)
+bare.add_paragraph("Statement: Systems must be assessed against these standards.")
+bare.add_paragraph("Assessment happens before go-live", style="List Paragraph")
+bare_buffer = io.BytesIO()
+bare.save(bare_buffer)
+try:
+    bare_read = docs.read(bare_buffer.getvalue())
+    ok("parsed without crashing", True)
+    ok("the heading is still found",
+       any(bare_read.lines[i].text == "1. Introduction" for i in bare_read.levels),
+       bare_read.levels)
+    ok("no heading is borrowed as the title", bare_read.title is None, bare_read.title)
+except AttributeError as exc:
+    ok("parsed without crashing", False, exc)
+
+
+print("\n7. A cover before the first heading is not reported as lost text")
+from aidp.stages import parse  # noqa: E402
+
+WORD_ROW = {
+    "id": "x",
+    "title": "Security Standards",
+    "role": "reference",
+    "storageKey": "security.docx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def standard_with(opening: list[str]) -> bytes:
+    built = Document()
+    for text in opening:
+        built.add_paragraph(text)
+    built.add_heading("1. Access Control", level=1)
+    for _ in range(4):
+        built.add_paragraph(
+            "Statement: Every privileged account must use multi-factor authentication."
+        )
+    out = io.BytesIO()
+    built.save(out)
+    return out.getvalue()
+
+
+def lost_text(raw: bytes) -> list[dict]:
+    result = parse._parse_word(raw, WORD_ROW, lambda: None)
+    return [i for i in result.issues if i["kind"] == "content_not_indexed"]
+
+
+cover = [
+    "Enterprise Information Security",
+    "Security Standards",
+    "DOC-SEC-STD V-1.0",
+    "Effective Date: [DD/MM/YYYY]",
+]
+cover_issues = lost_text(standard_with(cover))
+ok("a cover is not counted as lost", not cover_issues, cover_issues)
+intro = [
+    (
+        "This opening paragraph explains the purpose of the standard at length "
+        "and is real content that belongs in the index. "
+    )
+    * 6
+]
+ok("real prose before the first heading still counts", bool(lost_text(standard_with(intro))))
+
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -33,6 +33,7 @@ import psycopg
 
 from . import db, logs
 from .ai import embeddings
+from .config import get_config
 
 log = logs.get(__name__)
 
@@ -86,6 +87,10 @@ SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedB
    AND "status" = 'active'
    AND ("expiresAt" IS NULL OR "expiresAt" > now())
    AND "vector" IS NOT NULL
+   -- A vector from another embedding model is not near or far from this one;
+   -- the distance between them is meaningless. Such rows wait for
+   -- scripts/reembed.py rather than matching at random.
+   AND "embeddingModel" = %(model)s
    AND NOT ("id" = ANY(%(exclude)s))
  ORDER BY distance
  LIMIT %(limit)s
@@ -95,12 +100,27 @@ SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedB
 # register is small, and unfiltered neighbours would mean every clause dragging
 # in the same three rulings regardless of subject.
 #
-# Measured against gemini-embedding-001, which packs everything into a narrow
-# band — "0.5 means unrelated" is wrong here. Against a decision about key
-# rotation: on topic 0.27, adjacent 0.39, unrelated 0.48, nonsense 0.50. Kept in
-# step with MAX_DISTANCE in src/lib/ingest/decisions.ts, and worth re-measuring
-# if the embedding model changes.
-MAX_DISTANCE = 0.42
+# Per embedding model, because each spreads its distances differently and one
+# number cannot serve two. Measured with a clause query against a standing
+# decision (on topic / adjacent subject / unrelated / nonsense):
+#
+#   gemini-embedding-001            0.24–0.33 / 0.35–0.42 / 0.41–0.45 / 0.45
+#     — a narrow band, where "0.5 means unrelated" is wrong
+#   openai/text-embedding-3-large   0.37–0.38 / 0.63–0.65 / 0.65–0.75 / 0.87–0.93
+#     — wide, so Gemini's 0.42 would have shut out rulings that are on topic
+#
+# A model missing here falls back to the tightest value, so an unmeasured model
+# errs towards showing the judge fewer decisions, never unrelated ones. Worth
+# measuring before switching model.
+MAX_DISTANCE = {
+    "gemini-embedding-001": 0.42,
+    "openai/text-embedding-3-large": 0.55,
+}
+_UNMEASURED = min(MAX_DISTANCE.values())
+
+
+def max_distance(model: str) -> float:
+    return MAX_DISTANCE.get(model, _UNMEASURED)
 
 
 def _row_to_decision(row: dict, *, anchored: bool) -> Decision:
@@ -148,18 +168,21 @@ def for_clause(
             logs.warn(log, "could not embed clause for decision lookup", error=str(exc)[:160])
             return found[:limit]
 
+    model = get_config().embedding_model
     rows = db.query(
         conn,
         _NEAREST,
         {
             "org": organisation_id,
             "vector": vector,
+            "model": model,
             "exclude": [d.id for d in found],
             "limit": limit - len(found),
         },
     )
+    threshold = max_distance(model)
     for row in rows:
-        if float(row["distance"]) <= MAX_DISTANCE:
+        if float(row["distance"]) <= threshold:
             found.append(_row_to_decision(row, anchored=False))
 
     return found[:limit]

@@ -62,8 +62,11 @@ _scripted: dict[str, dict] = {}
 
 
 def _stub_judge(
-    *, reference: str, clause: str, extracts: str, precedents: str = ""
+    *, reference: str, clause: str, extracts: str, precedents: str = "", document: str = ""
 ):  # noqa: ARG001
+    # Same signature as `llm.judge`. When the analyse stage began passing
+    # `document=`, a stub without it raised TypeError on every clause — exactly
+    # the failure the real wrapper had, and this test hid it instead of catching it.
     # Longest key first. Matching on substrings otherwise lets one clause name
     # shadow another ("grounded-covered" contains no other key, but the earlier
     # "cited-covered" was a substring of "uncited-covered" and silently returned

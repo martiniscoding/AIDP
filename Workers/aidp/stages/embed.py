@@ -11,6 +11,8 @@ uploaded with role='assessed' are what continue into analyse.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .. import db, logs, queue
 from ..ai import embeddings
 from ..config import get_config
@@ -23,6 +25,29 @@ _WRITE_BATCH = 200
 
 
 def handle(job: Job, heartbeat) -> None:
+    embed_missing(
+        job.document_id,
+        heartbeat,
+        on_start=lambda: _set_status(job.document_id, "embedding"),
+    )
+    _finish(job)
+
+
+def embed_missing(
+    document_id: str,
+    heartbeat: Callable[[], None],
+    *,
+    on_start: Callable[[], None] | None = None,
+) -> int:
+    """Embed a document's chunks that have no vector for the current model.
+
+    Returns how many were embedded. Shared by the embed stage and by analyse,
+    which calls it before retrieving anything: a document embedded under an
+    earlier model has no vectors retrieval can see, so every search would come
+    back empty and every clause would read as absent — confidently, and with
+    nothing to say why. Filling the gap first makes changing the embedding
+    model safe for any document that is assessed again.
+    """
     cfg = get_config()
     model = cfg.embedding_model
 
@@ -39,15 +64,15 @@ def handle(job: Job, heartbeat) -> None:
                )
              ORDER BY c."ordinal"
             """,
-            {"doc": job.document_id, "model": model},
+            {"doc": document_id, "model": model},
         )
 
     if not pending:
         logs.info(log, "nothing to embed, already current", model=model)
-        _finish(job)
-        return
+        return 0
 
-    _set_status(job.document_id, "embedding")
+    if on_start is not None:
+        on_start()
     logs.info(log, "embedding", chunks=len(pending), model=model, dims=cfg.embedding_dims)
 
     vectors: list[tuple[str, str]] = []
@@ -74,6 +99,14 @@ def handle(job: Job, heartbeat) -> None:
                     (db.new_id(), chunk_id, model, cfg.embedding_dims, literal),
                 )
 
+    logs.info(log, "embedded", chunks=len(vectors), model=model)
+    return len(vectors)
+
+
+def _finish(job: Job) -> None:
+    # The vectors are already written in their own transaction. A crash between
+    # the two retries the job, finds nothing missing, and lands here again.
+    with db.transaction() as conn:
         db.execute(
             conn,
             """
@@ -81,18 +114,6 @@ def handle(job: Job, heartbeat) -> None:
                SET "status" = 'ready', "failureReason" = NULL, "updatedAt" = now()
              WHERE "id" = %s
             """,
-            (job.document_id,),
-        )
-        queue.complete(conn, job)
-
-    logs.info(log, "embedded", chunks=len(vectors), model=model)
-
-
-def _finish(job: Job) -> None:
-    with db.transaction() as conn:
-        db.execute(
-            conn,
-            'UPDATE "document" SET "status" = \'ready\', "updatedAt" = now() WHERE "id" = %s',
             (job.document_id,),
         )
         queue.complete(conn, job)

@@ -22,11 +22,18 @@ export function ConfirmStructure({
   clauseCount,
   confirmedAt,
   confirmedBy,
+  readByModel = false,
 }: {
   documentId: string;
   clauseCount: number;
   confirmedAt: string | null;
   confirmedBy: string | null;
+  /**
+   * The rules were read line by line by a model (Workers/aidp/parsing/rules.py),
+   * rather than the whole structure being inferred because the formatting said
+   * nothing. The gate is the same; what is being confirmed is not.
+   */
+  readByModel?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -36,7 +43,7 @@ export function ConfirmStructure({
     return (
       <p className="mb-6 inline-flex items-center gap-2 rounded-lg border border-ok-line bg-ok-tint px-3 py-2 text-[12.5px] text-ok">
         <Check size={13} className="shrink-0" />
-        Structure read by a model and confirmed
+        {readByModel ? "Rules read by a model and confirmed" : "Structure read by a model and confirmed"}
         {confirmedBy ? ` by ${confirmedBy}` : ""} on{" "}
         {new Date(confirmedAt).toLocaleDateString(undefined, {
           day: "numeric",
@@ -53,22 +60,48 @@ export function ConfirmStructure({
       <div className="flex flex-wrap items-start gap-3">
         <ScanLine size={16} className="mt-0.5 shrink-0 text-warn" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[14px] font-semibold text-warn">
-            This standard&apos;s structure was read by a model
-          </h2>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-warn">
-            Nothing in the document&apos;s own formatting marked where its
-            sections and rules begin, so they were inferred from the text. We
-            extracted {clauseCount} rule{clauseCount === 1 ? "" : "s"}. Every
-            word below is from your document — nothing was rewritten — but the{" "}
-            <span className="text-warn">grouping is a machine&apos;s reading</span>{" "}
-            of it.
-          </p>
-          <p className="mt-2 text-[12.5px] leading-relaxed text-warn">
-            Check the rules below. Nothing can be assessed against this standard
-            until you confirm them. If the reading is wrong, fix the source
-            document and reprocess rather than confirming.
-          </p>
+          {readByModel ? (
+            <>
+              <h2 className="text-[14px] font-semibold text-warn">
+                This standard&apos;s rules were read by a model
+              </h2>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-warn">
+                A model went through every line and pointed at which ones are
+                rules; the system checked each of its answers against the
+                document and took the words from the document itself. We
+                extracted {clauseCount} rule{clauseCount === 1 ? "" : "s"}. Every
+                word is from your document — nothing was rewritten — but{" "}
+                <span className="text-warn">which lines count as rules is a machine&apos;s reading</span>{" "}
+                of it.
+              </p>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-warn">
+                Check the review notes and anything set aside that states an
+                obligation, then the rules below. Nothing can be assessed against
+                this standard until you confirm them. A rule that was set aside
+                can be made a rule in one step; if the reading is badly wrong,
+                fix the source document and reprocess rather than confirming.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-[14px] font-semibold text-warn">
+                This standard&apos;s structure was read by a model
+              </h2>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-warn">
+                Nothing in the document&apos;s own formatting marked where its
+                sections and rules begin, so they were inferred from the text. We
+                extracted {clauseCount} rule{clauseCount === 1 ? "" : "s"}. Every
+                word below is from your document — nothing was rewritten — but the{" "}
+                <span className="text-warn">grouping is a machine&apos;s reading</span>{" "}
+                of it.
+              </p>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-warn">
+                Check the rules below. Nothing can be assessed against this standard
+                until you confirm them. If the reading is wrong, fix the source
+                document and reprocess rather than confirming.
+              </p>
+            </>
+          )}
 
           {message && (
             <p role="status" className="mt-2.5 text-[12.5px] text-warn">

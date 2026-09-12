@@ -114,8 +114,18 @@ def _confidence(columns: list[str], rows: list[dict[str, str | None]]) -> float:
     return round(0.35 * density + 0.65 * named, 3)
 
 
-def extract_page(page: fitz.Page) -> list[Table]:
-    """Tables on one page, in reading order."""
+def extract_page(
+    page: fitz.Page, regions: list[tuple[float, float, float, float]] | None = None
+) -> list[Table]:
+    """Tables on one page, in reading order.
+
+    `regions`, when given, collects the outline of every table the finder saw —
+    including ones discarded below for holding no usable rows. The two answer
+    different questions. A table with a header and nothing under it contributes
+    no chunk, but it is still a table, and its bold header cell is still not a
+    section heading. Record only the tables that survived and that header walks
+    out of the region and into the section tree.
+    """
     try:
         finder = page.find_tables()
     except Exception:  # noqa: BLE001 — a page that defeats the finder is not fatal
@@ -123,6 +133,8 @@ def extract_page(page: fitz.Page) -> list[Table]:
 
     out: list[Table] = []
     for found in getattr(finder, "tables", []):
+        if regions is not None:
+            regions.append(tuple(found.bbox))  # type: ignore[arg-type]
         try:
             raw = found.extract()
         except Exception:  # noqa: BLE001
@@ -193,12 +205,26 @@ def stitch(tables: list[Table], page_heights: dict[int, float]) -> list[Table]:
     return merged
 
 
-def extract(doc: fitz.Document) -> list[Table]:
-    """Every table in the document, page breaks already rejoined."""
+BoxesByPage = dict[int, list[tuple[float, float, float, float]]]
+
+
+def extract_with_regions(doc: fitz.Document) -> tuple[list[Table], BoxesByPage]:
+    """Every table, page breaks rejoined, plus where each one sits on each page.
+
+    The regions are taken per page, before stitching. A table rejoined across a
+    page break keeps only its first page's outline, so reading regions off the
+    stitched result would place every continuation in the wrong spot.
+    """
     tables: list[Table] = []
     heights: dict[int, float] = {}
+    regions: BoxesByPage = {}
     for index in range(doc.page_count):
         page = doc[index]
         heights[index + 1] = page.rect.height
-        tables.extend(extract_page(page))
-    return stitch(tables, heights)
+        tables.extend(extract_page(page, regions.setdefault(index + 1, [])))
+    return stitch(tables, heights), regions
+
+
+def extract(doc: fitz.Document) -> list[Table]:
+    """Every table in the document, page breaks already rejoined."""
+    return extract_with_regions(doc)[0]

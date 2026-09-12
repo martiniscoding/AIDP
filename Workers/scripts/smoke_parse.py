@@ -152,6 +152,59 @@ def build_pdf(path: Path) -> None:
     doc.close()
 
 
+def build_tabular_pdf(path: Path) -> None:
+    """A page shaped like a solution blueprint.
+
+    Numbered headings, an unnumbered sub-heading between them, and a bordered
+    table whose header cells are bold at body size — the signature a real
+    subsection title also has, which is why typography alone cannot tell them
+    apart.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    cursor = {"y": 70.0}
+
+    def text(value: str, size: float = 10, font: str = BODY) -> None:
+        page.insert_text((72, cursor["y"]), value, fontsize=size, fontname=font)
+        cursor["y"] += size + 10
+
+    text("1. Operations", 17, BOLD)
+    for _ in range(6):
+        text("Operational standards describe how production systems are run and supported.")
+    text("Application Hosting", 13, BOLD)
+    for _ in range(4):
+        text("Hosting arrangements are recorded for every application in the estate.")
+
+    top = cursor["y"] + 10
+    cols = [72, 222, 372, 522]
+    rows = [top, top + 26, top + 52, top + 78]
+    for x in cols:
+        page.draw_line(fitz.Point(x, rows[0]), fitz.Point(x, rows[-1]))
+    for y in rows:
+        page.draw_line(fitz.Point(cols[0], y), fitz.Point(cols[-1], y))
+    grid = [
+        ["Owner", "Review Cadence", "Status"],
+        ["Platform team", "Quarterly", "Active"],
+        ["Data team", "Annually", "Active"],
+    ]
+    for r, row in enumerate(grid):
+        for c, cell in enumerate(row):
+            page.insert_text(
+                (cols[c] + 5, rows[r] + 17),
+                cell,
+                fontsize=10,
+                fontname=BOLD if r == 0 else BODY,
+            )
+
+    cursor["y"] = rows[-1] + 30
+    text("1.1 Escalation", 13, BOLD)
+    for _ in range(4):
+        text("Escalation follows the support rota agreed with the service owner.")
+
+    doc.save(path)
+    doc.close()
+
+
 def main() -> int:
     path = Path("/tmp/aidp-smoke.pdf")
     build_pdf(path)
@@ -229,6 +282,150 @@ def main() -> int:
             )
             rendered = table.render_row(tier4)
             check("renders as 'not specified'", "not specified" in rendered, rendered)
+
+    print("\nTable header cells are not headings")
+    tab_path = Path("/tmp/aidp-smoke-tabular.pdf")
+    build_tabular_pdf(tab_path)
+    tab = fitz.open(tab_path)
+    tab_lines = spans.extract_lines(tab)
+    tab_profile = spans.profile_fonts(tab_lines)
+    _, regions = tables.extract_with_regions(tab)
+    check("table region found", any(regions.values()), str(regions))
+    header_cells = {"Owner", "Review Cadence", "Status"}
+    naive = {s.title for s in sections.build(tab_lines, tab_profile, document_title="Blueprint")}
+    guarded = sections.build(
+        tab_lines, tab_profile, document_title="Blueprint", not_headings=regions
+    )
+    guarded_titles = [s.title for s in guarded]
+    check(
+        "without regions the trap is real — a header cell opens a section",
+        bool(header_cells & naive),
+        str(sorted(naive)),
+    )
+    check(
+        "with regions no header cell opens a section",
+        not header_cells & set(guarded_titles),
+        str(guarded_titles),
+    )
+    kept = " ".join(line.text for s in guarded for line in s.lines)
+    check("header text is kept as content", "Review Cadence" in kept, kept[:120])
+
+    print("\nUnnumbered headings nest under the numbered one above")
+    hosting = next((s for s in guarded if s.title == "Application Hosting"), None)
+    escalation = next((s for s in guarded if s.number_text == "1.1"), None)
+    check("sub-heading found", hosting is not None, str(guarded_titles))
+    if hosting:
+        check("it sits under its numbered parent", "1 Operations ›" in hosting.heading_path,
+              hosting.heading_path)
+    check("next numbered heading found", escalation is not None, str(guarded_titles))
+    if escalation:
+        check(
+            "and keeps its ancestry",
+            escalation.heading_path == "Blueprint › 1 Operations › 1.1 Escalation",
+            escalation.heading_path,
+        )
+    tab.close()
+
+    print("\nBulleted obligations are separate sentences")
+    # A bulleted list has no full stop between items, so joining the lines and
+    # splitting on punctuation fused a whole list into one over-long "sentence"
+    # that failed the length check. Every client standard's Compliance section
+    # was lost that way.
+    compliance = sections.Section(
+        ordinal=1,
+        number_text="12",
+        title="Compliance, Exceptions, and Review",
+        depth=1,
+        heading_path="Test Standards › 12 Compliance, Exceptions, and Review",
+        page_start=1,
+        page_end=1,
+    )
+    bullet_lines = [
+        "• All new and existing systems must be assessed against these standards; non-compliant",
+        "systems must maintain a documented remediation plan",
+        "• Exceptions must be formally requested, risk-assessed, time-bound, and approved by an",
+        "authorized risk owner",
+        "• These standards must be reviewed at least annually and after any significant",
+        "threat-landscape change",
+        "• Confirmed policy violations that result in security incidents must be escalated",
+        "through incident management",
+    ]
+    compliance.lines = [
+        spans.Line(
+            text=text, page=1, y=0.0, x0=0.0, bbox=(0, 0, 0, 0),
+            sig=(BODY, 10.0, False, False, 0),
+        )
+        for text in bullet_lines
+    ]
+    rules = clauses.from_normative_prose(compliance)
+    check("a clause was extracted", len(rules) == 1, f"got {len(rules)}")
+    if rules:
+        statement = rules[0].statement
+        check(
+            "statement is the first bullet, whole",
+            statement.startswith("All new and existing") and statement.endswith("remediation plan"),
+            statement,
+        )
+        check(
+            "each further bullet is its own requirement",
+            len(rules[0].requirements) == 3,
+            str(rules[0].requirements),
+        )
+        check(
+            "no bullet glyph leaks into the text",
+            "•" not in statement + "".join(rules[0].requirements),
+        )
+
+    print("\nOnly table rows that carry an obligation become clauses")
+    catalogue = sections.Section(
+        ordinal=1,
+        number_text="6",
+        title="Architecture Patterns Reference",
+        depth=1,
+        heading_path="Test Standards › 6 Architecture Patterns Reference",
+        page_start=1,
+        page_end=1,
+    )
+    patterns = [
+        {
+            "Pattern": "Layered",
+            "Description": "Separates presentation, business logic, and data access",
+            "When to Use": "Most line-of-business applications",
+        },
+        {
+            "Pattern": "Strangler Fig",
+            "Description": "Incrementally replaces a legacy system over time",
+            "When to Use": "Modernising a monolith",
+        },
+    ]
+    found_patterns = clauses.from_table(catalogue, patterns)
+    check("a pattern catalogue yields no clauses", not found_patterns, str(found_patterns))
+    template = [{"Field": "Title", "Description": "A short, descriptive title for the decision"}]
+    check("a template's field descriptions yield no clauses",
+          not clauses.from_table(catalogue, template))
+    grid = [
+        {
+            "#": "1",
+            "Principle Name": "Automated Delivery",
+            "Statement and Rationale": "Solutions must support automated, repeatable deployment.",
+            "Implications": "Pipelines are mandatory for production",
+        }
+    ]
+    check("a principle grid still yields its clause",
+          len(clauses.from_table(catalogue, grid)) == 1)
+    classification = [
+        {
+            "Classification": "Confidential",
+            "Definition": "Sensitive business data",
+            "Examples": "Contracts",
+            "Handling Requirements": "Encrypt at rest and in transit",
+        }
+    ]
+    handled = clauses.from_table(catalogue, classification)
+    check("a handling-requirements grid yields a clause", len(handled) == 1, str(handled))
+    if handled:
+        check("it is named after its row, not 'principle 1'",
+              handled[0].title.endswith("— Confidential"), handled[0].title)
 
     print("\nEmpty section")
     cyber = next((s for s in built if "Cybersecurity" in s.title), None)

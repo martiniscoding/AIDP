@@ -16,6 +16,8 @@ import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Figures, type FigureView } from "./Figures";
 import { Understanding } from "./Understanding";
 import { ConfirmStructure } from "./ConfirmStructure";
+import { SetAside } from "./SetAside";
+import { setAside } from "@/lib/ingest/rules";
 import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
 import { PipelineWatcher } from "../PipelineWatcher";
@@ -54,6 +56,14 @@ export default async function DocumentPage({
     document.role === "assessed" || canManageStandards(membership.role);
 
   const clauses = document.sections.reduce((n, s) => n + s.clauses.length, 0);
+  // Rules a model read line by line, rather than a structure inferred wholesale
+  // because the formatting said nothing. It changes what the confirmation is
+  // asking for, and it is what puts the set-aside lines in front of a reviewer.
+  const readByModel = document.sections.some((s) =>
+    s.clauses.some((c) => c.origin !== "parser"),
+  );
+  const setAsideView =
+    document.role === "reference" ? await setAside(session.user.id, document.id) : null;
   const tables = document.sections.reduce((n, s) => n + s.tables.length, 0);
   const figureViews: FigureView[] = document.sections
     .flatMap((s) =>
@@ -204,6 +214,7 @@ export default async function DocumentPage({
           clauseCount={clauses}
           confirmedAt={document.structureConfirmedAt?.toISOString() ?? null}
           confirmedBy={document.structureConfirmedBy}
+          readByModel={readByModel}
         />
       )}
 
@@ -280,6 +291,10 @@ export default async function DocumentPage({
           </ul>
         </section>
       )}
+
+      {/* After the review notes, which point into it, and before the outline:
+          a rule wrongly set aside is invisible everywhere else on this page. */}
+      {setAsideView && <SetAside view={setAsideView} editable={mayChange} />}
 
       <Figures figures={figureViews} />
 

@@ -125,6 +125,19 @@ def _paragraph_outline(paragraph) -> int | None:
     return int(value) if value is not None and value.isdigit() else None
 
 
+def _style_name(paragraph) -> str:
+    """The paragraph's style name, lowercased, or "" when it has none.
+
+    A document with no default paragraph style — common from generators other
+    than Word itself — hands back `None` for every paragraph that does not name
+    a style explicitly, which is every body paragraph. Three of a client's four
+    standards were built that way, and each crashed on its first line of body
+    text.
+    """
+    style = paragraph.style
+    return (style.name or "").strip().lower() if style is not None else ""
+
+
 def _depth(paragraph) -> int | None:
     """Heading depth for a paragraph, or None when it is body text.
 
@@ -135,7 +148,7 @@ def _depth(paragraph) -> int | None:
         if level is not None:
             return None if level >= _BODY_OUTLINE else level + 1
 
-    name = (paragraph.style.name or "").strip().lower()
+    name = _style_name(paragraph)
     if name == "title":
         return 1
     if name.startswith("heading"):
@@ -153,7 +166,7 @@ def _is_list(paragraph) -> bool:
     properties = paragraph._p.find(qn("w:pPr"))  # noqa: SLF001 — no public accessor
     if properties is not None and properties.find(qn("w:numPr")) is not None:
         return True
-    return (paragraph.style.name or "").strip().lower().startswith("list")
+    return _style_name(paragraph).startswith("list")
 
 
 def _page_breaks(paragraph) -> int:
@@ -293,7 +306,7 @@ def read(raw: bytes) -> Doc:
         # Recording it as a heading as well would open an empty section on
         # every Word document — the title, immediately closed by the first real
         # heading — and `section_empty` would then fire on all of them.
-        if doc.title is None and (paragraph.style.name or "").strip().lower() == "title":
+        if doc.title is None and _style_name(paragraph) == "title":
             doc.title = text
             depth = None
 
@@ -312,10 +325,10 @@ def read(raw: bytes) -> Doc:
         if depth is not None:
             doc.levels[index] = depth
 
-    # The first heading stands in when the document has no Title style, which
-    # most real documents do not.
-    if doc.title is None and doc.levels:
-        doc.title = doc.lines[min(doc.levels)].text
+    # No Title style means no title, rather than borrowing the first heading.
+    # The first heading of a real standard is "Revision History", and a
+    # document named after its changelog is worse than one named after its
+    # file — which is what the parse stage falls back to.
 
     _images(document, doc, max(len(doc.lines) - 1, 0), page)
     doc.page_count = page

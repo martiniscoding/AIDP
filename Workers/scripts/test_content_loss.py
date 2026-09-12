@@ -108,5 +108,28 @@ parse._flag_content_loss(
 )
 ok("no issue raised", not issues_of(out), out.issues)
 
+print("\n5. A numbered heading is reached, though its section keeps only the title")
+# A section stores "1.1 Purpose" as number "1.1" and title "Purpose". Matching
+# the line against the title alone reported every numbered heading in a PDF as
+# lost — 71 false losses on one 96-page blueprint.
+out = parse._Result()
+numbered = section("Purpose", ["the purpose text"])
+numbered.number_text = "1.1"
+appendix = section("Glossary", ["a term"])
+appendix.number_text = "Appendix A"
+out.sections = [numbered, appendix]
+parse._flag_content_loss(
+    out,
+    [line("1.1 Purpose"), line("the purpose text"), line("Appendix A: Glossary"), line("a term")],
+)
+ok("no issue raised", not issues_of(out), out.issues)
+
+print("\n6. ...but numbering does not excuse text that is genuinely missing")
+out = parse._Result()
+out.sections = [section("Purpose", [])]
+parse._flag_content_loss(out, [line("1.1 Purpose"), line("2.4 " + BULK)])
+ok("issue still raised", len(issues_of(out)) == 1, out.issues)
+
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

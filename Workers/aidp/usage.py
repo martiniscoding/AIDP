@@ -196,3 +196,13 @@ def from_anthropic(data: dict) -> tuple[int, int]:
         + int(usage.get("cache_read_input_tokens") or 0)
     )
     return inputs, int(usage.get("output_tokens") or 0)
+
+
+def from_openai(data: dict) -> tuple[int, int]:
+    """(input, output) from an OpenAI-shaped response — OpenRouter's included.
+
+    Reasoning tokens are already inside `completion_tokens` there, and cached
+    prompt tokens inside `prompt_tokens`, so no remainder arithmetic is needed.
+    """
+    usage = data.get("usage") or {}
+    return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)

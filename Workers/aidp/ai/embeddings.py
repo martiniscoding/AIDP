@@ -46,20 +46,37 @@ class EmbeddingProvider(Protocol):
     def embed(self, texts: list[str], input_type: InputType) -> list[list[float]]: ...
 
 
+class _Refused(RuntimeError):
+    """A request the provider turned down. Repeating it gets the same answer."""
+
+
 def _post_with_retry(url: str, headers: dict, payload: dict, attempts: int = 5) -> dict:
-    """POST with exponential backoff on rate limits and transient failures."""
+    """POST with exponential backoff on rate limits and transient failures.
+
+    Only those. A refused request — no credit left, a bad key, a model that does
+    not exist — fails on the first attempt with the provider's own reason,
+    rather than five times over with a backoff between each.
+    """
     delay = 1.0
     last: Exception | None = None
     for attempt in range(attempts):
         try:
             with httpx.Client(timeout=TIMEOUT) as client:
                 res = client.post(url, headers=headers, json=payload)
+            if res.status_code == 402:
+                raise _Refused(
+                    "the embedding provider account is out of credits; add credits and re-run"
+                )
+            if 400 <= res.status_code < 500 and res.status_code not in (408, 409, 429):
+                raise _Refused(f"embedding request refused — {res.status_code}: {res.text[:200]}")
             if res.status_code == 429 or res.status_code >= 500:
                 raise httpx.HTTPStatusError(
                     f"{res.status_code}: {res.text[:200]}", request=res.request, response=res
                 )
             res.raise_for_status()
             return res.json()
+        except _Refused:
+            raise
         except Exception as exc:  # noqa: BLE001 — retried below, re-raised at the end
             last = exc
             if attempt == attempts - 1:
@@ -167,9 +184,78 @@ class OpenAIProvider:
         return [d["embedding"] for d in ordered]
 
 
+class OpenRouterProvider:
+    """OpenAI's embedding models through OpenRouter — the same key as every
+    model call.
+
+    `dimensions` truncates text-embedding-3-* (Matryoshka-trained) to the
+    column's width, so 1024 fits the existing `vector(1024)` columns without a
+    migration. These models embed a query and a passage the same way, so
+    `input_type` changes nothing here; it stays in the signature for the
+    providers where it matters.
+
+    Kept in step with the openrouter branch of `embedText` in
+    AIDP/src/lib/ingest/retrieval.ts. A query embedded differently from the
+    passages it searches finds nothing, and says nothing about it.
+    """
+
+    URL = "https://openrouter.ai/api/v1/embeddings"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        dims: int,
+        *,
+        providers: tuple[str, ...] = (),
+        zdr: bool = False,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.dims = dims
+        self.providers = tuple(providers)
+        self.zdr = zdr
+
+    def embed(self, texts: list[str], input_type: InputType) -> list[list[float]]:
+        provider: dict = {"data_collection": "deny"}
+        if self.providers:
+            provider["only"] = list(self.providers)
+        if self.zdr:
+            provider["zdr"] = True
+        data = _post_with_retry(
+            self.URL,
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "X-Title": "AIDP",
+            },
+            {"model": self.model, "input": texts, "dimensions": self.dims, "provider": provider},
+        )
+        if isinstance(data.get("error"), dict):
+            raise RuntimeError(
+                f"openrouter refused the embedding request: {str(data['error'])[:200]}"
+            )
+        ordered = sorted(data.get("data") or [], key=lambda d: d.get("index", 0))
+        if len(ordered) != len(texts):
+            raise RuntimeError(
+                f"{self.model} returned {len(ordered)} embeddings for {len(texts)} inputs"
+            )
+        return [d["embedding"] for d in ordered]
+
+
 def provider() -> EmbeddingProvider:
     cfg = get_config()
     name = cfg.embedding_provider.lower()
+    if name == "openrouter":
+        if not cfg.openrouter_api_key:
+            raise SystemExit("OPENROUTER_API_KEY is required when EMBEDDING_PROVIDER=openrouter")
+        return OpenRouterProvider(
+            cfg.openrouter_api_key,
+            cfg.embedding_model,
+            cfg.embedding_dims,
+            providers=cfg.openrouter_providers,
+            zdr=cfg.openrouter_zdr,
+        )
     if name == "gemini":
         if not cfg.gemini_api_key:
             raise SystemExit("GEMINI_API_KEY is required when EMBEDDING_PROVIDER=gemini")

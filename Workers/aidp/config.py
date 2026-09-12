@@ -67,6 +67,31 @@ class Config:
     # generation quota in the pipeline, and a retrieval-quality nicety
     # rather than a requirement. Turn it off on a constrained key.
     contextual_preambles: bool = True
+    # Whether a reference standard's rules are read by a model, with every line
+    # reference checked by code (see aidp/parsing/rules.py), rather than taken
+    # only from the rule-based parser. Off falls back to the parser alone.
+    rules_by_model: bool = True
+    # Independent readings per standard. The second is the cross-check: lines
+    # the two readings disagree about are put in front of a reviewer. One
+    # halves the cost and loses that check.
+    rules_readings: int = 2
+
+    # OpenRouter: one key for every model call, OpenAI's models behind it.
+    openrouter_api_key: str | None = None
+    # Everything a verdict or a rule rests on — reading a standard's rules,
+    # judging a clause, describing a figure, summarising a document. Strict
+    # JSON schema support, no hidden reasoning tokens on the bill.
+    openrouter_model: str = "openai/gpt-4.1-mini"
+    # The high-volume call: one contextual preamble per chunk.
+    openrouter_fast_model: str = "openai/gpt-4.1-nano"
+    # Upstream hosts a request may be served by. OpenAI's models are hosted by
+    # OpenAI and Azure; pinning keeps client documents off any other host.
+    # Empty means OpenRouter's own routing.
+    openrouter_providers: tuple[str, ...] = ("openai", "azure")
+    # Demand zero-data-retention endpoints. Off by default because not every
+    # model has one — gpt-4.1-mini has none, and OpenRouter refuses the request
+    # outright rather than falling back. `data_collection: deny` is always sent.
+    openrouter_zdr: bool = False
 
     anthropic_api_key: str | None = None
     # Describing a diagram is a judgement call and gets the stronger model.
@@ -127,6 +152,19 @@ class Config:
             gemini_thinking_budget=_int("GEMINI_THINKING_BUDGET", 0),
             contextual_preambles=os.environ.get("CONTEXTUAL_PREAMBLES", "on").lower()
             not in ("0", "off", "false", "no"),
+            rules_by_model=os.environ.get("RULES_BY_MODEL", "on").lower()
+            not in ("0", "off", "false", "no"),
+            rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
+            openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
+            openrouter_model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
+            openrouter_fast_model=os.environ.get("OPENROUTER_FAST_MODEL", "openai/gpt-4.1-nano"),
+            openrouter_providers=tuple(
+                name.strip().lower()
+                for name in os.environ.get("OPENROUTER_PROVIDERS", "openai,azure").split(",")
+                if name.strip()
+            ),
+            openrouter_zdr=os.environ.get("OPENROUTER_ZDR", "off").lower()
+            in ("1", "on", "true", "yes"),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
             claude_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5"),
             claude_fast_model=os.environ.get(

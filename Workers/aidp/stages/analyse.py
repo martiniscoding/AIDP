@@ -25,8 +25,8 @@ from psycopg.types.json import Jsonb
 
 from .. import db, decisions, logs, queue, retrieval
 from ..ai import llm
-from ..config import get_config
 from ..queue import Job
+from . import embed as embed_stage
 
 log = logs.get(__name__)
 
@@ -64,7 +64,6 @@ def handle(job: Job, heartbeat) -> None:
     if not run_id:
         raise RuntimeError("analyse job has no runId in its payload")
 
-    cfg = get_config()
     if not llm.available():
         raise RuntimeError(
             "no model API key configured — assessment needs one to reach a verdict"
@@ -93,8 +92,15 @@ def handle(job: Job, heartbeat) -> None:
         _fail(run_id, "The framework contains no clauses. Ingest a reference document first.")
         raise RuntimeError("framework has no clauses")
 
+    # Before any retrieval. A document embedded under an earlier embedding model
+    # has no vectors that search can see, and a clause judged on an empty
+    # search reads as absent. See `embed.embed_missing`.
+    healed = embed_stage.embed_missing(run["documentId"], heartbeat)
+    if healed:
+        logs.info(log, "embedded missing chunks before assessing", runId=run_id, chunks=healed)
+
     pending = [c for c in clauses if c["id"] not in done]
-    _start(run_id, total=len(clauses), completed=len(done), model=cfg.gemini_model)
+    _start(run_id, total=len(clauses), completed=len(done), model=llm.model_name()[1])
     logs.info(
         log,
         "assessment started",

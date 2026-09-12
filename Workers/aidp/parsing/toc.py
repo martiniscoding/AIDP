@@ -121,25 +121,34 @@ def reconcile(
     Matching is on normalised titles, not numbers: numbers repeat and drift,
     titles do not. Page comparison allows one page of slack, since a heading
     near a page boundary is legitimately reported either side.
+
+    Titles are unique per chapter, not per document. A template repeats
+    "Architectural Gap" under every architecture domain, and keying a single
+    page per title kept only the last occurrence — so every earlier entry was
+    reported as drifting forty pages to where its namesake sits. Each title
+    keeps all its pages, and an entry is measured against the nearest.
     """
-    parsed = {normalise(title): page for title, page in sections}
+    parsed: dict[str, list[int]] = {}
+    for title, page in sections:
+        parsed.setdefault(normalise(title), []).append(page)
     missing: list[TocEntry] = []
     drift: list[tuple[str, int, int]] = []
     matched = 0
 
     for entry in entries:
-        found = parsed.get(entry.key)
-        if found is None:
+        pages = parsed.get(entry.key)
+        if pages is None:
             # A ToC title is sometimes truncated; accept a prefix match before
             # calling it missing.
-            found = next(
+            pages = next(
                 (p for key, p in parsed.items() if key.startswith(entry.key[:40]) and entry.key),
                 None,
             )
-        if found is None:
+        if pages is None:
             missing.append(entry)
             continue
         matched += 1
+        found = min(pages, key=lambda page: abs(page - entry.page))
         if abs(found - entry.page) > 1:
             drift.append((entry.title, entry.page, found))
 
