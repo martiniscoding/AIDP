@@ -814,6 +814,10 @@ model Job {
   correlationId String
   payload       Json    @default("{}")
   lastError     String?
+  // What the worker holding the job is doing: step, done/total, finished steps
+  // and when the attempt started. See Workers/aidp/progress.py and
+  // src/lib/ingest/pipeline.ts. Only a courtesy — nothing gates on it.
+  progress      Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

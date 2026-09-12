@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .. import logs
+from .. import logs, progress
 from ..ai import llm
 from . import clauses as clause_parser
 from . import sections as section_parser
@@ -832,7 +832,11 @@ def read(
         outcome.attempts.append(attempt)
         try:
             found: list[Reading] = []
-            for first, last in parts(source):
+            ranges = parts(source)
+            # A second pass is the cross-check, or the retry of a failed first.
+            label = f"Reading the rules, pass {number} of {max(readings, 1, number)}"
+            for index, (first, last) in enumerate(ranges):
+                progress.step(label, done=index, total=len(ranges))
                 part = _read_range(
                     source, first, last, title=title, attempt=attempt,
                     heartbeat=heartbeat, whole=whole,

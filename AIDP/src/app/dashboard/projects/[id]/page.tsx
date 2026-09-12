@@ -6,6 +6,8 @@ import { cn } from "@/lib/cn";
 import { requireWorkspace } from "@/lib/access/gate";
 import { canEditProject, getProject, projectDesigns } from "@/lib/ingest/projects";
 import { UploadZone } from "../../documents/UploadZone";
+import { PipelineBadge } from "../../documents/PipelineStatus";
+import { PipelineWatcher } from "../../documents/PipelineWatcher";
 import { ProjectSettings } from "./ProjectSettings";
 
 export async function generateMetadata({
@@ -39,9 +41,19 @@ export default async function ProjectPage({
   const designs = await projectDesigns(access.organisation.id, id);
   const archived = project.status !== "active";
   const mayEdit = canEditProject(access, project);
+  // Keep the page current while a design is being read or assessed; without
+  // it a fresh upload sat at its first status until someone reloaded.
+  const inFlight = designs.some(
+    (design) =>
+      (design.pipeline !== null && design.pipeline.state !== "failed") ||
+      design.runs[0]?.state === "queued" ||
+      design.runs[0]?.state === "running",
+  );
 
   return (
     <>
+      <PipelineWatcher active={inFlight} />
+
       <Link
         href="/dashboard"
         className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink/58 transition-colors hover:text-ink"
@@ -131,11 +143,20 @@ function Design({
           <p className="mt-0.5 text-[12px] text-ink/58">
             {design.status === "ready"
               ? `${design.chunks} chunks indexed`
-              : `Indexing — ${design.status}`}
+              : design.status === "failed"
+                ? "Processing failed"
+                : "Processing"}
             {design.uploadedByName ? ` · ${design.uploadedByName}` : ""}
           </p>
+          {design.pipeline && design.pipeline.state !== "failed" && (
+            <p className="mt-1.5 flex text-[12px]">
+              <PipelineBadge view={design.pipeline} />
+            </p>
+          )}
           {design.failureReason && (
-            <p className="mt-1 text-[11.5px] text-warn">{design.failureReason}</p>
+            <p className="mt-1 text-[11.5px] text-warn">
+              {design.pipeline?.failure?.summary ?? design.failureReason}
+            </p>
           )}
         </div>
 

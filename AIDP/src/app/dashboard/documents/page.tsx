@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { AlertTriangle, ArrowRight, BookMarked, FolderOpen, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { listDocuments, PIPELINE, STATUS_LABEL, isTerminal } from "@/lib/ingest/documents";
+import { listDocuments, STATUS_LABEL, isTerminal } from "@/lib/ingest/documents";
 import { requireWorkspace } from "@/lib/access/gate";
+import { PipelineBadge } from "./PipelineStatus";
 import { PipelineWatcher } from "./PipelineWatcher";
 import { ReadyTick, UploadZone } from "./UploadZone";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -218,8 +219,9 @@ function Row({ doc }: { doc: Doc }) {
  * Progress while there is progress, and nothing once there isn't.
  *
  * The rail used to render for every document regardless of state, so a shelf of
- * finished documents each carried a four-segment bar that would never move
- * again — pure noise, and it read as though something were still happening.
+ * finished documents each carried a bar that would never move again — pure
+ * noise, and it read as though something were still happening. The detail of
+ * what is happening is one click away, on the document's own page.
  */
 function Status({ doc }: { doc: Doc }) {
   if (doc.status === "failed") {
@@ -233,31 +235,17 @@ function Status({ doc }: { doc: Doc }) {
 
   if (doc.status === "ready") return <ReadyTick />;
 
-  const index = PIPELINE.indexOf(doc.status as (typeof PIPELINE)[number]);
-  // One continuous rail rather than four separate pips. The stages are a real
-  // sequence — parse, chunk, embed — so distance travelled is the honest
-  // encoding, and the leading edge is where the work currently is.
-  const travelled = Math.max(0, index) / (PIPELINE.length - 1);
-
-  return (
-    <span className="flex shrink-0 items-center gap-2.5">
-      <span
-        aria-hidden="true"
-        className="relative hidden h-1 w-16 overflow-hidden rounded-full bg-canvas-sunk sm:block"
-      >
-        <span
-          className="absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-royal to-royal-mid transition-[width] duration-700 ease-out"
-          style={{ width: `${Math.max(travelled * 100, 6)}%` }}
-        />
-        {/* The head of the rail glows where the pipeline is working. */}
-        <span
-          className="absolute inset-y-0 w-2 rounded-full bg-royal blur-[2px] transition-[left] duration-700 ease-out"
-          style={{ left: `calc(${Math.max(travelled * 100, 6)}% - 6px)` }}
-        />
-      </span>
-      <span className="text-[11.5px] whitespace-nowrap text-ink/68">
+  if (!doc.pipeline) {
+    return (
+      <span className="shrink-0 text-[11.5px] whitespace-nowrap text-ink/68">
         {STATUS_LABEL[doc.status] ?? doc.status}
       </span>
+    );
+  }
+
+  return (
+    <span className="flex max-w-[55%] min-w-0 justify-end">
+      <PipelineBadge view={doc.pipeline} />
     </span>
   );
 }

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from .. import db, logs, queue
+from .. import db, logs, progress, queue
 from ..ai import embeddings
 from ..config import get_config
 from ..queue import Job
@@ -74,6 +74,7 @@ def embed_missing(
     if on_start is not None:
         on_start()
     logs.info(log, "embedding", chunks=len(pending), model=model, dims=cfg.embedding_dims)
+    progress.step("Embedding passages", done=0, total=len(pending))
 
     vectors: list[tuple[str, str]] = []
     for start in range(0, len(pending), embeddings.BATCH_SIZE):
@@ -84,7 +85,9 @@ def embed_missing(
             for row, vector in zip(window, result, strict=True)
         )
         heartbeat()
+        progress.step("Embedding passages", done=len(vectors), total=len(pending))
 
+    progress.step("Saving the index")
     with db.transaction() as conn:
         for start in range(0, len(vectors), _WRITE_BATCH):
             for chunk_id, literal in vectors[start : start + _WRITE_BATCH]:

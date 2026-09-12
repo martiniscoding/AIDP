@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireMembership } from "./org";
+import { describePipeline, JOB_SELECT, STAGES, type JobRow } from "./pipeline";
 
 /**
  * Reads over ingested documents, always scoped to an organisation the caller
@@ -10,7 +11,10 @@ import { requireMembership } from "./org";
  * straight into a query is the whole class of bug this is shaped to prevent.
  */
 
-/** The pipeline, in order. Drives the progress rail in the UI. */
+/**
+ * A document's statuses, in order. What each stage is doing inside that status
+ * comes from its job — see `describePipeline` in ./pipeline.ts.
+ */
 export const PIPELINE = ["pending", "parsing", "chunking", "embedding", "ready"] as const;
 export type Status = (typeof PIPELINE)[number] | "failed";
 
@@ -62,13 +66,32 @@ export async function listDocuments(userId: string, organisationId: string) {
     },
   });
 
+  // Jobs only for documents still on their way in; a finished one shows a tick.
+  const unfinished = documents.filter((doc) => doc.status !== "ready").map((doc) => doc.id);
+
   // One grouped query rather than N per document — the library lists every
   // document an organisation has, and issue counts are shown on each row.
-  const issues = await prisma.ingestIssue.groupBy({
-    by: ["documentId", "severity"],
-    where: { document: { organisationId }, kind: { notIn: UNANNOUNCED } },
-    _count: { _all: true },
-  });
+  const [issues, jobs] = await Promise.all([
+    prisma.ingestIssue.groupBy({
+      by: ["documentId", "severity"],
+      where: { document: { organisationId }, kind: { notIn: UNANNOUNCED } },
+      _count: { _all: true },
+    }),
+    unfinished.length
+      ? prisma.job.findMany({
+          where: { documentId: { in: unfinished }, stage: { in: [...STAGES] } },
+          select: { documentId: true, ...JOB_SELECT },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const jobsByDocument = new Map<string, JobRow[]>();
+  for (const { documentId, ...job } of jobs) {
+    const list = jobsByDocument.get(documentId) ?? [];
+    list.push(job);
+    jobsByDocument.set(documentId, list);
+  }
+  const now = new Date();
 
   const bySeverity = new Map<string, { high: number; medium: number; low: number }>();
   for (const row of issues) {
@@ -82,6 +105,8 @@ export async function listDocuments(userId: string, organisationId: string) {
   return documents.map((doc) => ({
     ...doc,
     issues: bySeverity.get(doc.id) ?? { high: 0, medium: 0, low: 0 },
+    pipeline:
+      doc.status === "ready" ? null : describePipeline(doc, jobsByDocument.get(doc.id) ?? [], now),
   }));
 }
 
@@ -102,6 +127,7 @@ export async function getDocument(userId: string, documentId: string) {
         },
       },
       _count: { select: { chunks: true } },
+      jobs: { where: { stage: { in: [...STAGES] } }, select: JOB_SELECT },
     },
   });
   if (!document) return null;
@@ -109,7 +135,8 @@ export async function getDocument(userId: string, documentId: string) {
   // Membership is checked against the row's own organisation, so a guessed id
   // cannot be used to confirm that a document exists.
   await requireMembership(userId, document.organisationId);
-  return document;
+  const { jobs, ...rest } = document;
+  return { ...rest, pipeline: describePipeline(rest, jobs) };
 }
 
 /** Live pipeline state for the status poller. Cheap enough to hit on a timer. */

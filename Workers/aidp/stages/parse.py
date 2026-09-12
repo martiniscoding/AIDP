@@ -34,7 +34,7 @@ import re
 import fitz
 from psycopg.types.json import Jsonb
 
-from .. import db, logs, queue, storage
+from .. import db, logs, progress, queue, storage
 from ..ai import llm
 from ..config import get_config
 from ..parsing import (
@@ -117,7 +117,9 @@ def handle(job: Job, heartbeat) -> None:
         raise RuntimeError(f"document {job.document_id} no longer exists")
 
     _set_status(job.document_id, "parsing")
+    progress.step("Fetching the file")
     raw = storage.storage().get(document["storageKey"])
+    progress.step("Reading text, headings and tables")
 
     if _is_word(document):
         result = _parse_word(raw, document, heartbeat)
@@ -210,6 +212,7 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         # to read the structure before falling back to treating the whole file
         # as one blob — it costs one call per 120 lines, once, and only ever
         # runs on a document that would otherwise be worth nothing.
+        progress.step("Working out the headings with a model")
         read = ai_structure.structure(content, document_title=out.title)
         if read.sections:
             _adopt_structure(out, read)
@@ -617,6 +620,7 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     out.profile = "slide-deck"
     heartbeat()
 
+    progress.step("Working out the headings with a model")
     read = ai_structure.structure(
         deck.lines,
         document_title=out.title,
@@ -756,6 +760,7 @@ def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
     out.profile = "workbook"
     heartbeat()
 
+    progress.step("Working out the headings with a model")
     read = ai_structure.structure(book.lines, document_title=out.title, hints=book.hints)
     if read.sections:
         _adopt_structure(out, read)
@@ -1182,9 +1187,11 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
     # pin a connection for minutes.
     described: dict[tuple[int, int], tuple[str, str]] = {}
     if llm.available():
+        total = sum(len(figure_list) for figure_list in out.figures.values())
         for section_index, figure_list in out.figures.items():
             section = out.sections[section_index]
             for ordinal, figure in enumerate(figure_list, start=1):
+                progress.step("Describing figures", done=len(described), total=total)
                 key = store.put(
                     storage.figure_key(job.document_id, figure.page, ordinal),
                     figure.png,
@@ -1231,6 +1238,7 @@ def _persist(job: Job, document: dict, out: _Result) -> None:
 
     rules_schema = _rules_schema()
 
+    progress.step("Saving what was read")
     with db.transaction() as conn:
         # Re-parsing replaces: sections cascade to clauses, tables and figures.
         db.execute(

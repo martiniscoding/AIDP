@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, ImageIcon, Info, Table2 } from "lucide-react"
 import { auth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
+import { formatDuration } from "@/lib/ingest/pipeline";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
@@ -21,6 +22,7 @@ import { SetAside } from "./SetAside";
 import { setAside } from "@/lib/ingest/rules";
 import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
+import { PipelineStatus } from "../PipelineStatus";
 import { PipelineWatcher } from "../PipelineWatcher";
 
 export const dynamic = "force-dynamic";
@@ -153,6 +155,8 @@ export default async function DocumentPage({
       <PipelineWatcher
         active={
           !isTerminal(document.status) ||
+          // A ready document can be working again: a corrected figure re-embeds.
+          (document.pipeline.state !== "ready" && document.pipeline.state !== "failed") ||
           run?.state === "queued" ||
           run?.state === "running"
         }
@@ -173,6 +177,9 @@ export default async function DocumentPage({
           </h1>
           <p className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-ink/64">
             <span className="text-ink/72">{STATUS_LABEL[document.status] ?? document.status}</span>
+            {document.pipeline.state === "ready" && document.pipeline.tookMs !== null && (
+              <span>Processed in {formatDuration(document.pipeline.tookMs)}</span>
+            )}
             {document.docCode && <span>{document.docCode}</span>}
             {document.version && <span>{document.version}</span>}
             {document.pageCount != null && <span>{document.pageCount} pages</span>}
@@ -190,7 +197,12 @@ export default async function DocumentPage({
         )}
       </header>
 
-      {document.failureReason && (
+      {/* Until the document is in, where it has got to is the whole story. */}
+      {document.pipeline.state !== "ready" && (
+        <PipelineStatus view={document.pipeline} canRerun={mayChange} />
+      )}
+
+      {document.failureReason && document.pipeline.state !== "failed" && (
         <p className="mb-6 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
           {document.failureReason}
         </p>

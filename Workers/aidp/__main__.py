@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import db, logs, queue, usage
+from . import db, logs, progress, queue, usage
 from .config import get_config
 from .stages import analyse as analyse_stage
 from .stages import chunk as chunk_stage
@@ -120,6 +120,8 @@ def main() -> int:
                 job.payload.get("runId"),
             )
         )
+        # What the job is doing, for the page a person is watching. See progress.py.
+        progress.bind(job.id, cfg.worker_id, job.attempts)
         started = time.monotonic()
 
         def heartbeat(job_id: str = job.id) -> None:
@@ -146,6 +148,7 @@ def main() -> int:
         finally:
             logs.bind(correlation_id=None, document_id=None)
             usage.bind(None)
+            progress.bind(None)
 
     db.close()
     logs.info(log, "worker stopped", stage=cfg.stage)

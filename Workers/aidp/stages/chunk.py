@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .. import db, logs, queue
+from .. import db, logs, progress, queue
 from ..ai import llm
 from ..config import get_config
 from ..queue import Job
@@ -93,6 +93,7 @@ def handle(job: Job, heartbeat) -> None:
         )
 
     _set_status(job.document_id, "chunking")
+    progress.step("Building passages")
     drafts = _build(document, sections, clauses, table_blocks, figures)
     if not drafts:
         raise RuntimeError("no chunks produced — the document parsed to nothing usable")
@@ -101,9 +102,11 @@ def handle(job: Job, heartbeat) -> None:
     # The document's own purpose, written once from the whole of it. Done here
     # rather than in parse because this is where the whole document is already
     # assembled for the preambles, and it is one call either way.
+    progress.step("Summarising the document")
     summary = _summarise(document, sections)
     heartbeat()
     _contextualise(document, sections, drafts)
+    progress.step(f"Saving {len(drafts)} passages")
     _persist(job, document, drafts, summary)
 
 
@@ -294,6 +297,7 @@ def _contextualise(document: dict, sections: list[dict], drafts: list[_Draft]) -
         return
 
     document_text = _document_text(sections)
+    progress.step(f"Writing context for {len(drafts)} passages")
     try:
         contexts = llm.contextualise_many(
             document_text, [d.body for d in drafts], title=document["title"]

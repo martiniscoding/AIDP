@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { canManageStandards } from "@/lib/access/roles";
 import type { Access } from "@/lib/access/gate";
+import { describePipeline, JOB_SELECT, STAGES, type PipelineView } from "./pipeline";
 
 /**
  * Projects — the unit of work.
@@ -235,6 +236,8 @@ export type ProjectDesign = {
   id: string;
   title: string;
   status: string;
+  /** Where processing has got to, or null once the design is indexed. */
+  pipeline: PipelineView | null;
   failureReason: string | null;
   pageCount: number | null;
   chunks: number;
@@ -268,6 +271,7 @@ export async function projectDesigns(
       createdAt: true,
       uploadedBy: { select: { name: true, email: true } },
       _count: { select: { chunks: true } },
+      jobs: { where: { stage: { in: [...STAGES] } }, select: JOB_SELECT },
       runs: {
         orderBy: { startedAt: "desc" },
         select: {
@@ -282,10 +286,13 @@ export async function projectDesigns(
     },
   });
 
+  const now = new Date();
   return documents.map((document) => ({
     id: document.id,
     title: document.title,
     status: document.status,
+    pipeline:
+      document.status === "ready" ? null : describePipeline(document, document.jobs, now),
     failureReason: document.failureReason,
     pageCount: document.pageCount,
     chunks: document._count.chunks,
