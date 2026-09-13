@@ -56,6 +56,8 @@ export type RunView = {
   mode: string;
   /** Why the run did not use the mode it was asked for, when it did not. */
   note: string | null;
+  /** Queued or running with no job a worker could take, so it will never move. */
+  orphaned: boolean;
 } | null;
 
 const TONE: Record<string, string> = {
@@ -118,8 +120,11 @@ export function Assessment({
    * pinned at 0. Nothing was assessing anything. A run nobody has picked up
    * needs to look like one, because the fix is to go and start a worker.
    */
-  const queued = run?.state === "queued";
-  const assessing = run?.state === "running";
+  // A run with no job behind it is neither: it is stuck, and the buttons stay
+  // live so it can be started again. See `latestRun`.
+  const orphaned = run?.orphaned === true;
+  const queued = run?.state === "queued" && !orphaned;
+  const assessing = run?.state === "running" && !orphaned;
   const inFlight = queued || assessing;
   const shown = applyLens(findings, lens);
   const reviewed = findings.filter((finding) => finding.reviewerState !== "pending").length;
@@ -212,6 +217,14 @@ export function Assessment({
       </div>
 
       {message && <p className="mb-3 text-[12.5px] text-ink/68">{message}</p>}
+
+      {orphaned && (
+        <p className="mb-4 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
+          This assessment never started. It is marked {run?.state}, but there is nothing queued for
+          a worker to pick up — its job was removed, most often by re-processing the document — so
+          it will not move on its own. Start it again with one of the buttons above.
+        </p>
+      )}
 
       {run?.failureReason && (
         <p className="mb-4 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">

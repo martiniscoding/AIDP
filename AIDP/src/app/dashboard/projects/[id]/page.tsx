@@ -46,8 +46,8 @@ export default async function ProjectPage({
   const inFlight = designs.some(
     (design) =>
       (design.pipeline !== null && design.pipeline.state !== "failed") ||
-      design.runs[0]?.state === "queued" ||
-      design.runs[0]?.state === "running",
+      (!design.runs[0]?.orphaned &&
+        (design.runs[0]?.state === "queued" || design.runs[0]?.state === "running")),
   );
 
   return (
@@ -126,7 +126,8 @@ function Design({
   design: Awaited<ReturnType<typeof projectDesigns>>[number];
 }) {
   const latest = design.runs[0];
-  const running = latest?.state === "running" || latest?.state === "queued";
+  const running =
+    !latest?.orphaned && (latest?.state === "running" || latest?.state === "queued");
 
   return (
     <Link
@@ -162,7 +163,9 @@ function Design({
 
         <div className="text-right text-[11.5px]">
           {latest ? (
-            running ? (
+            latest.orphaned ? (
+              <span className="text-warn">Assessment never started — start it again</span>
+            ) : running ? (
               <span className="text-ink/64">
                 Assessing {latest.completedClauses}/{latest.totalClauses}
               </span>

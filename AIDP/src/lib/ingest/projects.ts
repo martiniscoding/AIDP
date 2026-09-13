@@ -251,6 +251,8 @@ export type ProjectDesign = {
     startedAt: Date;
     findings: number;
     open: number;
+    /** Queued or running with no analyse job behind it, so it will never move. */
+    orphaned: boolean;
   }[];
 };
 
@@ -270,7 +272,12 @@ export async function projectDesigns(
       pageCount: true,
       createdAt: true,
       uploadedBy: { select: { name: true, email: true } },
-      _count: { select: { chunks: true } },
+      _count: {
+        select: {
+          chunks: true,
+          jobs: { where: { stage: "analyse", state: { in: ["queued", "leased"] } } },
+        },
+      },
       jobs: { where: { stage: { in: [...STAGES] } }, select: JOB_SELECT },
       runs: {
         orderBy: { startedAt: "desc" },
@@ -308,6 +315,8 @@ export async function projectDesigns(
       open: run.findings.filter(
         (finding) => finding.verdict === "contradicts" || finding.verdict === "absent",
       ).length,
+      orphaned:
+        (run.state === "queued" || run.state === "running") && document._count.jobs === 0,
     })),
   }));
 }

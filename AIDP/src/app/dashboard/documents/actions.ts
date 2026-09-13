@@ -127,6 +127,19 @@ export async function reprocessDocument(documentId: string): Promise<ActionResul
     if (refused) return refused;
 
     await prisma.$transaction(async (tx) => {
+      // Deleting the jobs deletes a waiting analyse job too, and a run left
+      // "queued" without one is never picked up — while still holding the
+      // document's one live-run slot, so every later assessment is refused.
+      // The run was of the old reading anyway: stop it, and say why.
+      await tx.assessmentRun.updateMany({
+        where: { documentId, state: { in: ["queued", "running"] } },
+        data: {
+          state: "failed",
+          failureReason:
+            "Stopped because the document was re-processed. Assess it again once it has been read.",
+          completedAt: new Date(),
+        },
+      });
       await tx.job.deleteMany({ where: { documentId } });
       await tx.document.update({
         where: { id: documentId },
@@ -233,6 +246,30 @@ export async function startAssessment(
     }
 
     const runId = await prisma.$transaction(async (tx) => {
+      // A live run with no live analyse job will never move: its job was
+      // removed before a worker took it. It still holds the one live-run slot,
+      // so it is cleared here rather than refusing this attempt too. Only runs
+      // older than a minute, so a double-click cannot clear the run the first
+      // click has just committed.
+      const liveJobs = await tx.job.count({
+        where: { documentId, stage: "analyse", state: { in: ["queued", "leased"] } },
+      });
+      if (liveJobs === 0) {
+        await tx.assessmentRun.updateMany({
+          where: {
+            documentId,
+            state: { in: ["queued", "running"] },
+            startedAt: { lt: new Date(Date.now() - 60_000) },
+          },
+          data: {
+            state: "failed",
+            failureReason:
+              "This assessment never started: its job was lost before a worker picked it up. It was replaced by a new one.",
+            completedAt: new Date(),
+          },
+        });
+      }
+
       const run = await tx.assessmentRun.create({
         data: {
           organisationId: document.organisationId,

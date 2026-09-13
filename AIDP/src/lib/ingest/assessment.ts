@@ -95,7 +95,7 @@ export async function latestRun(userId: string, documentId: string) {
   if (!document) return null;
   await requireMembership(userId, document.organisationId);
 
-  return prisma.assessmentRun.findFirst({
+  const run = await prisma.assessmentRun.findFirst({
     where: { documentId },
     orderBy: { startedAt: "desc" },
     include: {
@@ -103,6 +103,19 @@ export async function latestRun(userId: string, documentId: string) {
       _count: { select: { findings: true } },
     },
   });
+  if (!run) return null;
+
+  // A run that says it is waiting, with no job for a worker to take, is not
+  // waiting for anything. Its job was removed — re-processing a document used to
+  // clear every job, analyse included — and nothing will ever start it, while
+  // the page disabled every way of starting another.
+  const live = run.state === "queued" || run.state === "running";
+  const orphaned =
+    live &&
+    (await prisma.job.count({
+      where: { documentId, stage: "analyse", state: { in: ["queued", "leased"] } },
+    })) === 0;
+  return { ...run, orphaned };
 }
 
 export async function verdictCounts(runId: string): Promise<VerdictCounts> {

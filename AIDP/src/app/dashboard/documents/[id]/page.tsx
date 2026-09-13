@@ -102,6 +102,7 @@ export default async function DocumentPage({
         failureReason: run.failureReason,
         mode: run.mode,
         note: run.note,
+        orphaned: run.orphaned,
       }
     : null;
 
@@ -157,8 +158,7 @@ export default async function DocumentPage({
           !isTerminal(document.status) ||
           // A ready document can be working again: a corrected figure re-embeds.
           (document.pipeline.state !== "ready" && document.pipeline.state !== "failed") ||
-          run?.state === "queued" ||
-          run?.state === "running"
+          (!run?.orphaned && (run?.state === "queued" || run?.state === "running"))
         }
       />
 
