@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { canManageStandards } from "@/lib/access/roles";
 import type { Access } from "@/lib/access/gate";
 import { describePipeline, JOB_SELECT, STAGES, type PipelineView } from "./pipeline";
+import { designResult, type CompletedRun, type DesignResult } from "./results";
 
 /**
  * Projects — the unit of work.
@@ -103,8 +104,9 @@ export async function listProjects(organisationId: string): Promise<ProjectSumma
     const projectId = finding.run.document.projectId;
     if (!projectId) continue;
     const entry = health.get(projectId) ?? { open: 0, unreviewed: 0 };
-    if (finding.verdict === "contradicts" || finding.verdict === "absent") entry.open += 1;
-    if (finding.reviewerState === "pending") entry.unreviewed += 1;
+    // Not "absent": a clause the design is silent on is no longer reported.
+    if (finding.verdict === "contradicts") entry.open += 1;
+    if (finding.reviewerState === "pending" && finding.verdict !== "absent") entry.unreviewed += 1;
     health.set(projectId, entry);
   }
 
@@ -243,6 +245,8 @@ export type ProjectDesign = {
   chunks: number;
   uploadedByName: string;
   createdAt: Date;
+  /** The latest finished assessment, read-only, or null when none has finished. */
+  result: DesignResult | null;
   runs: {
     id: string;
     state: string;
@@ -255,6 +259,24 @@ export type ProjectDesign = {
     orphaned: boolean;
   }[];
 };
+
+/**
+ * A design's last finished result, noting when a newer run is under way — one
+ * that is actually moving, so a run left without a job does not hide nothing.
+ */
+function resultFor(
+  run: CompletedRun | undefined,
+  latest: { id: string; state: string } | undefined,
+  liveJob: boolean,
+): DesignResult | null {
+  if (!run) return null;
+  const newer =
+    latest !== undefined &&
+    latest.id !== run.id &&
+    (latest.state === "queued" || latest.state === "running") &&
+    liveJob;
+  return designResult(run, newer);
+}
 
 /** The designs inside one project, with the state of each assessment on them. */
 export async function projectDesigns(
@@ -293,11 +315,52 @@ export async function projectDesigns(
     },
   });
 
+  // Each design's latest *finished* assessment, whatever is running now: the page
+  // shows a result beneath its design, and a run still in progress has none yet.
+  // One query for the project, not one per design.
+  const completed = documents.length
+    ? await prisma.assessmentRun.findMany({
+        where: { documentId: { in: documents.map((document) => document.id) }, state: "complete" },
+        orderBy: { startedAt: "desc" },
+        distinct: ["documentId"],
+        select: {
+          id: true,
+          documentId: true,
+          mode: true,
+          model: true,
+          note: true,
+          completedAt: true,
+          coverage: true,
+          framework: { select: { name: true, version: true } },
+          findings: {
+            select: {
+              id: true,
+              clauseRef: true,
+              clauseTitle: true,
+              clauseStatement: true,
+              verdict: true,
+              confidence: true,
+              rationale: true,
+              evidence: true,
+              reviewerState: true,
+              reviewerVerdict: true,
+            },
+          },
+        },
+      })
+    : [];
+  const finished = new Map(completed.map((run) => [run.documentId, run]));
+
   const now = new Date();
   return documents.map((document) => ({
     id: document.id,
     title: document.title,
     status: document.status,
+    result: resultFor(
+      finished.get(document.id),
+      document.runs[0],
+      document._count.jobs > 0,
+    ),
     pipeline:
       document.status === "ready" ? null : describePipeline(document, document.jobs, now),
     failureReason: document.failureReason,
@@ -311,10 +374,9 @@ export async function projectDesigns(
       totalClauses: run.totalClauses,
       completedClauses: run.completedClauses,
       startedAt: run.startedAt,
-      findings: run.findings.length,
-      open: run.findings.filter(
-        (finding) => finding.verdict === "contradicts" || finding.verdict === "absent",
-      ).length,
+      // As the report counts them: a clause the design is silent on is not shown.
+      findings: run.findings.filter((finding) => finding.verdict !== "absent").length,
+      open: run.findings.filter((finding) => finding.verdict === "contradicts").length,
       orphaned:
         (run.state === "queued" || run.state === "running") && document._count.jobs === 0,
     })),
