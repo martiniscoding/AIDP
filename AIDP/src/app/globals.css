@@ -458,39 +458,58 @@ body {
  *     because `royal` is both a text colour and a button ground.
  * ------------------------------------------------------------------ */
 .app-dark {
-  /* Grounds. The card/canvas step is 1.25:1 — wider than the light
-     theme's 1.13:1, because on dark a too-close step reads as a smudge
-     rather than as an edge. */
-  --color-canvas: #0b0813;
-  --color-canvas-sunk: #06040c;
-  --color-card: #15111f;
+  /* Grounds. Indigo-violet, not near-black. The interior used to sit on
+     #0b0813, which beside the accent reads as plain black and leaves the
+     violet stranded in the header band. The light theme puts its hue in the
+     paper rather than saving it for buttons; this does the same thing in the
+     other direction, so the colour is the ground rather than a decoration
+     laid over it.
 
-  /* The anchor band, unchanged. On paper this was the one dark block; here
-     it is the one *saturated* one, which is what keeps the header from
-     dissolving into the page. It still carries white copy either way. */
-  --color-deep: #2e1065;
+     The card/canvas step widens with it — 1.07:1 on the old near-black,
+     1.16:1 here by relative luminance — so a panel reads as a panel more
+     clearly than it did, and the separation is carried by hue as much as by
+     lightness. */
+  --color-canvas: #110c28;
+  --color-canvas-sunk: #0b0820;
+  --color-card: #201847;
+
+  /* The anchor band. On paper this was the one dark block; here it is the
+     one *saturated* one, which is what keeps the header from dissolving into
+     the page — and now that the page itself carries violet, the band has to
+     push further to stay separate: it sat 1.30:1 off the old near-black
+     ground and sits 1.58:1 off this one. White copy reads 12.0:1 on it,
+     royal-light 8.3:1. */
+  --color-deep: #3f1594;
   --color-royal-light: #ddd0ff;
 
-  /* Hairlines, now lifting off the ground instead of settling onto it.
-     Still violet-tinted: a neutral grey rule on a violet-black ground
-     reads as dust. */
-  --color-line-soft: #1d1730;
-  --color-line: #2b2344;
-  --color-line-strong: #453a66;
+  /* Hairlines, lifting off the ground instead of settling onto it, and
+     carrying the same violet the surfaces do — a neutral grey rule here
+     reads as dust. Strengthened alongside the grounds so an edge still
+     registers against a lighter card: line-strong is 2.47:1 against one,
+     where on the near-black build it was 1.81:1. */
+  --color-line-soft: #2b2352;
+  --color-line: #3b3170;
+  --color-line-strong: #61519c;
 
   /* Foreground. Near-white with the same violet cast the ink had, so the
      alpha rungs the app already uses stay warm against the ground rather
-     than going grey. Measured on --color-canvas: /58 is 5.7:1 and /40 is
-     3.2:1, so the existing floors hold — /58 and up is body copy, below
-     /50 is meta and decoration. */
+     than going grey. Measured on --color-canvas: /58 is 5.97:1 and /40 is
+     3.44:1, and on the lighter card 5.55:1 and 3.36:1 — the card is the
+     tighter of the two and is what the floors are set by, so /58 and up is
+     body copy and below /50 is meta and decoration. Brightening the grounds
+     past this point is what would start to cost body text. */
   --color-ink: #efecf9;
 
   /* The ladder, inverted. These are text colours first now; the fill rule
-     below is what makes them safe as grounds. */
+     below is what makes them safe as grounds. Lifted with the grounds so the
+     accent stays ahead of them rather than sinking in: accent text reads
+     9.1:1 on the canvas where it read 7.3:1 on the near-black build, and the
+     tint is far enough off a card (1.26:1) to be a surface in its own right
+     rather than a smudge on one. */
   --color-royal-deep: #d3c4ff;
-  --color-royal: #a78bfa;
-  --color-royal-mid: #b9a2fc;
-  --color-royal-tint: #241c3d;
+  --color-royal: #bfa6ff;
+  --color-royal-mid: #cdb9ff;
+  --color-royal-tint: #332764;
 
   /* Status. The 400s, which clear 7:1 on this ground where the light
      theme's 700s would sit at barely 2:1. Tints are the same hue pulled
@@ -521,12 +540,12 @@ body {
    `:has` lets the root follow the shell without the root layout needing to
    know which route is rendering. */
 html:has(.app-dark) {
-  background-color: #0b0813;
+  background-color: #110c28;
   color-scheme: dark;
 }
 
 html:has(.app-dark) body {
-  background-color: #0b0813;
+  background-color: #110c28;
 }
 
 /* Paper tooth becomes light scatter. `multiply` over near-black is a no-op —
@@ -552,14 +571,14 @@ body.grain:has(.app-dark)::after {
 .app-dark .card-sheen {
   background-image: linear-gradient(
     152deg,
-    rgb(167 139 250 / 0.10),
-    rgb(167 139 250 / 0.03) 38%,
-    rgb(167 139 250 / 0) 68%
+    rgb(191 166 255 / 0.17),
+    rgb(191 166 255 / 0.05) 38%,
+    rgb(191 166 255 / 0) 68%
   );
 }
 
 .app-dark .header-bloom {
-  background-image: radial-gradient(62% 140% at 0% 0%, rgb(139 92 246 / 0.22), transparent 64%);
+  background-image: radial-gradient(62% 140% at 0% 0%, rgb(150 105 255 / 0.36), transparent 64%);
 }
 
 .app-dark ::selection {
@@ -571,12 +590,15 @@ body.grain:has(.app-dark)::after {
  *
  * This is the one thing the tokens cannot say on their own. `royal` is both
  * the colour of 23 pieces of accent text and the ground of 14 filled
- * buttons, and on near-black those two pull in opposite directions: text
+ * buttons, and on this ground those two pull in opposite directions: text
  * has to be light to be read, and a light ground cannot carry white type
- * (#a78bfa under white is 1.9:1).
+ * (#bfa6ff under white is 2.1:1 — and the brighter the accent gets, the
+ * worse that gets, which is what keeps this rule necessary).
  *
  * So the token goes light for the text, and the fills flip their label
- * here — the standard dark-theme inversion, and 7.1:1 either way.
+ * here — the standard dark-theme inversion, and 8.6:1 either way. The label
+ * itself carries the interior's violet rather than a neutral near-black, so
+ * a filled button reads as part of the same palette as the page under it.
  *
  * Only opaque fills are matched. `bg-royal/10` and `bg-royal-tint` are
  * different class names, and a violet wash still wants the light
@@ -591,5 +613,5 @@ body.grain:has(.app-dark)::after {
 .app-dark .bg-ok,
 .app-dark .bg-warn,
 .app-dark .bg-danger {
-  color: #120d1f;
+  color: #191038;
 }
