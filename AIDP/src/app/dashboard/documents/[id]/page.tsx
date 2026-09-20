@@ -6,6 +6,9 @@ import { auth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
 import { formatDuration } from "@/lib/ingest/pipeline";
+import { readCoverage } from "@/lib/ingest/coverage";
+import { readAdvice } from "@/lib/ingest/advice";
+import { readLifecycle } from "@/lib/ingest/lifecycle";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
@@ -13,6 +16,7 @@ import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
+import { currentUser } from "@/lib/access/gate";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Comparison } from "./Comparison";
 import { compareModes } from "@/lib/ingest/comparison";
@@ -87,7 +91,12 @@ export default async function DocumentPage({
   // assessed against.
   const assessed = document.role === "assessed";
   const run = assessed ? await latestRun(session.user.id, document.id) : null;
-  const findings = run ? await listFindings(session.user.id, run.id) : [];
+  // A clause the design says nothing about is no longer reported. The report's
+  // "Absent" section is the reverse question — the parts of the design no clause
+  // governs (run.coverage) — so these stay on record and out of the report.
+  const findings = run
+    ? (await listFindings(session.user.id, run.id)).filter((f) => f.verdict !== "absent")
+    : [];
   const counts: VerdictCounts = run ? await verdictCounts(run.id) : emptyCounts();
 
   const runView: RunView = run
@@ -103,11 +112,22 @@ export default async function DocumentPage({
         mode: run.mode,
         note: run.note,
         orphaned: run.orphaned,
+        job: run.job,
+        coverage: readCoverage(run.coverage),
+        advice: readAdvice(run.advice),
+        lifecycle: readLifecycle(run.lifecycle),
       }
     : null;
 
-  // Search and whole-document verdicts side by side, once both have run.
-  const comparison = assessed ? await compareModes(session.user.id, document.id) : null;
+  // Search and whole-document verdicts side by side. A design is assessed one
+  // way now — searched, with anything that looks absent re-read against the whole
+  // document — so this is a diagnostic for whoever tunes the system, kept for the
+  // runs that were made both ways, and shown to the operator alone.
+  const operator = await currentUser();
+  const comparison =
+    assessed && operator?.isPlatformAdmin
+      ? await compareModes(session.user.id, document.id)
+      : null;
 
   // Which of these reviews were already kept as decisions, so the report can
   // say so rather than inviting the same ruling to be recorded twice.
@@ -127,9 +147,7 @@ export default async function DocumentPage({
         }))
       : [];
   const unreviewed = findings.filter((f) => f.reviewerState === "pending").length;
-  const openFindings = findings.filter(
-    (f) => f.verdict === "contradicts" || f.verdict === "absent",
-  ).length;
+  const openFindings = findings.filter((f) => f.verdict === "contradicts").length;
   const promoted = await promotedFrom(
     document.organisationId,
     findings.map((f) => f.id),
@@ -158,7 +176,9 @@ export default async function DocumentPage({
           !isTerminal(document.status) ||
           // A ready document can be working again: a corrected figure re-embeds.
           (document.pipeline.state !== "ready" && document.pipeline.state !== "failed") ||
-          (!run?.orphaned && (run?.state === "queued" || run?.state === "running"))
+          (!run?.orphaned && (run?.state === "queued" || run?.state === "running")) ||
+          // A new set of suggestions asked for on a finished report.
+          runView?.advice?.refreshing === true
         }
       />
 

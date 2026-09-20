@@ -138,7 +138,9 @@ export function Decide({
                     {entry.snapshot.unreviewed > 0 &&
                       `, ${entry.snapshot.unreviewed} unreviewed`}
                     {Object.entries(entry.snapshot.verdicts)
-                      .filter(([, n]) => n > 0)
+                      // A clause-level "absent" is no longer reported; an older
+                      // record's count of them would read as the new meaning.
+                      .filter(([verdict, n]) => n > 0 && verdict !== "absent")
                       .map(([verdict, n]) => ` · ${n} ${verdict.replace(/_/g, " ")}`)
                       .join("")}
                   </p>
@@ -151,7 +153,7 @@ export function Decide({
 
       {(unreviewed > 0 || open > 0) && !chosen && (
         <p className="mb-3 text-[12.5px] text-warn">
-          {open > 0 && `${open} finding${open === 1 ? "" : "s"} still contradict or are unaddressed`}
+          {open > 0 && `${open} finding${open === 1 ? "" : "s"} still contradict the standards`}
           {open > 0 && unreviewed > 0 && " · "}
           {unreviewed > 0 && `${unreviewed} not yet reviewed`}
         </p>

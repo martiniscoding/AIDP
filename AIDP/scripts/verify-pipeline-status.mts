@@ -9,6 +9,7 @@
  * Run with:  npx tsx scripts/verify-pipeline-status.mts
  */
 import {
+  describeJob,
   describePipeline,
   explain,
   formatDuration,
@@ -243,6 +244,52 @@ console.log("\nExplaining errors");
   ok("nothing to explain", explain(null) === null && explain("   ") === null);
   const long = explain(`RuntimeError: ${"x".repeat(400)}`);
   ok("a long message is cut to a readable length", (long?.summary.length ?? 0) <= 220 && long?.detail !== null, long?.summary.length);
+}
+
+console.log("\nOne job on its own, as an assessment reads it");
+{
+  const waiting = describeJob(job("analyse"), NOW);
+  ok("an unclaimed job is queued, and counts how long", waiting.state === "queued" && waiting.sinceMs === 10_000, waiting);
+
+  const picked = describeJob(
+    job("analyse", {
+      state: "leased",
+      attempts: 1,
+      leaseUntil: ahead(300_000),
+      progress: report(1, { step: "Embedding passages", done: 40, total: 96 }),
+    }),
+    NOW,
+  );
+  ok(
+    "a claimed job is running, with what it is doing",
+    picked.state === "running" && picked.step === "Embedding passages" && picked.done === 40 && picked.sinceMs === 90_000,
+    picked,
+  );
+
+  const retry = describeJob(
+    job("analyse", { attempts: 1, runAfter: ahead(8_000), lastError: "QuotaExhausted: openrouter 402" }),
+    NOW,
+  );
+  ok(
+    "a released job is retrying, with why and when",
+    retry.state === "retrying" && retry.retryInMs === 8_000 && /credits/.test(retry.problem?.summary ?? ""),
+    retry,
+  );
+
+  const died = describeJob(
+    job("analyse", { state: "leased", attempts: 2, leaseUntil: ago(1_000), progress: report(2, { step: "Assessing clauses" }) }),
+    NOW,
+  );
+  ok("a job past its lease is stalled", died.state === "stalled" && died.step === "Assessing clauses", died);
+
+  const dead = describeJob(job("analyse", { state: "dead", attempts: 5 }), NOW, "RuntimeError: boom");
+  ok("a dead job falls back to the reason recorded elsewhere", dead.state === "failed" && dead.problem?.summary === "boom", dead);
+
+  const finished = describeJob(
+    job("analyse", { state: "done", attempts: 1, updatedAt: ago(30_000), progress: report(1, { step: "Assessing clauses", done: 13, total: 14 }) }),
+    NOW,
+  );
+  ok("a finished job keeps its time, not its last count", finished.state === "done" && finished.tookMs === 60_000 && finished.done === null, finished);
 }
 
 console.log("\nDurations");

@@ -91,8 +91,13 @@ document itself supports. No preamble, no headings."""
 
 _JUDGE_PROMPT = """\
 You are auditing a submitted design document against one clause of an enterprise \
-standard. Decide whether the design satisfies the clause, using only the extracts \
-provided. You cannot see the rest of the document.
+standard. Decide whether the design satisfies the clause.
+
+The extracts below are not a sample of the document. They are the passages a search \
+of the WHOLE submitted document ranked closest to this clause, by meaning and by \
+keyword together, with every rule, table row, figure description and section of it \
+searched separately. If the design addressed this clause, its words would almost \
+certainly be among them.
 {document_context}
 <standard_clause>
 Reference: {reference}
@@ -109,25 +114,30 @@ Choose exactly one verdict:
 - "partial"      — the extracts address the clause but leave a requirement unmet
 - "contradicts"  — the design states something the clause forbids, or forbids
                    something it requires
-- "absent"       — the extracts are clearly about other subjects, and the design
-                   does not address this clause at all
-- "needs_review" — you cannot tell. The extracts are adjacent to the subject but
-                   inconclusive, or the clause turns on something the extracts
-                   neither confirm nor deny
+- "absent"       — the extracts are about other subjects; the design does not
+                   engage with this clause at all
+- "needs_review" — the extracts are on the subject, but their wording is genuinely
+                   ambiguous, so a person has to read them
 
-Rules that matter more than being decisive:
+Rules that matter:
 
 1. "covered", "partial" and "contradicts" MUST cite at least one extract id. A
    claim about a document that cites nothing in it is invented.
-2. Choose "absent" only when the extracts are plainly about other topics. If the
-   design seems to touch the subject but you cannot confirm the requirement,
-   choose "needs_review". A wrong "absent" sends someone to fix a thing that is
-   already there; a wrong "covered" ships a gap. "needs_review" costs a human
-   two minutes and is the right answer whenever you are unsure.
-3. Judge only what the clause requires. Do not reward the design for good
+2. Decide. "The extracts do not explicitly confirm X" is not a reason to answer
+   "needs_review" — that is what "partial" means. Keep "needs_review" for wording
+   two careful readers could read two different ways, never for your own
+   uncertainty about the rest of the document.
+3. "absent" is only for a clause the design does not engage with at all. If it
+   addresses the area the clause is about — access control, encryption,
+   integration, retention, ownership — but does not meet what the clause
+   requires, that is "partial", and the rationale must name what is missing.
+   Torn between the two, answer "partial": a wrong "absent" sends somebody to
+   build what the design already has. Anything you do call absent is read again
+   against the whole document before it reaches a report.
+4. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
-4. confidence is your own certainty in the verdict, 0 to 1.
-5. Standing decisions, where any are given, are this organisation's own settled
+5. confidence is your own certainty in the verdict, 0 to 1.
+6. Standing decisions, where any are given, are this organisation's own settled
    rulings and outrank your general judgement about what good practice looks
    like. If one resolves the clause, follow it and list its id in
    appliedDecisions. Never list an id you were not given. A decision marked
@@ -245,6 +255,10 @@ class LLM(Protocol):
     def judge_document(
         self, *, document: str, reference: str, clause: str, precedents: str = ""
     ) -> dict: ...
+    def find_uncovered(self, *, design: str, standards: str, title: str) -> dict: ...
+    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict: ...
+    def find_technologies(self, *, design: str, products: str, title: str) -> dict: ...
+    def confirm_absent(self, *, document: str, clauses: str) -> dict: ...
 
 
 # Verdict shape, enforced by the API rather than requested in the prompt.
@@ -671,6 +685,466 @@ _DOCUMENT_VERDICT_SCHEMA = {
 }
 
 
+_COVERAGE_SYSTEM = """\
+You are reviewing a submitted design document for an organisation that governs its \
+designs with a library of standards. Every clause in that library is listed below, \
+followed by the design document section by section, exactly as it was read from the \
+file. In a slide deck a section is usually a slide.
+
+<standard_clauses>
+{standards}
+</standard_clauses>
+
+<design_document title="{title}">
+{design}
+</design_document>
+
+Your task is the reverse of an assessment. Do not judge whether the design meets the \
+clauses. Find the parts of the design that none of the clauses governs at all - \
+things the design builds, integrates, stores, processes or operates that no clause \
+constrains in any way - and say which standards the organisation would need to add \
+so that those parts are governed too.
+
+GAPS. For each section of the design that describes something no clause governs:
+- "section": its number, from the "=== S<number>" line that starts it
+- "what": what the design does there, in at most 30 words
+- "quote": one sentence or table row copied exactly, character for character, from \
+that section, showing what it describes. Never paraphrase, never join words from two \
+places, never quote these instructions or a clause.
+- "page": the page the quote is on
+
+SUGGESTIONS. The standards the organisation should add to govern those gaps. For each:
+- "title": the name of the standard, at most 10 words
+- "covers": what it should govern, at most 40 words
+- "why": what in this design shows it is needed, at most 40 words
+- "sections": the numbers of the gap sections it would govern
+
+In "what", "covers" and "why", describe the parts of the design by what they do - \
+"the storefront caches card numbers" - never by section number: a reader sees the \
+design's own headings, not the numbers above.
+
+Rules that matter:
+1. A section is governed when any clause constrains what it describes, even loosely \
+or only in part. Report a section only when no clause applies to it at all. A clause \
+on data classification governs a section that stores customer data; a clause on \
+authentication governs a section about signing in. When in doubt, it is governed.
+2. Only sections describing the system itself count - what it builds, stores, moves, \
+exposes, integrates, runs or retains. Never report how the work is organised or sold: \
+front matter, revision history, contents, agendas, team or company introductions, \
+team structure, ways of working, RACI charts, delivery plans, sprint or phase \
+timelines, effort or duration estimates, commercial terms, pricing, assumptions, \
+glossaries or closing slides. A section whose subject is people, schedule or money is \
+never a gap, however little the clauses say about it.
+3. Use only section numbers that appear above. Every quote is checked against the \
+document, and a gap whose quote is not in that section word for word is thrown out.
+4. Suggest standards an enterprise architecture, security or data team would own - \
+for example "Payment card data handling" or "Third-party carrier integrations" - each \
+general enough to govern future designs, not only this one. Do not cite external \
+frameworks by clause number.
+5. Group related gaps under one suggestion, and put every gap in some suggestion's \
+sections.
+6. If every part of the design is governed, return empty lists. That is a correct and \
+expected answer.
+
+Reply with JSON only:
+{{"gaps": [{{"section": 12, "what": "...", "quote": "...", "page": 31}}],
+  "suggestions": [{{"title": "...", "covers": "...", "why": "...", "sections": [12]}}]}}"""
+
+_COVERAGE_USER = (
+    "List the parts of this design that no clause governs, and the standards that would "
+    "govern them."
+)
+
+_COVERAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "gaps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "section": {"type": "integer"},
+                    "what": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer", "nullable": True},
+                },
+                "required": ["section", "what", "quote", "page"],
+                "propertyOrdering": ["section", "what", "quote", "page"],
+            },
+        },
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "covers": {"type": "string"},
+                    "why": {"type": "string"},
+                    "sections": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["title", "covers", "why", "sections"],
+                "propertyOrdering": ["title", "covers", "why", "sections"],
+            },
+        },
+    },
+    "required": ["gaps", "suggestions"],
+    "propertyOrdering": ["gaps", "suggestions"],
+}
+
+# A long design can have many ungoverned sections, each with a quote.
+_COVERAGE_MAX_TOKENS = 8192
+
+# Improvements to a design, after it has been assessed. See Workers/aidp/advice.py:
+# every section number and quote in the reply is checked before anything is kept.
+_ADVICE_SYSTEM = """\
+You are a senior solution architect reviewing the design document "{title}" before \
+it is built. It has already been assessed clause by clause against the \
+organisation's own standards, and those results are reported separately. Your task \
+is different: find the improvements an experienced architect would still ask for in \
+this design's own architecture — its components, technologies, integrations, data \
+flows, environments and delivery.
+
+The design is below, section by section. Each section starts with a line like \
+"=== S12: 3.4 Backup (page 40) ===". Refer to a section only by that number.
+
+<design>
+{design}
+</design>
+
+Already reported against the standards. Do not suggest these again:
+
+<findings>
+{findings}
+</findings>
+
+Review the design the way a design review board would, for example:
+- single points of failure, high availability, backup and disaster recovery for the \
+components it names
+- failure handling between its components and with external systems: timeouts, \
+bounded retries, dead-letter queues, idempotency, back-pressure
+- security of each interface and environment it describes: service-to-service \
+authentication, secrets, network exposure, least privilege
+- data: consistency between stores, replication, migration, residency, caching and \
+invalidation
+- scalability and performance under the load the design implies
+- observability of the flows it describes: logs, metrics, tracing, alerting
+- deployment, environments, testing and release safety
+- technology choices: lock-in, fit, and components whose support status should be \
+confirmed
+- cost
+
+Rules that matter more than finding many suggestions:
+
+1. Every suggestion is about a named part of this design. "component" is the \
+component, technology, interface or flow it concerns, copied exactly as the design \
+names it (for example "RabbitMQ" or "API Gateway"), and it must appear in the \
+section you give. Give one name, not a list, and never a label made by combining \
+names. A suggestion that cannot be tied to something the design names is general \
+advice, and is not wanted.
+2. Say exactly what to change or add to that component. Advice that would fit any \
+design ("add monitoring", "follow security best practice", "classify your data") is \
+not a suggestion.
+3. Never repeat anything listed as already reported, even in other words. A \
+suggestion may go further than a finding — a concrete change to a named component \
+that would also resolve it — and then "clauses" gives that finding's reference, the \
+text inside its square brackets, without the brackets. Otherwise "clauses" is empty.
+4. "section" is the number of the section where the component is described.
+5. "kind" is "improve" when the design states something that should change: quote \
+the design's own words that state it, copied exactly — a whole sentence, table row \
+or line, not a fragment of one — with its page. "kind" is "add" when something the \
+design needs is missing: quote the passage that describes the component if there is \
+one, otherwise leave "quote" empty and "page" null. A passage you cannot copy exactly \
+— a table you would have to reassemble, say — is left unquoted, never reworded.
+6. Every quote and component is checked word for word against the design, inside \
+the section you name. One that is not there throws the suggestion out. Never \
+paraphrase, never join words from separate places, and never quote these \
+instructions or the findings.
+7. "priority" is "high" for a risk of a security breach, data loss, an outage or a \
+regulatory failure; "medium" for a real weakness that can be lived with for a \
+while; "low" for worthwhile polish.
+8. "category" is one of: security, resilience, data, integration, operations, \
+performance, cost, maintainability, documentation.
+9. You cannot check today's date, release notes or security advisories. Never state \
+that a product or version is out of support, end of life, deprecated or \
+vulnerable. Where the age of a component matters, recommend confirming its support \
+status and planning an upgrade path instead.
+10. "why" is one or two sentences on the risk or the benefit, for this design.
+11. At most 15 suggestions, the most important first. Fewer is fine, and a sound \
+design may need few.
+"""
+
+_ADVICE_USER = "Suggest improvements to this design."
+
+_ADVICE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["improve", "add"]},
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "security",
+                            "resilience",
+                            "data",
+                            "integration",
+                            "operations",
+                            "performance",
+                            "cost",
+                            "maintainability",
+                            "documentation",
+                        ],
+                    },
+                    "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "section": {"type": "integer"},
+                    "component": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer", "nullable": True},
+                    "recommendation": {"type": "string"},
+                    "why": {"type": "string"},
+                    "clauses": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "title",
+                    "kind",
+                    "category",
+                    "priority",
+                    "section",
+                    "component",
+                    "quote",
+                    "page",
+                    "recommendation",
+                    "why",
+                    "clauses",
+                ],
+                "propertyOrdering": [
+                    "title",
+                    "kind",
+                    "category",
+                    "priority",
+                    "section",
+                    "component",
+                    "quote",
+                    "page",
+                    "recommendation",
+                    "why",
+                    "clauses",
+                ],
+            },
+        },
+    },
+    "required": ["suggestions"],
+    "propertyOrdering": ["suggestions"],
+}
+
+_ADVICE_MAX_TOKENS = 8192
+
+
+def _advice_system(*, design: str, findings: str, title: str) -> str:
+    return _ADVICE_SYSTEM.format(design=design, findings=findings, title=title.replace('"', "'"))
+
+
+def advice_prompt_identity() -> str:
+    """Everything about the suggestions request that is not the design itself.
+
+    Part of the cache key for suggested improvements (see advice.py), so that
+    editing the instructions, the schema or the reply budget retires every
+    stored answer the old wording produced — without anyone having to remember
+    to bump a version number.
+    """
+    return "\x00".join(
+        (
+            _ADVICE_SYSTEM,
+            _ADVICE_USER,
+            json.dumps(_ADVICE_SCHEMA, sort_keys=True),
+            str(_ADVICE_MAX_TOKENS),
+        )
+    )
+
+
+# The technologies a design uses, for the support check. See Workers/aidp/lifecycle.py:
+# every product id is checked against endoflife.date's own list, and every quote
+# against the design, before anything is looked up.
+_LIFECYCLE_SYSTEM = """\
+You are reading the design document "{title}" to list the technologies it uses, \
+so that whether each one is still supported can be looked up afterwards. You do \
+not look anything up and you do not judge the design.
+
+The design is below, section by section. Each section starts with a line like \
+"=== S12: 3.4 Backup (page 40) ===". Refer to a section only by that number.
+
+<design>
+{design}
+</design>
+
+The products whose support dates can be looked up, one per line as \
+"id — name (also: other names)":
+
+<products>
+{products}
+</products>
+
+List every technology this design uses or proposes to use: programming languages \
+and runtimes, frameworks and libraries, databases and caches, message brokers, \
+application and web servers, operating systems, container and cloud platforms, \
+and delivery tools.
+
+Rules:
+1. "name" is the technology exactly as the design names it.
+2. "product" is the id from the list above that is this technology, copied \
+exactly, or "" when none of them is. Never invent an id and never choose a merely \
+similar product: a managed service is only its open-source namesake when the list \
+says so, and one vendor's product is not another's.
+3. "version" is the version the design states for this technology, copied \
+exactly as written (for example "11", "2.7.3", "1.8"), or "" when it states none. \
+Never guess a version, never take one from a different technology, and never give \
+a range or "latest" as a version.
+4. "section" is the number of the section that names the technology with that \
+version.
+5. "quote" is the design's own words naming the technology, with its version when \
+there is one, copied exactly: a whole sentence, table row or line. It is checked \
+word for word against that section, and one that is not there throws the \
+technology out. Never join words from separate places.
+6. One entry per technology and version: the same technology at two versions is \
+two entries, and the same one named twice is one. Leave out technologies the \
+design mentions only to reject them or to compare against.
+7. At most 60 entries.
+"""
+
+_LIFECYCLE_USER = "List the technologies this design uses."
+
+_LIFECYCLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "technologies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "product": {"type": "string"},
+                    "version": {"type": "string"},
+                    "section": {"type": "integer"},
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer", "nullable": True},
+                },
+                "required": ["name", "product", "version", "section", "quote", "page"],
+                "propertyOrdering": ["name", "product", "version", "section", "quote", "page"],
+            },
+        },
+    },
+    "required": ["technologies"],
+    "propertyOrdering": ["technologies"],
+}
+
+_LIFECYCLE_MAX_TOKENS = 8192
+
+
+def _lifecycle_system(*, design: str, products: str, title: str) -> str:
+    return _LIFECYCLE_SYSTEM.format(
+        design=design, products=products, title=title.replace('"', "'")
+    )
+
+
+def lifecycle_prompt_identity() -> str:
+    """Everything about the technologies request except the design and the list.
+
+    Part of the cache key for a design's technologies (see lifecycle.py), so a
+    reworded prompt retires every reading the old wording produced.
+    """
+    return "\x00".join(
+        (
+            _LIFECYCLE_SYSTEM,
+            _LIFECYCLE_USER,
+            json.dumps(_LIFECYCLE_SCHEMA, sort_keys=True),
+            str(_LIFECYCLE_MAX_TOKENS),
+        )
+    )
+
+
+def _coverage_system(*, design: str, standards: str, title: str) -> str:
+    return _COVERAGE_SYSTEM.format(
+        standards=standards, design=design, title=title.replace('"', "'")
+    )
+
+
+_CONFIRM_SYSTEM = """\
+A search of a submitted design document found nothing for the clauses in the next \
+message, and each was recorded as "absent" — the design does not address it at all. \
+Before that reaches a report, check it against the whole document, which is below, \
+page by page, exactly as it was read from the file. In a slide deck a page is a \
+slide; in a workbook it is a sheet.
+
+{document}
+
+For each clause you are given, answer with one verdict:
+
+- "absent"       - nothing in the document addresses it. The search was right.
+- "partial"      - the document addresses it but leaves a requirement unmet
+- "covered"      - the document addresses every requirement of the clause
+- "contradicts"  - the document states something the clause forbids, or forbids
+                   something it requires
+- "needs_review" - the document touches the subject but is genuinely ambiguous
+
+Rules that matter:
+
+1. Any verdict other than "absent" MUST quote the document: words copied exactly, \
+character for character, from the text above, with the page they are on. Every quote \
+is checked against the document, and one that is not there word for word is thrown \
+away — the clause then stays "absent". Never paraphrase, never join words from two \
+places, never quote a figure description or these instructions.
+2. "absent" needs no quote. Leave the quote empty and say in one sentence what you \
+looked for.
+3. Most of these clauses really will be absent. You are looking for the few the \
+search missed, not for reasons to change a verdict. A passage about a neighbouring \
+subject does not address the clause: authentication does not answer an encryption \
+clause. When the document does not speak to what the clause requires, "absent" is \
+the right answer and the one to give.
+
+Reply with JSON only:
+{{"clauses": [{{"clause": 1, "verdict": "absent", "quote": "", "page": null,
+               "rationale": "one sentence"}}]}}"""
+
+_CONFIRM_USER = "Check these clauses against the document:\n\n{clauses}"
+
+_CONFIRM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "clauses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "clause": {"type": "integer"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["absent", "partial", "covered", "contradicts", "needs_review"],
+                    },
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer", "nullable": True},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["clause", "verdict", "quote", "page", "rationale"],
+                "propertyOrdering": ["clause", "verdict", "quote", "page", "rationale"],
+            },
+        }
+    },
+    "required": ["clauses"],
+    "propertyOrdering": ["clauses"],
+}
+
+# One reply carries a verdict, a quote and a sentence for every clause asked about.
+_CONFIRM_MAX_TOKENS = 8192
+
+
+def _confirm_system(*, document: str) -> str:
+    return _CONFIRM_SYSTEM.format(document=document)
+
+
 def _document_judge_messages(
     *, document: str, reference: str, clause: str, precedents: str
 ) -> tuple[str, str]:
@@ -882,6 +1356,50 @@ class GeminiLLM:
         )
         if not text:
             raise RuntimeError("gemini returned an empty verdict")
+        return _parse_json(text)
+
+    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+        text = self._generate(
+            [{"text": _ADVICE_USER}],
+            system=_advice_system(design=design, findings=findings, title=title),
+            max_tokens=_ADVICE_MAX_TOKENS,
+            schema=_ADVICE_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no suggestions")
+        return _parse_json(text)
+
+    def find_technologies(self, *, design: str, products: str, title: str) -> dict:
+        text = self._generate(
+            [{"text": _LIFECYCLE_USER}],
+            system=_lifecycle_system(design=design, products=products, title=title),
+            max_tokens=_LIFECYCLE_MAX_TOKENS,
+            schema=_LIFECYCLE_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no technologies")
+        return _parse_json(text)
+
+    def find_uncovered(self, *, design: str, standards: str, title: str) -> dict:
+        text = self._generate(
+            [{"text": _COVERAGE_USER}],
+            system=_coverage_system(design=design, standards=standards, title=title),
+            max_tokens=_COVERAGE_MAX_TOKENS,
+            schema=_COVERAGE_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no coverage")
+        return _parse_json(text)
+
+    def confirm_absent(self, *, document: str, clauses: str) -> dict:
+        text = self._generate(
+            [{"text": _CONFIRM_USER.format(clauses=clauses)}],
+            system=_confirm_system(document=document),
+            max_tokens=_CONFIRM_MAX_TOKENS,
+            schema=_CONFIRM_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned nothing on the absent clauses")
         return _parse_json(text)
 
 
@@ -1104,6 +1622,73 @@ class AnthropicLLM:
                 ],
                 "messages": [
                     {"role": "user", "content": user},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _ADVICE_MAX_TOKENS,
+                "temperature": 0,
+                "system": _advice_system(design=design, findings=findings, title=title),
+                "messages": [
+                    {"role": "user", "content": _ADVICE_USER},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def find_technologies(self, *, design: str, products: str, title: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _LIFECYCLE_MAX_TOKENS,
+                "temperature": 0,
+                "system": _lifecycle_system(design=design, products=products, title=title),
+                "messages": [
+                    {"role": "user", "content": _LIFECYCLE_USER},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def find_uncovered(self, *, design: str, standards: str, title: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _COVERAGE_MAX_TOKENS,
+                "temperature": 0,
+                "system": _coverage_system(design=design, standards=standards, title=title),
+                "messages": [
+                    {"role": "user", "content": _COVERAGE_USER},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def confirm_absent(self, *, document: str, clauses: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _CONFIRM_MAX_TOKENS,
+                "temperature": 0,
+                # The document is the same for every clause in the batch.
+                "system": [
+                    {
+                        "type": "text",
+                        "text": _confirm_system(document=document),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                "messages": [
+                    {"role": "user", "content": _CONFIRM_USER.format(clauses=clauses)},
                     {"role": "assistant", "content": "{"},
                 ],
             },
@@ -1395,6 +1980,71 @@ class OpenRouterLLM:
             raise RuntimeError("openrouter returned an empty verdict")
         return _parse_json(text)
 
+    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": _advice_system(design=design, findings=findings, title=title),
+                },
+                {"role": "user", "content": _ADVICE_USER},
+            ],
+            max_tokens=_ADVICE_MAX_TOKENS,
+            schema=_ADVICE_SCHEMA,
+            name="suggestions",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no suggestions")
+        return _parse_json(text)
+
+    def find_technologies(self, *, design: str, products: str, title: str) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": _lifecycle_system(design=design, products=products, title=title),
+                },
+                {"role": "user", "content": _LIFECYCLE_USER},
+            ],
+            max_tokens=_LIFECYCLE_MAX_TOKENS,
+            schema=_LIFECYCLE_SCHEMA,
+            name="technologies",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no technologies")
+        return _parse_json(text)
+
+    def find_uncovered(self, *, design: str, standards: str, title: str) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": _coverage_system(design=design, standards=standards, title=title),
+                },
+                {"role": "user", "content": _COVERAGE_USER},
+            ],
+            max_tokens=_COVERAGE_MAX_TOKENS,
+            schema=_COVERAGE_SCHEMA,
+            name="coverage",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no coverage")
+        return _parse_json(text)
+
+    def confirm_absent(self, *, document: str, clauses: str) -> dict:
+        text = self._chat(
+            [
+                {"role": "system", "content": _confirm_system(document=document)},
+                {"role": "user", "content": _CONFIRM_USER.format(clauses=clauses)},
+            ],
+            max_tokens=_CONFIRM_MAX_TOKENS,
+            schema=_CONFIRM_SCHEMA,
+            name="confirmation",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned nothing on the absent clauses")
+        return _parse_json(text)
+
 
 _client: LLM | None = None
 
@@ -1531,6 +2181,45 @@ def judge_document(*, document: str, reference: str, clause: str, precedents: st
     return client().judge_document(
         document=document, reference=reference, clause=clause, precedents=precedents
     )
+
+
+def suggest_improvements(*, design: str, findings: str, title: str) -> dict:
+    """Improvements to a design, each anchored to one of its sections.
+
+    Section numbers and quotes only; see `advice.py`, which checks every one
+    against the design before any suggestion is kept.
+    """
+    return client().suggest_improvements(design=design, findings=findings, title=title)
+
+
+def find_technologies(*, design: str, products: str, title: str) -> dict:
+    """The technologies a design uses, each as an endoflife.date product id.
+
+    Ids, versions and quotes only; see `lifecycle.py`, which checks every one
+    against the product list and the design before anything is looked up.
+    """
+    return client().find_technologies(design=design, products=products, title=title)
+
+
+def find_uncovered(*, design: str, standards: str, title: str) -> dict:
+    """The design sections no standard clause governs, and standards to add.
+
+    Section numbers and quotes only; see `coverage.py`, which checks every one
+    against the design before any gap is kept.
+    """
+    return client().find_uncovered(design=design, standards=standards, title=title)
+
+
+def confirm_absent(*, document: str, clauses: str) -> dict:
+    """Read the whole document once for every clause a search found nothing for.
+
+    Search judges a clause on eight passages, which is enough to say "here it
+    is" and never enough to say "it is nowhere". This is the second half of that
+    answer, and it is one call for the whole batch rather than one per clause.
+    The analyse stage changes a verdict only on a quote it finds in the document
+    word for word.
+    """
+    return client().confirm_absent(document=document, clauses=clauses)
 
 
 def summarise(document_text: str, *, title: str) -> str:

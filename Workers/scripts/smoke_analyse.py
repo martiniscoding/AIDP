@@ -77,6 +77,63 @@ def _stub_judge(
     return {"verdict": "needs_review", "confidence": 0.1, "rationale": "no script", "evidence": []}
 
 
+_confirmations: list[str] = []
+
+
+def _stub_confirm(*, document: str, clauses: str):
+    """The re-read of everything the search called absent, answered by number.
+
+    One clause is answered with words that are in the stored pages, one with
+    words that are not. The analyse stage is expected to tell them apart.
+    """
+    _confirmations.append(clauses)
+    assert "=== page 1 ===" in document, "the re-read must be given the stored page text"
+
+    blocks: dict[int, str] = {}
+    current: int | None = None
+    for line in clauses.splitlines():
+        head = line[1 : line.index("]")] if line.startswith("[") and "]" in line else ""
+        if head.isdigit():
+            current = int(head)
+            blocks[current] = line
+        elif current is not None:
+            blocks[current] += "\n" + line
+
+    replies = []
+    for number, block in blocks.items():
+        if "recovered-absent" in block:
+            replies.append(
+                {
+                    "clause": number,
+                    "verdict": "partial",
+                    "quote": "Recovery codes are printed once and stored in the corporate vault.",
+                    "page": 2,
+                    "rationale": "The vault is named; rotation is not.",
+                }
+            )
+        elif "invented-quote" in block:
+            replies.append(
+                {
+                    "clause": number,
+                    "verdict": "covered",
+                    "quote": "Enrolment events are streamed to the central SIEM.",
+                    "page": 2,
+                    "rationale": "Words that are nowhere in the document.",
+                }
+            )
+        else:
+            replies.append(
+                {
+                    "clause": number,
+                    "verdict": "absent",
+                    "quote": "",
+                    "page": None,
+                    "rationale": "Nothing in the document addresses it.",
+                }
+            )
+    return {"clauses": replies}
+
+
 def main() -> int:
     marker = uuid.uuid4().hex[:10]
     org = db.new_id()
@@ -87,6 +144,7 @@ def main() -> int:
 
     retrieval.embeddings.embed_all = _stub_embed  # type: ignore[assignment]
     analyse.llm.judge = _stub_judge  # type: ignore[assignment]
+    analyse.llm.confirm_absent = _stub_confirm  # type: ignore[assignment]
     analyse.llm.available = lambda: True  # type: ignore[assignment]
 
     print(f"\nThrowaway organisation smoke-{marker}\n")
@@ -134,6 +192,10 @@ def main() -> int:
                 ("absent-lowconf", "MFA must be reviewed annually"),
                 ("bogus-verdict", "MFA must be logged"),
                 ("figure-only", "The architecture must show an integration layer"),
+                # Both come back "absent" from the search with strong retrieval and
+                # high confidence, so they survive the guards and reach the re-read.
+                ("recovered-absent", "MFA recovery codes must be stored securely"),
+                ("invented-quote", "MFA enrolment must be logged centrally"),
             ]
             for i, (title, statement) in enumerate(clauses, start=1):
                 db.execute(
@@ -216,12 +278,32 @@ def main() -> int:
                 (db.new_id(), fig_chunk, model, DIMS, "[" + ",".join(["0.1"] * DIMS) + "]"),
             )
 
+            # The design's pages, which the re-read of anything absent works from.
+            # The search only ever sees the chunks above; these are the whole text.
+            for ordinal, (page, text) in enumerate(
+                [
+                    (1, "Design 4.2 Authentication. Administrative access uses MFA via the "
+                        "identity provider."),
+                    (2, "Recovery codes are printed once and stored in the corporate vault."),
+                    (2, "Enrolment events are written to the local application log only."),
+                ]
+            ):
+                db.execute(
+                    conn,
+                    """
+                    INSERT INTO "source_line"
+                        ("id","documentId","ordinal","ref","kind","page","text")
+                    VALUES (%s,%s,%s,%s,'text',%s,%s)
+                    """,
+                    (db.new_id(), sub_doc, ordinal, f"L{ordinal + 1}", page, text),
+                )
+
             db.execute(
                 conn,
                 """
                 INSERT INTO "assessment_run"
                     ("id","organisationId","documentId","frameworkId","state","totalClauses")
-                VALUES (%s,%s,%s,%s,'queued',6)
+                VALUES (%s,%s,%s,%s,'queued',8)
                 """,
                 (run_id, org, sub_doc, framework),
             )
@@ -277,6 +359,18 @@ def main() -> int:
                     "rationale": "The diagram shows it.",
                     "evidence": [chunk_ids[-1]],
                 },
+                "recovered-absent": {
+                    "verdict": "absent",
+                    "confidence": 0.9,
+                    "rationale": "The extracts say nothing about recovery codes.",
+                    "evidence": [],
+                },
+                "invented-quote": {
+                    "verdict": "absent",
+                    "confidence": 0.9,
+                    "rationale": "The extracts say nothing about enrolment logging.",
+                    "evidence": [],
+                },
             }
         )
 
@@ -308,9 +402,9 @@ def main() -> int:
         by_title = {r["clauseTitle"]: r for r in rows}
 
         print("Coverage")
-        check("a finding per clause", len(rows) == 6, f"got {len(rows)}")
+        check("a finding per clause", len(rows) == 8, f"got {len(rows)}")
         check("run marked complete", run and run["state"] == "complete", str(run and run["state"]))
-        check("progress reached the total", run and run["completedClauses"] == 6)
+        check("progress reached the total", run and run["completedClauses"] == 8)
         check("job marked done", job_row and job_row["state"] == "done")
         check("model recorded", bool(run and run["model"]))
 
@@ -354,6 +448,24 @@ def main() -> int:
             all(r["retrievalScore"] is not None for r in rows),
         )
 
+        print("\nRe-reading what looked absent")
+        check(
+            "one call for every absent clause, not one call each",
+            len(_confirmations) == 1,
+            f"calls={len(_confirmations)}",
+        )
+        recovered = by_title.get("recovered-absent", {})
+        check(
+            "an absent the document does address is corrected, quoting the document",
+            recovered.get("verdict") == "partial" and recovered.get("evidence_count") == 1,
+            str(recovered),
+        )
+        check(
+            "an invented quote leaves the verdict as the search left it",
+            by_title.get("invented-quote", {}).get("verdict") == "absent",
+            str(by_title.get("invented-quote")),
+        )
+
         print("\nResumability")
         # Delete two findings and re-run: the handler should only redo those.
         with db.transaction() as conn:
@@ -383,7 +495,7 @@ def main() -> int:
             total = db.one(
                 conn, 'SELECT count(*)::int AS n FROM "finding" WHERE "runId" = %s', (run_id,)
             )
-        check("full set restored", total and total["n"] == 6, str(total))
+        check("full set restored", total and total["n"] == 8, str(total))
 
         return 1 if failures else 0
 

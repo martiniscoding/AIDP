@@ -87,8 +87,10 @@ export async function historyForRun(runId: string): Promise<OutcomeView[]> {
  * and one an audit should be able to see was made.
  */
 async function snapshotOf(runId: string): Promise<OutcomeSnapshot> {
+  // What the report showed, which no longer includes a clause the design is
+  // silent on — see the "Absent" section in ../../app/dashboard/documents/[id].
   const findings = await prisma.finding.findMany({
-    where: { runId },
+    where: { runId, verdict: { not: "absent" } },
     select: { verdict: true, reviewerState: true },
   });
 

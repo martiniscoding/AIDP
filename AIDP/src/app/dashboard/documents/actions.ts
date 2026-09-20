@@ -11,6 +11,7 @@ import { promoteFinding } from "@/lib/ingest/decisions";
 import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
 import { isOutcome } from "@/lib/ingest/outcomes-vocabulary";
 import { remove } from "@/lib/ingest/storage";
+import type { Prisma } from "../../../../generated/prisma/client";
 
 export type ActionResult = { ok: boolean; message: string; runId?: string };
 
@@ -316,6 +317,107 @@ export async function startAssessment(
       return { ok: false, message: "An assessment is already running for this document." };
     }
     return { ok: false, message: "Could not start the assessment." };
+  }
+}
+
+/**
+ * Work out a finished assessment's suggested improvements again.
+ *
+ * Suggestions are reused while the design and the standards stay the same (see
+ * Workers/aidp/advice.py), so assessing again would hand back the same set. This
+ * queues a job that skips the stored set, asks the model afresh, and keeps the
+ * answer as the set reused from then on. Only the suggestions are redone: the
+ * findings belong to the assessment, and new advice is not a new assessment.
+ *
+ * The suggestions already on the report stay while the new set is worked out —
+ * `refreshing` tells the page to say so and to keep checking — and stay if the
+ * attempt fails.
+ */
+export async function refreshSuggestions(runId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (typeof runId !== "string" || !runId) {
+      return { ok: false, message: "That assessment no longer exists." };
+    }
+
+    const run = await prisma.assessmentRun.findUnique({
+      where: { id: runId },
+      select: { id: true, documentId: true, organisationId: true, state: true, advice: true },
+    });
+    if (!run) return { ok: false, message: "That assessment no longer exists." };
+    await requireMembership(user.id, run.organisationId);
+
+    if (run.state !== "complete") {
+      return {
+        ok: false,
+        message: "Suggestions can be worked out again once the assessment has finished.",
+      };
+    }
+    // Only the report on screen: advice for an older run would be advice nobody
+    // is looking at, next to findings that have since been superseded.
+    const latest = await prisma.assessmentRun.findFirst({
+      where: { documentId: run.documentId },
+      orderBy: { startedAt: "desc" },
+      select: { id: true },
+    });
+    if (latest?.id !== run.id) {
+      return {
+        ok: false,
+        message: "A newer assessment of this design exists. Reload the page to see it.",
+      };
+    }
+
+    const previous =
+      run.advice && typeof run.advice === "object" && !Array.isArray(run.advice)
+        ? (run.advice as Record<string, unknown>)
+        : null;
+    // A request already on record is only honoured while its job is alive. One
+    // whose job was lost would otherwise block every later request for good.
+    if (previous?.refreshing === true) {
+      const live = await prisma.job.count({
+        where: { documentId: run.documentId, stage: "analyse", state: { in: ["queued", "leased"] } },
+      });
+      if (live > 0) {
+        return { ok: false, message: "A new set of suggestions is already being worked out." };
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.job.create({
+        data: {
+          organisationId: run.organisationId,
+          documentId: run.documentId,
+          stage: "analyse",
+          correlationId: randomUUID(),
+          payload: { runId: run.id, adviceOnly: true, freshAdvice: true },
+        },
+      });
+      await tx.assessmentRun.update({
+        where: { id: run.id },
+        data: {
+          advice: {
+            ...(previous ?? { version: 1, state: "failed", note: null, suggestions: [] }),
+            refreshing: true,
+            refreshError: null,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    });
+
+    revalidatePath(`/dashboard/documents/${run.documentId}`);
+    return { ok: true, message: "Working out a new set of suggestions. It takes about a minute." };
+  } catch (error) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that assessment." };
+    }
+    // The one-live-analyse-job-per-document index: an assessment is running.
+    if (isUniqueViolation(error)) {
+      return {
+        ok: false,
+        message: "Something is already running for this design. Try again when it finishes.",
+      };
+    }
+    return { ok: false, message: "Could not ask for new suggestions." };
   }
 }
 

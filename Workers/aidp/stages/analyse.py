@@ -25,7 +25,19 @@ from dataclasses import dataclass, replace
 
 from psycopg.types.json import Jsonb
 
-from .. import db, decisions, logs, queue, retrieval, usage, whole_document
+from .. import (
+    advice,
+    coverage,
+    db,
+    decisions,
+    lifecycle,
+    logs,
+    progress,
+    queue,
+    retrieval,
+    usage,
+    whole_document,
+)
 from ..ai import llm
 from ..config import get_config
 from ..queue import Job
@@ -61,6 +73,16 @@ MIN_ABSENT_CONFIDENCE = 0.55
 # not asked to read the whole document for every clause.
 CANDIDATES = 8
 
+# How many absent clauses one confirmation call carries. The document is sent
+# once however many there are; what grows is the reply, and a reply cut off at
+# the output limit would lose the clauses at the end of the batch.
+CONFIRM_BATCH = 25
+
+# The confidence recorded for a verdict the re-read produced. Deliberately not
+# the model's own: this is a second opinion on a clause the search had already
+# given up on, and it carries a checked quote rather than certainty.
+CONFIRM_CONFIDENCE = 0.7
+
 
 def handle(job: Job, heartbeat) -> None:
     run_id = job.payload.get("runId")
@@ -72,6 +94,16 @@ def handle(job: Job, heartbeat) -> None:
             "no model API key configured — assessment needs one to reach a verdict"
         )
 
+    # "Fresh suggestions" on a finished report: the last step again, and nothing
+    # else. The verdicts stand and the run keeps its state; see `_suggest_again`.
+    if job.payload.get("adviceOnly"):
+        _suggest_again(job, run_id, heartbeat)
+        return
+
+    # The run row only turns "running" once everything below is ready, which can
+    # take a while on a large design; these steps are what the page shows
+    # meanwhile. See progress.py.
+    progress.step("Loading the standards and the design")
     with db.connection() as conn:
         run = db.one(conn, 'SELECT * FROM "assessment_run" WHERE "id" = %s', (run_id,))
         if run is None:
@@ -98,10 +130,12 @@ def handle(job: Job, heartbeat) -> None:
     # Before any retrieval. A document embedded under an earlier embedding model
     # has no vectors that search can see, and a clause judged on an empty
     # search reads as absent. See `embed.embed_missing`.
+    progress.step("Checking the search index")
     healed = embed_stage.embed_missing(run["documentId"], heartbeat)
     if healed:
         logs.info(log, "embedded missing chunks before assessing", runId=run_id, chunks=healed)
 
+    progress.step("Preparing the assessment")
     mode, note, whole = _resolve_mode(run)
 
     pending = [c for c in clauses if c["id"] not in done]
@@ -132,7 +166,13 @@ def handle(job: Job, heartbeat) -> None:
     else:
         logs.warn(log, "no submission summary — verdicts reached without document context")
 
+    step_label = (
+        "Assessing clauses, reading the whole document"
+        if whole is not None
+        else "Assessing clauses by search"
+    )
     for index, clause in enumerate(pending, start=1):
+        progress.step(step_label, done=len(done) + index - 1, total=len(clauses))
         if whole is not None:
             _assess_document_one(run, clause, whole, document_context)
         else:
@@ -145,6 +185,38 @@ def handle(job: Job, heartbeat) -> None:
         # UPDATE per clause against a row already in cache, spaced fifteen
         # seconds apart; the model call beside it dwarfs it.
         _progress(run_id, len(done) + index)
+
+    # Search shows the judge eight passages, so "absent" is the one verdict it
+    # cannot really reach: a claim about everywhere it did not look. Every clause
+    # that came back absent is read again against the whole document — one call
+    # for the lot, not one per clause — and a verdict changes only on a quote
+    # found in the document word for word. A whole-document run has already read
+    # everything, so this is for search runs alone. Never fails the run.
+    if whole is None:
+        progress.step("Re-reading what looked absent")
+        heartbeat()
+        _confirm_absents(run, clauses)
+
+    # The reverse question: what the design does that no clause governs, and the
+    # standards that would. After the clauses, so a passage a clause has already
+    # judged is never reported as ungoverned. Never fails the run; see coverage.py.
+    progress.step("Finding parts of the design no standard covers")
+    heartbeat()
+    coverage.record(run, clauses)
+
+    # What an experienced reviewer would still ask of the design, beyond the
+    # standards. Last, and in its own call, so it can draw on every finding above
+    # and can never soften one. Never fails the run; see advice.py.
+    progress.step("Suggesting improvements to the design")
+    heartbeat()
+    advice.record(run, fresh=bool(job.payload.get("freshAdvice")))
+
+    # Whether the products the design builds on are still supported, from public
+    # lifecycle data — facts beside the findings, never a verdict. Only product
+    # ids are looked up. Never fails the run; see lifecycle.py.
+    progress.step("Checking the technologies' support dates")
+    heartbeat()
+    lifecycle.record(run)
 
     # "Compare both": this run is done, and the other mode's run is opened in
     # the same transaction and carried on by this same job. See
@@ -159,6 +231,36 @@ def handle(job: Job, heartbeat) -> None:
         return
 
     _complete(job, run_id)
+
+
+def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
+    """Work out a finished run's suggested improvements again, and nothing else.
+
+    Queued from the report by a reviewer who wants a new set rather than the
+    one reused for an unchanged design. Only the advice column is written: the
+    findings, the coverage and the run's state are the assessment's, and asking
+    for new advice is not re-assessing. `freshAdvice` on the payload is what
+    skips the stored reply; without it this would hand back the same set.
+    """
+    progress.step("Suggesting improvements to the design")
+    with db.connection() as conn:
+        run = db.one(conn, 'SELECT * FROM "assessment_run" WHERE "id" = %s', (run_id,))
+    if run is None:
+        raise RuntimeError(f"assessment run {run_id} no longer exists")
+
+    heartbeat()
+    fresh = bool(job.payload.get("freshAdvice"))
+    result = advice.record(run, fresh=fresh)
+    with db.transaction() as conn:
+        queue.complete(conn, job)
+    logs.info(
+        log,
+        "suggestions worked out again",
+        runId=run_id,
+        fresh=fresh,
+        state=result.get("state"),
+        suggestions=len(result.get("suggestions") or []),
+    )
 
 
 def _framework_clauses(conn, framework_id: str) -> list[dict]:
@@ -466,6 +568,142 @@ def _assess_document_one(
         retrieval_score=score,
         applied=applied,
     )
+
+
+def _confirm_absents(run: dict, clauses: list[dict]) -> None:
+    """Re-read the whole document for every clause the search found nothing for.
+
+    Never raises. A run's verdicts stand on their own, and a confirmation pass
+    that could not run must not cost the report — what it can do is turn a wrong
+    "absent" into the verdict the document supports, which is the most expensive
+    mistake this stage can make: it sends somebody to build what already exists.
+    """
+    try:
+        _confirm(run, clauses)
+    except Exception as exc:  # noqa: BLE001 — the clause verdicts stand without it
+        logs.warn(
+            log, "absent clauses could not be re-read", runId=run["id"], error=str(exc)[:300]
+        )
+
+
+def _confirm(run: dict, clauses: list[dict]) -> None:
+    with db.connection() as conn:
+        absent_ids = db.query(
+            conn,
+            'SELECT "clauseId" FROM "finding" WHERE "runId" = %s AND "verdict" = %s',
+            (run["id"], "absent"),
+        )
+        if not absent_ids:
+            return
+        row = db.one(
+            conn, 'SELECT "title" FROM "document" WHERE "id" = %s', (run["documentId"],)
+        )
+        whole = whole_document.load(conn, run["documentId"], (row or {}).get("title") or "")
+
+    # Both of these leave the search's verdicts exactly as they are, which is the
+    # behaviour this stage had before the pass existed.
+    if whole is None:
+        logs.info(
+            log,
+            "no stored pages: absent verdicts stand as the search left them",
+            runId=run["id"],
+        )
+        return
+    limit = get_config().whole_document_max_tokens
+    if whole.tokens > limit:
+        logs.info(
+            log,
+            "document too large to re-read for absent clauses",
+            runId=run["id"],
+            tokens=whole.tokens,
+            limit=limit,
+        )
+        return
+
+    by_id = {clause["id"]: clause for clause in clauses}
+    absent = [by_id[row["clauseId"]] for row in absent_ids if row["clauseId"] in by_id]
+    changed = 0
+    for start in range(0, len(absent), CONFIRM_BATCH):
+        batch = absent[start : start + CONFIRM_BATCH]
+        raw = llm.confirm_absent(document=whole.text, clauses=_render_absent(batch))
+        changed += _adopt_confirmations(run, batch, raw, whole)
+
+    logs.info(
+        log,
+        "absent clauses re-read against the whole document",
+        runId=run["id"],
+        clauses=len(absent),
+        changed=changed,
+    )
+
+
+def _render_absent(clauses: list[dict]) -> str:
+    """The batch, numbered. The reply answers by number, never in the clause's words."""
+    return "\n\n".join(
+        f"[{index}] {clause['documentTitle']} — {clause['headingPath']}\n{_render_clause(clause)}"
+        for index, clause in enumerate(clauses, start=1)
+    )
+
+
+def _adopt_confirmations(
+    run: dict, batch: list[dict], raw: dict, whole: whole_document.WholeDocument
+) -> int:
+    """Rewrite the findings the re-read overturned, and only those.
+
+    A verdict moves off "absent" on one condition: the reply quotes the document,
+    and the quote is in the document word for word. Anything else — a clause
+    number that is not in this batch, a verdict that is not one of ours, a quote
+    nowhere in the text — leaves the finding as the search left it.
+    """
+    items = raw.get("clauses") if isinstance(raw.get("clauses"), list) else []
+    changed = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        number = _page_number(item.get("clause"))
+        if number is None or not 1 <= number <= len(batch):
+            continue
+        verdict = str(item.get("verdict", "")).strip().lower()
+        if verdict == "absent" or verdict not in VERDICTS:
+            continue
+
+        quote = " ".join(str(item.get("quote") or "").split())
+        check = whole.verify(quote, _page_number(item.get("page")))
+        if not check.verified:
+            logs.warn(
+                log,
+                "absent stands: the quoted words are not in the document",
+                reason=check.reason,
+                quote=quote[:300],
+            )
+            continue
+
+        clause = batch[number - 1]
+        rationale = " ".join(str(item.get("rationale") or "").split())[:900]
+        _write(
+            run["id"],
+            clause,
+            verdict=verdict,
+            confidence=CONFIRM_CONFIDENCE,
+            rationale=(
+                "A search of this design found nothing for this clause, so the whole "
+                f"document was read again — and it does address it. {rationale}"
+            ),
+            evidence=[
+                {
+                    "chunkId": f"confirm-{clause['id']}",
+                    "headingPath": "",
+                    "page": check.page,
+                    "excerpt": quote[:1500],
+                    "sourceKind": "quote",
+                    "figureId": None,
+                }
+            ],
+            retrieval_score=0.0,
+            applied=[],
+        )
+        changed += 1
+    return changed
 
 
 def _page_number(value) -> int | None:
@@ -903,4 +1141,25 @@ def _complete(job: Job, run_id: str) -> None:
 def mark_failed(run_id: str, reason: str) -> None:
     """Called from the worker loop when the job is dead-lettered."""
     _fail(run_id, reason)
+
+
+def mark_advice_failed(run_id: str) -> None:
+    """A dead-lettered request for fresh suggestions on a finished run.
+
+    `mark_failed` is for an assessment, and would turn a finished run into a
+    failed one over what is only advice. This clears the in-progress mark the
+    report keeps checking on and says the request failed; the suggestions
+    already on the report stay.
+    """
+    with db.connection() as conn:
+        db.execute(
+            conn,
+            """
+            UPDATE "assessment_run"
+               SET "advice" = COALESCE("advice", '{}'::jsonb)
+                              || jsonb_build_object('refreshing', false, 'refreshError', %s::text)
+             WHERE "id" = %s
+            """,
+            ("A new set could not be worked out: the request kept failing.", run_id),
+        )
 

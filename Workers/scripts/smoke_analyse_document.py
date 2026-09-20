@@ -118,10 +118,49 @@ def stub_judge(*, reference, clause, extracts, precedents="", document=""):
     return reply
 
 
+coverage_calls: list[dict] = []
+
+
+def stub_find_uncovered(*, design, standards, title):
+    """One real gap, one passage a clause already cited, one invented quote."""
+    coverage_calls.append({"design": design, "standards": standards, "title": title})
+    return {
+        "gaps": [
+            {
+                "section": 2,
+                "what": "Sends device telemetry over MQTT.",
+                "quote": "Telemetry is transmitted over plain MQTT to the ingestion workers.",
+                "page": 2,
+            },
+            {
+                "section": 1,
+                "what": "Administrators sign in with Okta.",
+                "quote": "All administrative access uses multi-factor authentication via Okta.",
+                "page": 2,
+            },
+            {
+                "section": 1,
+                "what": "Invented.",
+                "quote": "Telemetry is written to a blockchain ledger forever.",
+                "page": 2,
+            },
+        ],
+        "suggestions": [
+            {
+                "title": "Device telemetry transport",
+                "covers": "How devices send telemetry.",
+                "why": "Telemetry travels over plain MQTT.",
+                "sections": [2, 1],
+            }
+        ],
+    }
+
+
 embeddings.embed_all = lambda texts, input_type="document": [[0.1] * DIMS for _ in texts]
 analyse.llm.judge_document = stub_judge_document
 analyse.llm.judge = stub_judge
 analyse.llm.available = lambda: True
+analyse.llm.find_uncovered = stub_find_uncovered
 
 marker = uuid.uuid4().hex[:10]
 org = db.new_id()
@@ -202,13 +241,33 @@ def seed() -> None:
                     "VALUES (%s,%s,%s,%s,%s::vector)",
                     (db.new_id(), chunk, MODEL, DIMS, "[" + ",".join(["0.1"] * DIMS) + "]"),
                 )
-        # Only the new design has its pages stored.
+        # Only the new design has its pages stored, in two sections: sign-in, and
+        # the telemetry no clause governs.
+        for ordinal, title, start, end in (
+            (1, "1. Platform Security", 1, 2),
+            (2, "Telemetry and operations", 2, 3),
+        ):
+            db.execute(
+                conn,
+                'INSERT INTO "document_section" ("id","documentId","ordinal","title",'
+                '"headingPath","depth","pageStart","pageEnd") VALUES (%s,%s,%s,%s,%s,1,%s,%s)',
+                (db.new_id(), design, ordinal, title, f"Design › {title}", start, end),
+            )
         for ordinal, (page, kind, text) in enumerate(PAGES):
             db.execute(
                 conn,
                 'INSERT INTO "source_line" ("id","documentId","ordinal","ref","kind",'
-                '"page","text") VALUES (%s,%s,%s,%s,%s,%s,%s)',
-                (db.new_id(), design, ordinal, f"L{ordinal + 1}", kind, page, text),
+                '"page","text","sectionOrdinal") VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+                (
+                    db.new_id(),
+                    design,
+                    ordinal,
+                    f"L{ordinal + 1}",
+                    kind,
+                    page,
+                    text,
+                    1 if ordinal < 2 else 2,
+                ),
             )
         db.execute(
             conn,
@@ -313,6 +372,41 @@ try:
         owner.get("rationale"),
     )
 
+    print("\n1b. Parts of the design no standard covers")
+    cover = run["coverage"] or {}
+    ok(
+        "the run records its coverage, having read the design by section",
+        cover.get("state") == "complete"
+        and cover.get("sections") == 2
+        and "=== S2: Design › Telemetry and operations" in coverage_calls[-1]["design"],
+        cover,
+    )
+    ok(
+        "the standards it was read against are every clause",
+        all(title in coverage_calls[-1]["standards"] for title in DOCUMENT_REPLIES),
+        coverage_calls[-1]["standards"][:300],
+    )
+    ok(
+        "the ungoverned telemetry section is reported, with the design's own words",
+        [gap["section"] for gap in cover.get("gaps", [])] == [2]
+        and cover["gaps"][0]["quote"].startswith("Telemetry is transmitted over plain MQTT")
+        and cover["gaps"][0]["page"] == 2,
+        cover.get("gaps"),
+    )
+    ok(
+        "the sign-in passage a clause already cited is not reported, and the invented quote is "
+        "refused",
+        cover.get("dropped", {}).get("alreadyJudged") == 1
+        and cover.get("dropped", {}).get("unverified") == 1,
+        cover.get("dropped"),
+    )
+    ok(
+        "the suggested standard keeps only the gap that survived",
+        [(s["title"], s["sections"]) for s in cover.get("suggestions", [])]
+        == [("Device telemetry transport", [2])],
+        cover.get("suggestions"),
+    )
+
     print("\n2. When the whole document cannot be read")
     before = dict(calls)
     job = start(bare, "document")
@@ -329,6 +423,14 @@ try:
         "no clause was sent to the whole-document judge",
         calls["document"] == before["document"] and calls["search"] == before["search"] + 4,
         calls,
+    )
+    asked = len(coverage_calls)
+    ok(
+        "without stored pages the coverage check is skipped, says why, and asks no model",
+        (run["coverage"] or {}).get("state") == "skipped"
+        and "processed before its pages were stored" in (run["coverage"] or {}).get("note", "")
+        and len(coverage_calls) == asked,
+        run["coverage"],
     )
 
     real_config = analyse.get_config
@@ -364,6 +466,26 @@ try:
     ok(
         "both runs hold a finding for every clause",
         second is not None and len(findings(first)) == 4 and len(findings(second["id"])) == 4,
+    )
+    ok(
+        "each run of a comparison records its own coverage",
+        (run_row(first)["coverage"] or {}).get("state") == "complete"
+        and second is not None
+        and (second["coverage"] or {}).get("state") == "complete",
+    )
+
+    print("\n4. When the model cannot answer")
+    analyse.llm.find_uncovered = lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))
+    job = start(design, "retrieval")
+    analyse.handle(job, lambda: None)
+    run = run_row(job.payload["runId"])
+    analyse.llm.find_uncovered = stub_find_uncovered
+    ok(
+        "the run still completes, and its coverage says it could not be worked out",
+        run["state"] == "complete"
+        and (run["coverage"] or {}).get("state") == "failed"
+        and "could not be worked out" in (run["coverage"] or {}).get("note", ""),
+        run["coverage"],
     )
     ok(
         "the job ends done, pointing at the second run",

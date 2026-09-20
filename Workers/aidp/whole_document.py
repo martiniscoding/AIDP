@@ -148,6 +148,17 @@ class WholeDocument:
         return current
 
 
+def contains(text: str, quote: str) -> bool:
+    """Whether a quote's words — each ellipsis part, in order — are in `text`.
+
+    For a check narrower than the whole document: that a quote is in one
+    section, not merely somewhere.
+    """
+    parts = [normalise(part) for part in _ELLIPSIS.split(quote or "")]
+    parts = [part for part in parts if part]
+    return bool(parts) and _in_order(normalise(text), parts)
+
+
 def _in_order(haystack: str, parts: list[str]) -> bool:
     """Every part present as whole words, each after the one before."""
     padded = f" {haystack} "

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireMembership } from "./org";
+import { describeJob, JOB_SELECT } from "./pipeline";
 import { emptyCounts, VERDICTS, type Verdict, type VerdictCounts } from "./verdicts";
 
 // Re-exported so server callers have one import for the whole area; client
@@ -105,17 +106,26 @@ export async function latestRun(userId: string, documentId: string) {
   });
   if (!run) return null;
 
+  const live = run.state === "queued" || run.state === "running";
+  // The job says what the run row cannot: whether a worker has picked it up,
+  // what it is doing before the first clause, and whether it is waiting to retry
+  // or was dropped by a worker that died. A run's job is created with it, and
+  // "Compare both" carries the next run on the same job, so a live run's job is
+  // the document's newest analyse job.
+  const row = live
+    ? await prisma.job.findFirst({
+        where: { documentId, stage: "analyse" },
+        orderBy: { createdAt: "desc" },
+        select: JOB_SELECT,
+      })
+    : null;
+
   // A run that says it is waiting, with no job for a worker to take, is not
   // waiting for anything. Its job was removed — re-processing a document used to
   // clear every job, analyse included — and nothing will ever start it, while
   // the page disabled every way of starting another.
-  const live = run.state === "queued" || run.state === "running";
-  const orphaned =
-    live &&
-    (await prisma.job.count({
-      where: { documentId, stage: "analyse", state: { in: ["queued", "leased"] } },
-    })) === 0;
-  return { ...run, orphaned };
+  const orphaned = live && !(row && (row.state === "queued" || row.state === "leased"));
+  return { ...run, orphaned, job: row && !orphaned ? describeJob(row) : null };
 }
 
 export async function verdictCounts(runId: string): Promise<VerdictCounts> {

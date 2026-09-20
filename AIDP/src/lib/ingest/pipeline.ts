@@ -191,6 +191,107 @@ export function explain(raw: string | null | undefined): Problem | null {
   return { summary, detail: summary === text ? null : text };
 }
 
+export type JobState = "queued" | "running" | "retrying" | "stalled" | "done" | "failed";
+
+/** One job, as a person waiting on it would want it told. */
+export type JobView = {
+  state: JobState;
+  /** What the worker says it is doing, or was doing when it stopped. */
+  step: string | null;
+  done: number | null;
+  total: number | null;
+  /** Steps finished in this attempt, with how long each took. */
+  trail: TrailStep[];
+  attempt: number;
+  maxAttempts: number;
+  /** Running: since this attempt started. Queued: since it became runnable. */
+  sinceMs: number | null;
+  /** Done: how long the attempt that finished took. */
+  tookMs: number | null;
+  /** Retrying: until the next attempt may start. */
+  retryInMs: number | null;
+  problem: Problem | null;
+};
+
+/**
+ * A job's state from the queue's columns and the worker's report.
+ *
+ * Shared by the processing stages and by an assessment, whose run row cannot
+ * tell on its own whether a worker has picked it up, is retrying after an
+ * error, or died holding it. `fallbackError` is the reason recorded somewhere
+ * else — the document's, for a stage — for a job that died without one.
+ */
+export function describeJob(
+  job: JobRow,
+  now: Date = new Date(),
+  fallbackError: string | null = null,
+): JobView {
+  const at = now.getTime();
+  const reported = readProgress(job.progress);
+  // A report from an earlier attempt describes work that was abandoned.
+  const progress = reported && reported.attempt === job.attempts ? reported : null;
+  const startedAt = progress?.startedAt?.getTime() ?? null;
+  const said: JobView = {
+    state: "queued",
+    step: progress?.step ?? null,
+    done: progress?.done ?? null,
+    total: progress?.total ?? null,
+    trail: progress?.trail ?? [],
+    attempt: job.attempts,
+    maxAttempts: job.maxAttempts,
+    sinceMs: null,
+    tookMs: null,
+    retryInMs: null,
+    problem: null,
+  };
+
+  switch (job.state) {
+    case "done":
+      return {
+        ...said,
+        state: "done",
+        step: null,
+        done: null,
+        total: null,
+        tookMs: startedAt === null ? null : Math.max(0, job.updatedAt.getTime() - startedAt),
+      };
+    case "dead":
+    case "failed":
+      return { ...said, state: "failed", problem: explain(job.lastError ?? fallbackError) };
+    case "leased": {
+      // Past its lease, nobody is working on it: the reaper hands it back.
+      const stalled = job.leaseUntil !== null && job.leaseUntil.getTime() < at;
+      return {
+        ...said,
+        state: stalled ? "stalled" : "running",
+        sinceMs: startedAt === null ? null : Math.max(0, at - startedAt),
+      };
+    }
+    default: {
+      if (job.attempts > 0) {
+        return {
+          ...said,
+          state: "retrying",
+          done: null,
+          total: null,
+          retryInMs: Math.max(0, job.runAfter.getTime() - at),
+          problem: explain(job.lastError),
+        };
+      }
+      const runnable = Math.max(job.createdAt.getTime(), job.runAfter.getTime());
+      return {
+        ...said,
+        state: "queued",
+        step: null,
+        done: null,
+        total: null,
+        trail: [],
+        sinceMs: Math.max(0, at - runnable),
+      };
+    }
+  }
+}
+
 export function describePipeline(
   document: { status: string; failureReason: string | null },
   jobs: JobRow[],
@@ -233,58 +334,7 @@ export function describePipeline(
       return { ...base, state: later || document.status === "ready" ? "done" : "waiting" };
     }
 
-    const reported = readProgress(job.progress);
-    // A report from an earlier attempt describes work that was abandoned.
-    const progress = reported && reported.attempt === job.attempts ? reported : null;
-    const startedAt = progress?.startedAt?.getTime() ?? null;
-    const said = {
-      step: progress?.step ?? null,
-      done: progress?.done ?? null,
-      total: progress?.total ?? null,
-      trail: progress?.trail ?? [],
-    };
-
-    switch (job.state) {
-      case "done":
-        return {
-          ...base,
-          state: "done",
-          trail: said.trail,
-          tookMs: startedAt === null ? null : Math.max(0, job.updatedAt.getTime() - startedAt),
-        };
-      case "dead":
-      case "failed":
-        return {
-          ...base,
-          ...said,
-          state: "failed",
-          problem: explain(job.lastError ?? document.failureReason),
-        };
-      case "leased": {
-        // Past its lease, nobody is working on it: the reaper hands it back.
-        const stalled = job.leaseUntil !== null && job.leaseUntil.getTime() < at;
-        return {
-          ...base,
-          ...said,
-          state: stalled ? "stalled" : "running",
-          sinceMs: startedAt === null ? null : Math.max(0, at - startedAt),
-        };
-      }
-      default: {
-        if (job.attempts > 0) {
-          return {
-            ...base,
-            step: said.step,
-            trail: said.trail,
-            state: "retrying",
-            retryInMs: Math.max(0, job.runAfter.getTime() - at),
-            problem: explain(job.lastError),
-          };
-        }
-        const runnable = Math.max(job.createdAt.getTime(), job.runAfter.getTime());
-        return { ...base, state: "queued", sinceMs: Math.max(0, at - runnable) };
-      }
-    }
+    return { ...base, ...describeJob(job, now, document.failureReason) };
   });
 
   // A document marked failed with no dead job to show for it: say where it stopped.

@@ -80,6 +80,22 @@ class Config:
     # the model's context; the ceiling is cost, since every clause of a run
     # sends the whole document (cached after the first).
     whole_document_max_tokens: int = 250_000
+    # Whether an assessment ends with improvements to the design itself, suggested
+    # by a model after every clause is judged. One whole-document call per run.
+    improvement_suggestions: bool = True
+    # How long a design's suggested improvements are reused, in days, while the
+    # design, the standards, the model and the prompt are all unchanged. Asking
+    # again inside that window gives the same suggestions rather than a new set
+    # from the same inputs. 0 turns the reuse off. See advice.py.
+    advice_cache_days: int = 90
+    # Whether an assessment looks up the support status of the technologies a
+    # design names on endoflife.date. Only public product ids are sent, never
+    # anything from the design — see lifecycle.py. Off for a customer who wants
+    # nothing looked up outside at all.
+    lifecycle_check: bool = True
+    # Support ending within this many days is reported as ending soon.
+    lifecycle_soon_days: int = 365
+    lifecycle_base_url: str = "https://endoflife.date/api"
 
     # OpenRouter: one key for every model call, OpenAI's models behind it.
     openrouter_api_key: str | None = None
@@ -161,6 +177,13 @@ class Config:
             not in ("0", "off", "false", "no"),
             rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
             whole_document_max_tokens=max(1_000, _int("WHOLE_DOCUMENT_MAX_TOKENS", 250_000)),
+            improvement_suggestions=os.environ.get("IMPROVEMENT_SUGGESTIONS", "on").lower()
+            not in ("0", "off", "false", "no"),
+            advice_cache_days=max(0, _int("ADVICE_CACHE_DAYS", 90)),
+            lifecycle_check=os.environ.get("LIFECYCLE_CHECK", "on").lower()
+            not in ("0", "off", "false", "no"),
+            lifecycle_soon_days=max(0, _int("LIFECYCLE_SOON_DAYS", 365)),
+            lifecycle_base_url=os.environ.get("LIFECYCLE_BASE_URL", "https://endoflife.date/api"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
             openrouter_model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
             openrouter_fast_model=os.environ.get("OPENROUTER_FAST_MODEL", "openai/gpt-4.1-nano"),

@@ -936,6 +936,19 @@ model AssessmentRun {
   // The run this one was started alongside, when both modes were run to be
   // compared.
   comparedWithId String?
+  // The reverse of the findings: parts of the design no clause governs, each
+  // with a quote checked against the design, and the standards a model suggests
+  // adding. See Workers/aidp/coverage.py and src/lib/ingest/coverage.ts.
+  coverage       Json?
+  /// Improvements to the design itself, suggested once the clauses are judged and
+  /// the coverage worked out — see Workers/aidp/advice.py. Advice, never a
+  /// verdict. Null on runs from before it existed.
+  advice       Json?
+  /// Whether the technologies the design names are still supported, looked up on
+  /// endoflife.date by product id alone — see Workers/aidp/lifecycle.py. Facts
+  /// with a source and a date, never a verdict. Nullable: runs from before this
+  /// existed have none.
+  lifecycle    Json?
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?
