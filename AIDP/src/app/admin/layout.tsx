@@ -5,6 +5,7 @@ import { Logo } from "@/components/ui/Logo";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/access/gate";
 import { SignOutButton } from "../dashboard/SignOutButton";
+import { SessionTimeout } from "@/components/auth/SessionTimeout";
 
 /**
  * The operator's console.
@@ -29,6 +30,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="app-dark min-h-svh">
+      <SessionTimeout />
       <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-6">
           <Logo tone="light" href="/admin" />

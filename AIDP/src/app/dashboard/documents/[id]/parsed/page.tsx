@@ -71,11 +71,10 @@ export default async function ParsedPage({
         headingPath: s.headingPath,
       })),
     )
-    .sort(
-      (a, b) =>
-        Number(a.reviewState !== "pending") - Number(b.reviewState !== "pending") ||
-        b.complexity - a.complexity,
-    );
+    // In the document's own order, page by page, as a reader turning through it
+    // would meet them. Within a page the order they were read in holds: the sort
+    // is stable, and sections and their figures arrive in reading order.
+    .sort((a, b) => a.page - b.page);
   const high = document.issues.filter((i) => i.severity === "high");
   const other = document.issues.filter((i) => i.severity !== "high");
 

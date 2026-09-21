@@ -16,10 +16,13 @@ export function DocumentActions({
   documentId,
   title,
   redirectAfterDelete = false,
+  redirectTo = "/dashboard/documents",
 }: {
   documentId: string;
   title: string;
   redirectAfterDelete?: boolean;
+  /** Where a deleted document's page sends you: the list it came from. */
+  redirectTo?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -31,7 +34,7 @@ export function DocumentActions({
       const result = await action();
       setMessage(result.message);
       setConfirming(false);
-      if (result.ok && thenRedirect) router.push("/dashboard/documents");
+      if (result.ok && thenRedirect) router.push(redirectTo);
       else router.refresh();
     });
   };

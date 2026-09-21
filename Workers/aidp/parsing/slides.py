@@ -30,6 +30,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 
 from .. import logs
+from . import slide_render
 from .figures import Figure
 from .spans import Line
 
@@ -72,6 +73,23 @@ _MIN_FIGURE_AREA = 0.04
 # blobs rather than to text.
 _REPEAT_SHARE = 0.30
 
+# A slide drawn as a diagram, in PowerPoint's own shapes: at least this many
+# lines or connectors, and at least this many boxes for them to join. Measured on
+# a real proposal, the arrows are what separate an architecture slide (21 lines on
+# 55 boxes) from a slide of text laid out in boxes (24 boxes, no lines at all),
+# which is text, already read, and nothing a picture would add to.
+_DIAGRAM_MIN_LINES = 3
+_DIAGRAM_MIN_BOXES = 3
+
+# A slide whose picture already covers this much of it is a pasted diagram, and
+# the picture itself is the figure; photographing the slide again would describe
+# it twice.
+_PASTED_DIAGRAM_SHARE = 0.5
+
+# SmartArt is a diagram by definition, whatever it is made of.
+_SMARTART_URI = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+_GRAPHIC_DATA = "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData"
+
 
 @dataclass
 class Deck:
@@ -89,6 +107,10 @@ class Deck:
     #: Pictures that could not be converted to PNG, reported rather than dropped
     #: in silence.
     undecodable_images: int = 0
+    #: Slides drawn as diagrams whose picture could not be taken, and why — so
+    #: the document says its diagrams were read as words alone.
+    unrendered_diagrams: list[int] = field(default_factory=list)
+    render_error: str | None = None
 
 
 def _points(emu) -> float:
@@ -404,8 +426,97 @@ def _read_pictures(prs, deck: Deck) -> None:
         )
 
 
-def read(raw: bytes) -> Deck:
-    """Parse a .pptx into lines, hints and figures."""
+def _every_shape(shapes):
+    for shape in shapes:
+        yield shape
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _every_shape(shape.shapes)
+
+
+def diagram_slides(prs, deck: Deck) -> dict[int, int]:
+    """Slides drawn as diagrams, by number, each with how many shapes draw it.
+
+    The count stands in for the PDF path's primitive count as the figure's
+    `complexity`, so the review queue puts the busiest architecture first.
+    """
+    slide_area = _points(prs.slide_width) * _points(prs.slide_height)
+    pasted = {
+        figure.page
+        for figure in deck.figures
+        if slide_area
+        and (figure.bbox[2] - figure.bbox[0]) * (figure.bbox[3] - figure.bbox[1]) / slide_area
+        >= _PASTED_DIAGRAM_SHARE
+    }
+    found: dict[int, int] = {}
+    for number, slide_obj in enumerate(prs.slides, start=1):
+        if number in pasted:
+            continue
+        lines = boxes = 0
+        for shape in _every_shape(slide_obj.shapes):
+            kind = shape.shape_type
+            if kind == MSO_SHAPE_TYPE.LINE:
+                lines += 1
+            elif kind in (MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.FREEFORM, MSO_SHAPE_TYPE.TEXT_BOX):
+                boxes += 1
+        smartart = any(
+            element.get("uri") == _SMARTART_URI
+            for element in slide_obj.shapes._spTree.iter(_GRAPHIC_DATA)  # noqa: SLF001
+        )
+        if smartart or (lines >= _DIAGRAM_MIN_LINES and boxes >= _DIAGRAM_MIN_BOXES):
+            found[number] = lines + boxes
+    return found
+
+
+def _slide_title(slide_obj) -> str | None:
+    try:
+        title = slide_obj.shapes.title
+    except (AttributeError, KeyError):
+        return None
+    if title is None or not title.has_text_frame:
+        return None
+    text = " ".join(title.text_frame.text.split())
+    return text[:300] or None
+
+
+def _read_diagrams(prs, raw: bytes, deck: Deck) -> None:
+    """Photograph the slides that are drawn diagrams, and add them as figures."""
+    wanted = diagram_slides(prs, deck)
+    if not wanted:
+        return
+    try:
+        pictures = slide_render.render(raw, sorted(wanted), slide_count=deck.slide_count)
+    except slide_render.RenderFailed as exc:
+        deck.unrendered_diagrams = sorted(wanted)
+        deck.render_error = str(exc)
+        logs.warn(log, "diagram slides not rendered", slides=sorted(wanted), error=str(exc)[:300])
+        return
+
+    width, height = _points(prs.slide_width), _points(prs.slide_height)
+    slides = list(prs.slides)
+    for number in sorted(wanted):
+        png = pictures.get(number)
+        if png is None:
+            deck.unrendered_diagrams.append(number)
+            continue
+        deck.figures.append(
+            Figure(
+                page=number,
+                # The whole slide: the diagram is the slide.
+                bbox=(0.0, 0.0, width, height),
+                png=png,
+                caption=_slide_title(slides[number - 1]),
+                kind="slide",
+                complexity=wanted[number],
+            )
+        )
+
+
+def read(raw: bytes, *, render_diagrams: bool = True) -> Deck:
+    """Parse a .pptx into lines, hints and figures.
+
+    `render_diagrams` photographs slides drawn in PowerPoint's own shapes (see
+    slide_render.py); off, they are read as their words alone.
+    """
     prs = Presentation(io.BytesIO(raw))
     deck = Deck()
     deck.slide_count = len(prs.slides._sldIdLst)  # noqa: SLF001 — no public length
@@ -448,6 +559,10 @@ def read(raw: bytes) -> Deck:
         _read_notes(deck, slide_obj, slide=number)
 
     _read_pictures(prs, deck)
+    # After the pictures, so a slide whose diagram was pasted in as one image is
+    # known, and not photographed a second time.
+    if render_diagrams:
+        _read_diagrams(prs, raw, deck)
 
     logs.info(
         log,
@@ -455,6 +570,8 @@ def read(raw: bytes) -> Deck:
         slides=deck.slide_count,
         lines=len(deck.lines),
         figures=len(deck.figures),
+        diagrams=sum(1 for figure in deck.figures if figure.kind == "slide"),
+        unrendered=len(deck.unrendered_diagrams),
         undecodable=deck.undecodable_images,
     )
     return deck

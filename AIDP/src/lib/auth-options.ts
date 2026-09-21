@@ -3,6 +3,13 @@ import type { BetterAuthOptions } from "better-auth";
 import { prisma } from "./prisma";
 
 /**
+ * How long a sign-in lasts, in seconds: an hour. SESSION_SECONDS overrides it,
+ * which is how the expiry is tested without waiting an hour for it.
+ */
+export const SESSION_SECONDS =
+  Number(process.env.SESSION_SECONDS) > 0 ? Number(process.env.SESSION_SECONDS) : 60 * 60;
+
+/**
  * Better Auth configuration, minus anything Next-specific.
  *
  * Split out from `auth.ts` so other entry points can import the same options
@@ -28,6 +35,24 @@ export const authOptions = {
   // Set BETTER_AUTH_SECRET before deploying — sessions are signed with it.
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+
+  /**
+   * A session lasts an hour from sign-in, and no longer.
+   *
+   * Better Auth's default is a week, pushed back a day whenever the session is
+   * used — so a laptop left signed in to customer designs stayed signed in more
+   * or less for good. `expiresIn` sets the hour, and the session cookie's
+   * Max-Age follows it, so the browser drops the cookie at the same moment the
+   * server stops honouring it. `disableSessionRefresh` is what makes the hour
+   * absolute: without it, using the app would keep moving the end further away.
+   *
+   * An open tab is sent to sign-in when the hour is up by SessionTimeout, since
+   * the server only notices on the next request.
+   */
+  session: {
+    expiresIn: SESSION_SECONDS,
+    disableSessionRefresh: true,
+  },
 
   /**
    * Collected at sign-up. `input: true` lets the client send them on the

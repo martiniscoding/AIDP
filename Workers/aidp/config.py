@@ -134,6 +134,11 @@ class Config:
     # Support ending within this many days is reported as ending soon.
     lifecycle_soon_days: int = 365
     lifecycle_base_url: str = "https://endoflife.date/api"
+    # Whether slides drawn as diagrams in PowerPoint's own shapes are
+    # photographed — through LibreOffice, inside this container — so the vision
+    # model can read their arrows. Off, such a slide is read as its words alone.
+    # See aidp/parsing/slide_render.py.
+    slide_diagrams: bool = True
 
     # OpenRouter: one key for every model call, OpenAI's models behind it.
     openrouter_api_key: str | None = None
@@ -223,6 +228,8 @@ class Config:
             not in ("0", "off", "false", "no"),
             lifecycle_soon_days=max(0, _int("LIFECYCLE_SOON_DAYS", 365)),
             lifecycle_base_url=os.environ.get("LIFECYCLE_BASE_URL", "https://endoflife.date/api"),
+            slide_diagrams=os.environ.get("SLIDE_DIAGRAMS", "on").lower()
+            not in ("0", "off", "false", "no"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
             openrouter_model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
             openrouter_fast_model=os.environ.get("OPENROUTER_FAST_MODEL", "openai/gpt-4.1-nano"),

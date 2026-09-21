@@ -67,6 +67,9 @@ export default async function DocumentPage({
   // Only a submitted design gets assessed; a reference standard is what it is
   // assessed against.
   const assessed = document.role === "assessed";
+  // Where "back", and a delete, take you: designs are reached from the home
+  // screen's projects, standards from the library.
+  const home = assessed ? "/dashboard" : "/dashboard/documents";
   const run = assessed ? await latestRun(session.user.id, document.id) : null;
   // A clause the design says nothing about is no longer reported. The report's
   // "Absent" section is the reverse question — the parts of the design no clause
@@ -159,12 +162,15 @@ export default async function DocumentPage({
         }
       />
 
+      {/* Back to where this kind of document lives: a design is reached from
+          the projects on the home screen, a standard from the library. Sending
+          a design back to the library dropped people in a list it is not in. */}
       <Link
-        href="/dashboard/documents"
+        href={home}
         className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-ink/66 transition-colors hover:text-ink"
       >
         <ArrowLeft size={14} />
-        Standards library
+        {assessed ? "Home" : "Standards library"}
       </Link>
 
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
@@ -210,7 +216,12 @@ export default async function DocumentPage({
           </Link>
 
           {mayChange && (
-            <DocumentActions documentId={document.id} title={document.title} redirectAfterDelete />
+            <DocumentActions
+            documentId={document.id}
+            title={document.title}
+            redirectAfterDelete
+            redirectTo={home}
+          />
           )}
         </div>
       </header>

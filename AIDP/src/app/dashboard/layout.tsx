@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
 import { requireWorkspace } from "@/lib/access/gate";
 import { SignOutButton } from "./SignOutButton";
+import { SessionTimeout } from "@/components/auth/SessionTimeout";
 
 /**
  * Authenticated shell.
@@ -54,6 +55,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="app-dark min-h-svh">
+      <SessionTimeout />
       <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
           <Logo tone="light" href="/dashboard" />

@@ -11,6 +11,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# LibreOffice, headless, for one job: photographing slides whose diagrams are
+# drawn in PowerPoint's own shapes, which no Python library can draw (see
+# aidp/parsing/slide_render.py). Impress alone, no Java, no GUI. The fonts are
+# what decks are written in — Carlito and Caladea match Calibri and Cambria
+# metric for metric — so text in a rendered box wraps where the author put it.
+# Its own layer, above the Python dependencies, so it is built once.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libreoffice-impress \
+      fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation2 fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/*
+
 # Dependencies in their own layer so code changes don't reinstall PyMuPDF.
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .

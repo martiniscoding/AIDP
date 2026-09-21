@@ -25,8 +25,9 @@ export type FigureView = {
  * corrupted index, but fabricated evidence that reads like a quotation.
  *
  * Review is not a gate. The document indexed the moment it finished; this is
- * where someone checks the readings that matter, sorted so the dense diagrams
- * a vision model actually struggles with come first.
+ * where someone checks the readings that matter. Shown in the order the caller
+ * gives — page order on the parsed page — with the dense diagrams a vision model
+ * struggles with marked as such.
  */
 export function Figures({ figures }: { figures: FigureView[] }) {
   if (figures.length === 0) return null;

@@ -605,7 +605,7 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     part that matters — lines in reading order, labelled, grouped into clauses.
     """
     out = _Result()
-    deck = slides.read(raw)
+    deck = slides.read(raw, render_diagrams=get_config().slide_diagrams)
     out.page_count = deck.slide_count
 
     text_chars = sum(len(line.text) for line in deck.lines)
@@ -650,6 +650,19 @@ def _parse_deck(raw: bytes, document: dict, heartbeat) -> _Result:
     for figure in deck.figures:
         index = _section_for_page(out.sections, figure.page, figure.bbox[1])
         out.figures.setdefault(index, []).append(figure)
+
+    if deck.unrendered_diagrams:
+        shown = ", ".join(str(number) for number in deck.unrendered_diagrams[:12])
+        more = len(deck.unrendered_diagrams) - 12
+        out.issue(
+            "medium",
+            "diagram_unrendered",
+            f"{len(deck.unrendered_diagrams)} slide(s) drawn as diagrams (slide "
+            f"{shown}{f' and {more} more' if more > 0 else ''}) could not be turned into "
+            f"pictures, so they were read as their words alone: {deck.render_error or 'no picture was produced'}. "
+            "The labels are indexed; which box connects to which is not.",
+            page=deck.unrendered_diagrams[0],
+        )
 
     if deck.undecodable_images:
         out.issue(
