@@ -16,7 +16,7 @@ export default function DashboardLoading() {
     <SkeletonScreen label="Loading your projects">
       <PageHeaderSkeleton />
 
-      <div className="mb-5 h-8 w-[7.5rem] rounded-lg border border-line" />
+      <div className="mx-auto mb-6 h-11 w-40 rounded-full bg-royal/40" />
 
       <div className="space-y-2.5">
         {PROJECTS.map((width, index) => (

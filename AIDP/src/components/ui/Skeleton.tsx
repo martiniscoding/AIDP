@@ -151,14 +151,14 @@ export function PillsSkeleton({ count, className }: { count: number; className?:
   );
 }
 
-/** UploadZone's drop target, at rest. */
+/** UploadZone's drop target, at rest: centred, with the button it leads with. */
 export function DropZoneSkeleton() {
   return (
-    <div className="flex flex-col items-center gap-3.5 rounded-xl border border-line bg-canvas-sunk px-4 py-7">
+    <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-3.5 rounded-2xl border border-line bg-canvas-sunk px-4 py-10">
       <Bone square className="h-12 w-16" />
-      <div className="flex flex-col items-center gap-2">
-        <Bone className="h-3.5 w-44" />
-        <Bone className="h-3 w-40" />
+      <div className="flex flex-col items-center gap-2.5">
+        <div className="h-10 w-52 rounded-full bg-royal/40" />
+        <Bone className="h-3 w-56" />
       </div>
     </div>
   );
