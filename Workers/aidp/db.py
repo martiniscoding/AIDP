@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import secrets
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -28,6 +29,10 @@ from psycopg_pool import ConnectionPool
 from .config import get_config
 
 _pool: ConnectionPool | None = None
+# The worker's loop and its background threads all reach for the pool as they
+# start, and without this each could open one of its own; every pool but the last
+# was then dropped half-open.
+_pool_lock = threading.Lock()
 
 
 def new_id() -> str:
@@ -52,16 +57,18 @@ def now() -> dt.datetime:
 def pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        cfg = get_config()
-        _pool = ConnectionPool(
-            cfg.database_url,
-            min_size=1,
-            # A worker processes one job at a time; the headroom is for the
-            # reaper and heartbeats running alongside a long handler.
-            max_size=int(os.environ.get("DB_POOL_MAX", "4")),
-            kwargs={"row_factory": dict_row, "autocommit": True},
-            open=True,
-        )
+        with _pool_lock:
+            if _pool is None:
+                cfg = get_config()
+                _pool = ConnectionPool(
+                    cfg.database_url,
+                    min_size=1,
+                    # A worker processes one job at a time; the headroom is for the
+                    # reaper and heartbeats running alongside a long handler.
+                    max_size=int(os.environ.get("DB_POOL_MAX", "4")),
+                    kwargs={"row_factory": dict_row, "autocommit": True},
+                    open=True,
+                )
     return _pool
 
 
