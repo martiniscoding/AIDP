@@ -333,6 +333,79 @@ export async function startAssessment(
  * `refreshing` tells the page to say so and to keep checking — and stay if the
  * attempt fails.
  */
+/**
+ * Stop an assessment that has not finished.
+ *
+ * A run waits for a worker, and a worker can be busy with somebody else's
+ * hundred-clause design — the person watching is the one who knows it is no
+ * longer worth waiting for. Stopping marks the run with who stopped it and
+ * deletes its job, so a queued one is never picked up and a worker already part
+ * way through notices at its next clause: its progress write no longer matches a
+ * running run, and it abandons the rest. See `_progress` in analyse.py.
+ *
+ * Findings already written are kept. They are what the run found before it was
+ * stopped, and throwing them away would cost the model spend twice.
+ */
+export async function cancelAssessment(runId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (typeof runId !== "string" || !runId) {
+      return { ok: false, message: "That assessment no longer exists." };
+    }
+
+    const run = await prisma.assessmentRun.findUnique({
+      where: { id: runId },
+      select: {
+        id: true,
+        documentId: true,
+        organisationId: true,
+        state: true,
+        completedClauses: true,
+        totalClauses: true,
+      },
+    });
+    if (!run) return { ok: false, message: "That assessment no longer exists." };
+    await requireMembership(user.id, run.organisationId);
+
+    if (run.state !== "queued" && run.state !== "running") {
+      return { ok: false, message: "That assessment has already finished." };
+    }
+
+    const stopped = await prisma.$transaction(async (tx) => {
+      // Conditional, so a run that finished between the read above and here is
+      // left as it finished rather than being marked stopped after the fact.
+      const changed = await tx.assessmentRun.updateMany({
+        where: { id: run.id, state: { in: ["queued", "running"] } },
+        data: {
+          state: "failed",
+          failureReason:
+            `Stopped by ${user.name || user.email} after ${run.completedClauses} of ` +
+            `${run.totalClauses} clauses. Run it again whenever you are ready.`,
+          completedAt: new Date(),
+        },
+      });
+      if (changed.count === 0) return false;
+      await tx.job.deleteMany({
+        where: {
+          documentId: run.documentId,
+          stage: "analyse",
+          state: { in: ["queued", "leased"] },
+        },
+      });
+      return true;
+    });
+    if (!stopped) return { ok: false, message: "That assessment had already finished." };
+
+    revalidatePath(`/dashboard/documents/${run.documentId}`);
+    return { ok: true, message: "Assessment stopped. Its findings so far are kept." };
+  } catch (error) {
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that assessment." };
+    }
+    return { ok: false, message: "Could not stop that assessment." };
+  }
+}
+
 export async function refreshSuggestions(runId: string): Promise<ActionResult> {
   try {
     const user = await requireUser();

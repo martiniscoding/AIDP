@@ -9,6 +9,7 @@ import {
   Loader2,
   Play,
   ShieldAlert,
+  Square,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -27,7 +28,7 @@ import type { CoverageView } from "@/lib/ingest/coverage";
 import type { AdviceView } from "@/lib/ingest/advice";
 import type { LifecycleView } from "@/lib/ingest/lifecycle";
 import { SLOW_PICKUP_MS, type JobView } from "@/lib/ingest/pipeline";
-import { reviewFinding, startAssessment } from "../actions";
+import { cancelAssessment, reviewFinding, startAssessment } from "../actions";
 import { Ticker } from "../Ticker";
 import { CoverageGaps } from "./CoverageGaps";
 import { Improvements } from "./Improvements";
@@ -286,6 +287,17 @@ export function Assessment({
       router.refresh();
     });
 
+  // Offered whenever a run has not finished. Waiting for a worker that is busy
+  // with somebody else's design can take a while, and the person watching is the
+  // one who knows it is no longer worth waiting for.
+  const stop = () =>
+    startTransition(async () => {
+      if (!run) return;
+      const result = await cancelAssessment(run.id);
+      setMessage(result.message);
+      router.refresh();
+    });
+
   return (
     <section className="mb-10">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -340,6 +352,24 @@ export function Assessment({
                   ? "Re-run assessment"
                   : "Run assessment"}
           </button>
+
+          {inFlight && (
+            <button
+              type="button"
+              onClick={() => stop()}
+              disabled={pending}
+              title="Stop this assessment. Whatever it has already found is kept, and you can run it again."
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-opacity",
+                "border-warn-line bg-warn-tint text-warn hover:opacity-85",
+                "disabled:cursor-not-allowed disabled:opacity-55",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+              )}
+            >
+              <Square size={11} aria-hidden="true" />
+              Stop
+            </button>
+          )}
         </div>
       </div>
 

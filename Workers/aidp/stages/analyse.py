@@ -123,6 +123,14 @@ def handle(job: Job, heartbeat) -> None:
             )
         }
 
+    # Stopped, or failed elsewhere, before a worker reached it. Its job is closed
+    # rather than retried: there is nothing left to advance.
+    if run["state"] not in ("queued", "running"):
+        logs.info(log, "run is not live, nothing to do", runId=run_id, state=run["state"])
+        with db.transaction() as conn:
+            queue.complete(conn, job, chain=False)
+        return
+
     if not clauses:
         _fail(run_id, "The framework contains no clauses. Ingest a reference document first.")
         raise RuntimeError("framework has no clauses")
@@ -184,7 +192,16 @@ def handle(job: Job, heartbeat) -> None:
         # which is what a progress bar exists to rule out. The cost is one small
         # UPDATE per clause against a row already in cache, spaced fifteen
         # seconds apart; the model call beside it dwarfs it.
-        _progress(run_id, len(done) + index)
+        if _progress(run_id, len(done) + index) == 0:
+            logs.info(
+                log,
+                "run is no longer running, abandoning it",
+                runId=run_id,
+                clausesDone=len(done) + index,
+            )
+            with db.transaction() as conn:
+                queue.complete(conn, job, chain=False)
+            return
 
     # Search shows the judge eight passages, so "absent" is the one verdict it
     # cannot really reach: a claim about everywhere it did not look. Every clause
@@ -1088,11 +1105,19 @@ def _start(
         )
 
 
-def _progress(run_id: str, completed: int) -> None:
+def _progress(run_id: str, completed: int) -> int:
+    """Record a clause, and report whether the run is still one to work on.
+
+    0 means the row is no longer running — somebody stopped it (see
+    `cancelAssessment` in the app's actions.ts) or it was failed elsewhere. The
+    caller stops there rather than spending a model call per remaining clause on
+    a report nobody is waiting for.
+    """
     with db.connection() as conn:
-        db.execute(
+        return db.execute(
             conn,
-            'UPDATE "assessment_run" SET "completedClauses" = %s WHERE "id" = %s',
+            'UPDATE "assessment_run" SET "completedClauses" = %s '
+            "WHERE \"id\" = %s AND \"state\" = 'running'",
             (completed, run_id),
         )
 
@@ -1124,7 +1149,7 @@ def _complete(job: Job, run_id: str) -> None:
                SET "state" = 'complete',
                    "completedClauses" = "totalClauses",
                    "completedAt" = now()
-             WHERE "id" = %s
+             WHERE "id" = %s AND "state" IN ('queued', 'running')
             """,
             (run_id,),
         )

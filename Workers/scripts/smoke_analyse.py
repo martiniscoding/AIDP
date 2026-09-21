@@ -479,6 +479,14 @@ def main() -> int:
                 "UPDATE \"job\" SET \"state\" = 'leased' WHERE \"id\" = %s",
                 (job_id,),
             )
+            # A worker that died mid-run leaves the row saying "running", which
+            # is what the reaper hands to the next worker. A run that reached
+            # "complete" is not resumed at all — see the guard in `handle`.
+            db.execute(
+                conn,
+                "UPDATE \"assessment_run\" SET \"state\" = 'running' WHERE \"id\" = %s",
+                (run_id,),
+            )
 
         seen: list[str] = []
         original = _stub_judge
@@ -496,6 +504,59 @@ def main() -> int:
                 conn, 'SELECT count(*)::int AS n FROM "finding" WHERE "runId" = %s', (run_id,)
             )
         check("full set restored", total and total["n"] == 8, str(total))
+
+        print("\nA run somebody stopped")
+        stopped_run, stopped_job = db.new_id(), db.new_id()
+        with db.transaction() as conn:
+            db.execute(
+                conn,
+                """
+                INSERT INTO "assessment_run"
+                    ("id","organisationId","documentId","frameworkId","state","totalClauses")
+                VALUES (%s,%s,%s,%s,'failed',8)
+                """,
+                (stopped_run, org, sub_doc, framework),
+            )
+            db.execute(
+                conn,
+                """
+                INSERT INTO "job"
+                    ("id","organisationId","documentId","stage","state","correlationId",
+                     "payload","updatedAt")
+                VALUES (%s,%s,%s,'analyse','leased',%s,%s,now())
+                """,
+                (stopped_job, org, sub_doc, str(uuid.uuid4()), f'{{"runId":"{stopped_run}"}}'),
+            )
+        judged_before = len(seen)
+        analyse.handle(
+            Job(
+                id=stopped_job,
+                organisation_id=org,
+                document_id=sub_doc,
+                stage="analyse",
+                attempts=1,
+                correlation_id=str(uuid.uuid4()),
+                payload={"runId": stopped_run},
+            ),
+            lambda: None,
+        )
+        with db.connection() as conn:
+            wrote = db.one(
+                conn,
+                'SELECT count(*)::int AS n FROM "finding" WHERE "runId" = %s',
+                (stopped_run,),
+            )
+            closed = db.one(
+                conn, 'SELECT "state" FROM "job" WHERE "id" = %s', (stopped_job,)
+            )
+        check("it is not worked on", wrote and wrote["n"] == 0, str(wrote))
+        check("no clause is judged for it", len(seen) == judged_before, str(len(seen)))
+        check("its job is closed rather than retried",
+              closed and closed["state"] == "done", str(closed))
+        check(
+            "progress on a run that is no longer running reports nothing changed",
+            analyse._progress(stopped_run, 3) == 0,
+        )
 
         return 1 if failures else 0
 

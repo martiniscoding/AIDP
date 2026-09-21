@@ -393,12 +393,15 @@ try:
         and cover["gaps"][0]["page"] == 2,
         cover.get("gaps"),
     )
+    # The design is read several times and only what most reads found is kept, so
+    # each read refuses the same two and the counts are their sum.
+    reads = cover.get("reads") or 1
     ok(
         "the sign-in passage a clause already cited is not reported, and the invented quote is "
-        "refused",
-        cover.get("dropped", {}).get("alreadyJudged") == 1
-        and cover.get("dropped", {}).get("unverified") == 1,
-        cover.get("dropped"),
+        "refused, in every read",
+        cover.get("dropped", {}).get("alreadyJudged") == reads
+        and cover.get("dropped", {}).get("unverified") == reads,
+        (reads, cover.get("dropped")),
     )
     ok(
         "the suggested standard keeps only the gap that survived",
