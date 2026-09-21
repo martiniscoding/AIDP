@@ -414,6 +414,78 @@ def check(
     return out
 
 
+def _most_quoted(found: list[dict]) -> dict:
+    """The version of a gap most reads quoted, and the fullest of those."""
+    counts: dict[str, int] = {}
+    for gap in found:
+        counts[gap["quote"]] = counts.get(gap["quote"], 0) + 1
+    return max(found, key=lambda gap: (counts[gap["quote"]], len(gap["quote"])))
+
+
+def agree(reads: list[Checked], needed: int) -> Checked:
+    """One answer out of several reads: what most of them saw.
+
+    Asked the same question three times, a model does not answer it the same way
+    three times. On a real proposal the reported count moved between 5 and 14,
+    and the parts that came and went were the borderline ones — a delivery table
+    read as part of the system, a section some clause already governs. Those turn
+    up in one read. A part of the design that genuinely nothing governs turns up
+    in all of them.
+
+    So a gap is reported once `needed` reads found it, and the version stored is
+    the one most of them quoted. A suggestion survives if any gap it points at
+    did, and keeps the sections that survived.
+
+    What was refused is summed across the reads rather than picked from one: it
+    describes how the model behaved over the whole exercise.
+    """
+    out = Checked()
+    if not reads:
+        return out
+
+    for name in out.dropped:
+        out.dropped[name] = sum(read.dropped.get(name, 0) for read in reads)
+    for name in out.corrected:
+        out.corrected[name] = sum(read.corrected.get(name, 0) for read in reads)
+
+    seen: dict[int, list[dict]] = {}
+    for read in reads:
+        for gap in read.gaps:
+            seen.setdefault(gap["section"], []).append(gap)
+
+    kept: set[int] = set()
+    for section, found in sorted(seen.items()):
+        if len(found) < needed:
+            continue
+        kept.add(section)
+        # `reads` is how many of them saw it. Stored for a reader who wants to
+        # know how sure this is, and ignored by anything that does not.
+        out.gaps.append({**_most_quoted(found), "reads": len(found)})
+
+    titles: dict[str, dict] = {}
+    for read in reads:
+        for suggestion in read.suggestions:
+            sections = sorted(number for number in suggestion["sections"] if number in kept)
+            if not sections:
+                continue
+            key = whole_document.normalise(suggestion["title"])
+            held = titles.get(key)
+            if held is None:
+                titles[key] = {**suggestion, "sections": sections, "reads": 1}
+            else:
+                held["sections"] = sorted(set(held["sections"]) | set(sections))
+                held["reads"] += 1
+    # Held to the same bar as a gap. One read proposing "Third-Party API
+    # Integration Standards" beside two proposing "Third-Party SaaS Integration
+    # Standards" is the model reaching for a name, not the library needing three
+    # standards for two sections.
+    out.suggestions = sorted(
+        (entry for entry in titles.values() if entry["reads"] >= needed),
+        key=lambda entry: (min(entry["sections"]), entry["title"]),
+    )
+    return out
+
+
 def _load(conn, document_id: str) -> tuple[list[Section], whole_document.WholeDocument | None]:
     rows = db.query(
         conn,
@@ -462,6 +534,8 @@ def _outcome(state: str, note: str | None, **rest) -> dict:
         "note": note,
         "checkedAt": db.now().isoformat(),
         "model": llm.model_name()[1],
+        # How many reads the reported gaps came out of. See `agree`.
+        "reads": rest.get("reads", 1),
         "sections": rest.get("sections", 0),
         "truncated": rest.get("truncated", False),
         "gaps": rest.get("gaps", []),
@@ -500,12 +574,26 @@ def work_out(run: dict, clauses: list[dict]) -> dict:
     )
     design, shortened = render_design(sections, budget)
 
-    raw = llm.find_uncovered(design=design, standards=standards, title=whole.title)
-    checked = check(raw, sections, whole, cited)
+    # Read several times and keep what most reads found; see `agree`.
+    reads = max(1, get_config().coverage_reads)
+    needed = reads // 2 + 1
+    found = [
+        check(
+            llm.find_uncovered(design=design, standards=standards, title=whole.title),
+            sections,
+            whole,
+            cited,
+        )
+        for _ in range(reads)
+    ]
+    checked = agree(found, needed)
     logs.info(
         log,
         "coverage worked out",
         runId=run["id"],
+        reads=reads,
+        needed=needed,
+        eachRead=[len(read.gaps) for read in found],
         sections=len(sections),
         gaps=len(checked.gaps),
         suggestions=len(checked.suggestions),
@@ -516,6 +604,7 @@ def work_out(run: dict, clauses: list[dict]) -> dict:
     return _outcome(
         "complete",
         None,
+        reads=reads,
         sections=len(sections),
         truncated=shortened,
         gaps=checked.gaps,

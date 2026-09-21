@@ -80,6 +80,12 @@ class Config:
     # the model's context; the ceiling is cost, since every clause of a run
     # sends the whole document (cached after the first).
     whole_document_max_tokens: int = 250_000
+    # How many times the design is read for parts no standard governs. A model
+    # asked once answers a slightly different question each time — on a real
+    # proposal the count moved between 5 and 14 — so it is asked several times
+    # and only what most reads found is reported. 1 turns that off. See
+    # `coverage.agree`.
+    coverage_reads: int = 3
     # Whether an assessment ends with improvements to the design itself, suggested
     # by a model after every clause is judged. One whole-document call per run.
     improvement_suggestions: bool = True
@@ -177,6 +183,7 @@ class Config:
             not in ("0", "off", "false", "no"),
             rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
             whole_document_max_tokens=max(1_000, _int("WHOLE_DOCUMENT_MAX_TOKENS", 250_000)),
+            coverage_reads=max(1, min(5, _int("COVERAGE_READS", 3))),
             improvement_suggestions=os.environ.get("IMPROVEMENT_SUGGESTIONS", "on").lower()
             not in ("0", "off", "false", "no"),
             advice_cache_days=max(0, _int("ADVICE_CACHE_DAYS", 90)),

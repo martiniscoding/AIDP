@@ -40,6 +40,11 @@ log = logs.get(__name__)
 
 TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 
+# Sent with every OpenRouter request. The value is arbitrary; holding it still is
+# the point, so that two runs of the same assessment differ as little as the
+# provider allows.
+_SEED = 7
+
 _FIGURE_PROMPT = """\
 This image is a figure from an enterprise architecture or governance document.
 
@@ -1792,6 +1797,10 @@ class OpenRouterLLM:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "provider": provider,
+            # Best effort, not a promise: a provider that supports it gives the
+            # same answer to the same prompt more often with a seed held still.
+            # Providers that do not support it ignore it.
+            "seed": _SEED,
         }
         if schema is not None:
             payload["response_format"] = {
