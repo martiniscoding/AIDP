@@ -13,6 +13,7 @@ would fail no other check in this repository.
 
 from __future__ import annotations
 
+import inspect
 import os
 import pathlib
 import sys
@@ -20,7 +21,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from aidp import advice, config, coverage, lifecycle, whole_document  # noqa: E402
+from aidp import advice, config, coverage, lifecycle, retrieval, whole_document  # noqa: E402
+from aidp.ai import llm  # noqa: E402
 from aidp.stages import analyse  # noqa: E402
 
 passed = 0
@@ -406,6 +408,165 @@ for label, environment, expected in (
     with mock.patch.dict(os.environ, environment, clear=True):
         chosen = config._provider()
     ok(f"{label} -> {expected}", chosen == expected, chosen)
+
+
+print("\nA judgement is asked for at temperature zero")
+
+# Verdict drift between runs of an unchanged design is the one kind of noise a
+# reviewer cannot account for, so every call that produces a verdict, a
+# confirmation, advice, coverage or a technology list is asked at zero. The two
+# rules readings are the deliberate exception: they are a cross-check, and at
+# zero they would make the same mistakes and agree for the wrong reason.
+ok("the OpenRouter client defaults to zero",
+   inspect.signature(llm.OpenRouterLLM._chat).parameters["temperature"].default == 0.0)
+ok("a Gemini call carrying a schema is zero",
+   inspect.signature(llm.GeminiLLM._generate).parameters["temperature"].default is None)
+
+source = pathlib.Path(llm.__file__).read_text(encoding="utf-8")
+ok("Gemini's structured branch pins zero", '(0.0 if schema else 0.2)' in source)
+judgement = (
+    "def judge", "def judge_document", "def confirm_absent",
+    "def suggest_improvements", "def find_uncovered", "def find_technologies",
+)
+bad: list[str] = []
+for block in source.split("\n    def ")[1:]:
+    name = "def " + block.split("(")[0]
+    if name not in judgement:
+        continue
+    for line in block.splitlines():
+        if "temperature" in line and "=" in line:
+            value = line.split("temperature")[1].strip(' :=",')
+            if not value.startswith("0"):
+                bad.append(f"{name}: {line.strip()[:50]}")
+ok("no judgement method asks for anything else", not bad, bad)
+ok("the first rules reading is deterministic", llm._rules_temperature(1) == 0.0)
+ok("and only the cross-check samples", llm._rules_temperature(2) > 0)
+
+
+print("\nAn absent nobody could confirm is not presented as settled")
+
+ok("the band needing confirmation", analyse.CONFIRM_REQUIRED_CONFIDENCE == 0.85)
+verdict, rationale = analyse._demoted(
+    analyse.UNCONFIRMED_ABSENT, "Nothing in the document mentions retention."
+)
+ok("a failed re-read demotes to needs_review", verdict == "needs_review", verdict)
+ok("saying so first", rationale.startswith("Absent confirmation unavailable"), rationale[:40])
+ok("within the cap", len(rationale) <= analyse.MAX_RATIONALE, len(rationale))
+
+# The failure path must not raise: the other verdicts of the run still have to
+# reach the report. It is reached with no database here, so the inner query
+# fails too, and both layers are exercised at once.
+raised = None
+try:
+    analyse._demote_unconfirmed({"id": "run-1"}, [], "the provider refused")
+except Exception as exc:  # noqa: BLE001 — that it raises at all is the failure
+    raised = exc
+ok("and a failure inside it is still swallowed", raised is None, raised)
+
+raised = None
+try:
+    analyse._confirm_absents({"id": "run-1", "documentId": "doc-1"}, [])
+except Exception as exc:  # noqa: BLE001
+    raised = exc
+ok("as it is for the pass as a whole", raised is None, raised)
+
+
+class _NoConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+# What it writes, with the database standing in. The run above only proved it
+# does not raise; this proves it does the work.
+_clauses = [
+    {
+        "id": "c1",
+        "numberText": "8.1",
+        "headingPath": "Data 8.1",
+        "title": "Retention",
+        "statement": "Retention periods must be defined.",
+    }
+]
+_written: list[dict] = []
+_asked: dict = {}
+with (
+    mock.patch.object(analyse.db, "connection", lambda: _NoConnection()),
+    mock.patch.object(
+        analyse.db,
+        "query",
+        lambda conn, sql, args: _asked.update(sql=sql, args=args)
+        or [{"clauseId": "c1", "confidence": 0.70, "rationale": "Nothing found on retention."}],
+    ),
+    mock.patch.object(analyse, "_write", lambda *a, **k: _written.append(k)),
+):
+    _count = analyse._demote_unconfirmed({"id": "run-1"}, _clauses, "the provider refused")
+
+ok("the finding is rewritten", _count == 1 and len(_written) == 1, (_count, len(_written)))
+ok("as needs_review", _written and _written[0]["verdict"] == "needs_review")
+ok(
+    "saying the confirmation never ran",
+    _written and _written[0]["rationale"].startswith(analyse.UNCONFIRMED_ABSENT),
+    _written[0]["rationale"][:60] if _written else "",
+)
+ok(
+    "keeping the model's own reason after it",
+    _written and "Nothing found on retention." in _written[0]["rationale"],
+)
+ok(
+    "and only the absents that needed confirming are asked for",
+    _asked.get("args") == ("run-1", "absent", analyse.CONFIRM_REQUIRED_CONFIDENCE),
+    _asked.get("args"),
+)
+
+
+print("\nA diagram is not left behind by a long document's search")
+
+ok("the lookahead is real", retrieval.FIGURE_LOOKAHEAD > 0)
+
+
+def candidate(name, *, kind="clause", page=1, text="A paragraph about something.", head="3 Security"):
+    return retrieval.Candidate(
+        chunk_id=name, heading_path=head, text=text, page_start=page, score=0.1,
+        vector_rank=1, lexical_rank=1, source_kind=kind, source_id=name,
+    )
+
+
+CLAUSE_QUERY = "All inbound traffic must terminate TLS at the API gateway"
+ON_PAGE = candidate(
+    "fig", kind="figure", page=1,
+    text="An API Gateway terminates TLS for all inbound traffic.",
+)
+ELSEWHERE = candidate(
+    "far", kind="figure", page=99, head="9 Appendix",
+    text="An API Gateway terminates TLS for all inbound traffic.",
+)
+OFF_TOPIC = candidate(
+    "off", kind="figure", page=1,
+    text="A purchase order approval flowchart with a rejection loop.",
+)
+text_window = [candidate(f"t{i}") for i in range(8)]
+
+carried = retrieval.with_figure(text_window + [ON_PAGE], CLAUSE_QUERY, 8)
+ok("a relevant diagram on a page already reached is carried in",
+   any(c.is_generated for c in carried))
+ok("and the judge still sees no more than before", len(carried) == 8, len(carried))
+ok("the text it displaced is the lowest ranked",
+   [c.chunk_id for c in carried][:7] == [f"t{i}" for i in range(7)])
+ok("a diagram somewhere else in the document is left alone",
+   not any(c.is_generated for c in retrieval.with_figure(
+       text_window + [ELSEWHERE], CLAUSE_QUERY, 8)))
+ok("so is one on the page that is about something else",
+   not any(c.is_generated for c in retrieval.with_figure(
+       text_window + [OFF_TOPIC], CLAUSE_QUERY, 8)))
+ok("a window that already has a diagram is untouched",
+   sum(1 for c in retrieval.with_figure(
+       [candidate("f0", kind="figure")] + text_window[:7], CLAUSE_QUERY, 8)
+       if c.is_generated) == 1)
+ok("and a result set shorter than the window is returned whole",
+   len(retrieval.with_figure(text_window[:3], CLAUSE_QUERY, 8)) == 3)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

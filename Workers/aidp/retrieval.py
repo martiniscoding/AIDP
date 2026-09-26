@@ -13,6 +13,8 @@ these documents turn on — "TLS 1.2", "RPO", "snake_case", "MFA".
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 
 import psycopg
@@ -174,12 +176,14 @@ def search_document(
             # Fuse from a wider pool than we return, or the two rankings barely
             # overlap and fusion has nothing to work with.
             "pool": max(limit * 4, 32),
-            "limit": limit,
+            # Read past the window so `_with_figure` has somewhere to find a
+            # diagram that fused just outside it. Trimmed back to `limit` below.
+            "limit": max(limit * 2, limit + FIGURE_LOOKAHEAD),
             "k": RRF_K,
         },
     )
 
-    return [
+    candidates = [
         Candidate(
             chunk_id=r["id"],
             heading_path=r["headingPath"],
@@ -193,6 +197,57 @@ def search_document(
         )
         for r in rows
     ]
+    return with_figure(candidates, query, limit)
+
+
+# How far past the window to look for a diagram worth carrying into it.
+FIGURE_LOOKAHEAD = 8
+
+# A word shorter than this carries no subject matter. Same floor as the figure
+# guard in analyse.py, and for the same reason.
+_KEYWORD_MIN_CHARS = 4
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _keywords(text: str) -> set[str]:
+    return {w for w in _WORD.findall((text or "").lower()) if len(w) >= _KEYWORD_MIN_CHARS}
+
+
+def with_figure(candidates: list[Candidate], query: str, limit: int) -> list[Candidate]:
+    """The top `limit` passages, keeping room for a diagram that belongs with them.
+
+    Fusion ranks a diagram description against prose, and on a long document the
+    prose wins: a 96-page design has hundreds of paragraphs and a handful of
+    figures, so the figure is pushed out of the window even when the capability
+    the clause asks about is drawn rather than written. The judge then reads
+    eight paragraphs about other things and reports the clause absent.
+
+    So when the window is all text, one figure is carried into it — but only a
+    figure that earns the place: it has to sit on a page the window already
+    reached, and share a substantive word with the clause. Both conditions
+    matter. Without the page it is any diagram in the document; without the
+    word it is a diagram about something else, which is what the guards in
+    analyse.py spend their time refusing.
+
+    The lowest-ranked text passage makes way, so the judge sees no more than it
+    did before.
+    """
+    window = candidates[:limit]
+    if limit <= 1 or any(c.is_generated for c in window):
+        return window
+
+    pages = {c.page_start for c in window if c.page_start is not None}
+    headings = {c.heading_path for c in window if c.heading_path}
+    wanted = _keywords(query)
+
+    for candidate in candidates[limit:]:
+        if not candidate.is_generated:
+            continue
+        near = candidate.page_start in pages or candidate.heading_path in headings
+        if near and wanted & _keywords(candidate.text):
+            return window[: limit - 1] + [candidate]
+    return window
 
 
 def clause_query(statement: str, requirements: list[str], title: str | None) -> str:

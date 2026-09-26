@@ -161,6 +161,16 @@ CANDIDATES = 8
 # the output limit would lose the clauses at the end of the batch.
 CONFIRM_BATCH = 25
 
+# An absent at or above this needs no second opinion: the model was sure, and
+# `_guard` has already refused everything below its own floor. Between the two
+# sits the band the re-read exists for, and those are the ones marked unchecked
+# when it cannot run.
+CONFIRM_REQUIRED_CONFIDENCE = 0.85
+
+# What such a finding says instead. Short, because `_demoted` prepends it to the
+# model's own sentence and the pair has to stay inside one row of the report.
+UNCONFIRMED_ABSENT = "Absent confirmation unavailable; verify manually."
+
 # The confidence recorded for a verdict the re-read produced. Deliberately not
 # the model's own: this is a second opinion on a clause the search had already
 # given up on, and it carries a checked quote rather than certainty.
@@ -707,10 +717,16 @@ def _assess_document_one(
 def _confirm_absents(run: dict, clauses: list[dict]) -> None:
     """Re-read the whole document for every clause the search found nothing for.
 
-    Never raises. A run's verdicts stand on their own, and a confirmation pass
-    that could not run must not cost the report — what it can do is turn a wrong
-    "absent" into the verdict the document supports, which is the most expensive
-    mistake this stage can make: it sends somebody to build what already exists.
+    Never raises: a run's verdicts have to reach the report even when the re-read
+    cannot run. But they do not reach it unchanged. Turning a wrong "absent" into
+    the verdict the document supports is the most expensive mistake this stage can
+    fix — it is what stops somebody being sent to build what already exists — so
+    when the re-read fails, every absent that was relying on it is marked as
+    unchecked rather than presented as settled.
+
+    Only the ones relying on it. An absent the model was near-certain of stands on
+    its own; `_guard` has already refused the ones below its own floor. What is
+    left in between is exactly what the second opinion existed to catch.
     """
     try:
         _confirm(run, clauses)
@@ -718,6 +734,65 @@ def _confirm_absents(run: dict, clauses: list[dict]) -> None:
         logs.warn(
             log, "absent clauses could not be re-read", runId=run["id"], error=str(exc)[:300]
         )
+        _demote_unconfirmed(run, clauses, str(exc))
+
+
+def _demote_unconfirmed(run: dict, clauses: list[dict], why: str) -> int:
+    """Mark absents that the failed re-read would have checked as needing a person.
+
+    Silence here was the bug: a confirmation pass that never ran left every
+    "absent" looking exactly like one the whole document had confirmed, and the
+    report has no other way to tell them apart.
+    """
+    by_id = {clause["id"]: clause for clause in clauses}
+    try:
+        with db.connection() as conn:
+            rows = db.query(
+                conn,
+                'SELECT "clauseId", "confidence", "rationale" FROM "finding" '
+                'WHERE "runId" = %s AND "verdict" = %s AND "confidence" < %s',
+                (run["id"], "absent", CONFIRM_REQUIRED_CONFIDENCE),
+            )
+    except Exception as exc:  # noqa: BLE001 — nothing more can be done for this run
+        logs.warn(
+            log, "unconfirmed absents could not be marked", runId=run["id"], error=str(exc)[:300]
+        )
+        return 0
+
+    demoted = 0
+    for row in rows:
+        clause = by_id.get(row["clauseId"])
+        if clause is None:
+            continue
+        verdict, rationale = _demoted(UNCONFIRMED_ABSENT, str(row.get("rationale") or ""))
+        try:
+            _write(
+                run["id"],
+                clause,
+                verdict=verdict,
+                confidence=float(row.get("confidence") or 0.0),
+                rationale=rationale,
+                evidence=[],
+                retrieval_score=0.0,
+                applied=[],
+            )
+        except Exception as exc:  # noqa: BLE001 — one clause must not sink the rest
+            logs.warn(
+                log, "could not mark an absent unconfirmed", clauseId=clause["id"],
+                error=str(exc)[:200],
+            )
+            continue
+        demoted += 1
+
+    logs.warn(
+        log,
+        "absents left unchecked by a failed re-read",
+        runId=run["id"],
+        demoted=demoted,
+        of=len(rows),
+        error=why[:200],
+    )
+    return demoted
 
 
 def _confirm(run: dict, clauses: list[dict]) -> None:
