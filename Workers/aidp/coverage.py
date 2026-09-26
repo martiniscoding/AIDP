@@ -199,6 +199,23 @@ def _clean(value, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def _sentences(value, limit: int) -> str:
+    """Whole sentences within `limit`, falling back to `_clean`.
+
+    A recommendation cut mid-clause reads as though the tool broke. Where there
+    is a sentence end inside the limit the text is cut there instead, and only a
+    first sentence longer than the whole limit is clipped by `_clean`.
+    """
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if cut >= limit // 3:
+        return window[: cut + 1]
+    return _clean(text, limit)
+
+
 def _checked_quote(
     item: dict, section: Section, whole: whole_document.WholeDocument
 ) -> tuple[str | None, int | None, str]:

@@ -21,6 +21,8 @@ gap into production.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, replace
 
 from psycopg.types.json import Jsonb
@@ -68,6 +70,67 @@ WEAK_RETRIEVAL = 0.018
 # An "absent" this uncertain is a question, not an answer.
 MIN_ABSENT_CONFIDENCE = 0.55
 
+# How sure a "covered" resting only on diagram descriptions has to be to stand.
+# Below it the figure is put in front of a reviewer. Confidence alone is a weak
+# signal — a model reports it about itself — so it is one of two conditions, not
+# the whole test: see `_figure_corroborates`.
+FIGURE_COVERED_CONFIDENCE = 0.80
+
+# How many words of the clause a diagram has to actually use before its
+# description counts as answering that clause rather than merely being nearby.
+FIGURE_KEYWORD_HITS = 2
+
+# How many separate diagrams saying the same thing stand in for those words. Two
+# figures independently describing the arrangement is corroboration of a
+# different kind, and it is what a reviewer would accept.
+FIGURE_CORROBORATING_COUNT = 2
+
+# The shortest word that can carry subject matter. Below this they are almost
+# all function words, and "of" appearing in a caption proves nothing.
+KEYWORD_MIN_CHARS = 4
+
+# Four-letter-plus words common enough in standards prose to match any diagram.
+# Matching one of these is not evidence a figure is about the clause.
+_STOPWORDS = frozenset(
+    """
+    that this with from they them have been will must should shall each other than
+    when where which what while whose into onto upon over under about above below
+    such same both more most some many much very also only just then than there
+    these those their your ours theirn used using uses make makes made take taken
+    does done being were was are for the and but not any all can may via per
+    system systems design designs document documents solution solutions service
+    services provide provides provided ensure ensures ensured include includes
+    including requirement requirements standard standards clause clauses section
+    sections shall_not appropriate relevant necessary applicable
+    """.split()
+)
+
+
+def _keywords(text: str) -> set[str]:
+    """The words of a clause that could identify a diagram as being about it."""
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(word) >= KEYWORD_MIN_CHARS and word not in _STOPWORDS
+    }
+
+
+def _figure_corroborates(
+    clause_text: str, figure_text: str, figure_count: int
+) -> bool:
+    """Whether diagrams alone are enough to say a clause is covered.
+
+    Confidence says how sure the model is; this says whether the diagram is
+    even on the subject. A description that shares no substantive word with the
+    clause is a picture of something else, and a confident "covered" on top of
+    it is the failure the figure guard exists to catch — so either the diagram
+    uses the clause's own words, or two separate diagrams say it.
+    """
+    if figure_count >= FIGURE_CORROBORATING_COUNT:
+        return True
+    shared = _keywords(clause_text) & _keywords(figure_text)
+    return len(shared) >= FIGURE_KEYWORD_HITS
+
 # How many passages the judge sees per clause. Wide enough that a requirement
 # split across two sections is still visible; narrow enough that the model is
 # not asked to read the whole document for every clause.
@@ -82,6 +145,34 @@ CONFIRM_BATCH = 25
 # the model's own: this is a second opinion on a clause the search had already
 # given up on, and it carries a checked quote rather than certainty.
 CONFIRM_CONFIDENCE = 0.7
+
+# The longest rationale kept. A finding's reason is shown in the collapsed row,
+# before anything is expanded, and a guard demotion prepends its own sentence to
+# it — so a model that writes four sentences pushed the clause title off the row
+# and buried the reason the verdict changed.
+MAX_RATIONALE = 280
+
+# A guard's own sentence, which is prepended to the model's. Kept short for the
+# same reason: the two together have to stay readable in one row.
+MAX_GUARD_REASON = 200
+
+
+def _shorten(text: str, limit: int) -> str:
+    """One or two whole sentences, within `limit` characters.
+
+    Clipped at a sentence end where there is one inside the limit, so a
+    rationale reads as a finished thought rather than a severed clause.
+    """
+    collapsed = " ".join(str(text or "").split())
+    if len(collapsed) <= limit:
+        return collapsed
+    window = collapsed[:limit]
+    cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if cut >= limit // 3:
+        return window[: cut + 1]
+    if window.endswith("."):
+        return window
+    return window[: limit - 1].rstrip() + "…"
 
 
 def handle(job: Job, heartbeat) -> None:
@@ -447,11 +538,16 @@ def _judge_by_search(
 
     applied, fabricated = _applied(precedents, claimed)
 
+    cited_figures = set(cited) & generated
     verdict, rationale = _guard(
-        verdict, confidence, evidence, best, rationale, cited_generated=set(cited) & generated,
+        verdict, confidence, evidence, best, rationale, cited_generated=cited_figures,
         cited_total=len([c for c in cited if c in by_id]),
         fabricated=fabricated,
         conflicted=decisions.conflicting(precedents),
+        clause_text=_render_clause(clause),
+        figure_text=" ".join(
+            c.excerpt for cid in cited_figures if (c := by_id.get(cid)) is not None
+        ),
     )
     return _Judged(verdict, confidence, rationale, evidence, applied, best)
 
@@ -552,6 +648,7 @@ def _assess_document_one(
         unverified=unverified,
         fabricated=fabricated,
         conflicted=decisions.conflicting(precedents),
+        clause_text=_render_clause(clause),
     )
 
     score = 0.0
@@ -784,8 +881,11 @@ def _checked_quotes(
                     "headingPath": "",
                     "page": found.page,
                     "excerpt": text[:1500],
-                    "sourceKind": "quote",
-                    "figureId": None,
+                    # A quote found only in a diagram description is labelled as
+                    # one, so it renders with the figure beside it and `_guard`
+                    # can refuse to let it carry a verdict alone.
+                    "sourceKind": found.source_kind if found.source_kind == "figure" else "quote",
+                    "figureId": found.figure_id,
                     "claimedPage": page,
                 }
             )
@@ -801,6 +901,7 @@ def _guard_document(
     unverified: list[tuple[str, str]],
     fabricated: list[str],
     conflicted: bool,
+    clause_text: str = "",
 ) -> tuple[str, str]:
     """The same standard of proof as `_guard`, where the proof is a quote.
 
@@ -812,36 +913,38 @@ def _guard_document(
     if verdict in CITING_VERDICTS and not evidence:
         if unverified:
             quote, reason = unverified[0]
-            return (
-                "needs_review",
-                f"Reported as '{verdict}', but the passage it quoted could not be found in "
-                f"the document ({reason}: “{quote[:140]}”), so the claim could not be "
-                "checked. " + rationale,
+            return _demoted(
+                f"Reported '{verdict}', but its quote is not in the document "
+                f"({reason}: “{quote[:60]}”).",
+                rationale,
             )
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' but quoted nothing from the document, so the claim "
-            "could not be grounded. " + rationale,
-        )
+        return _demoted(f"Reported '{verdict}' but quoted nothing from the document.", rationale)
 
-    # Everything else `_guard` checks applies unchanged. Retrieval strength does
-    # not: nothing was retrieved, so it is passed as strong.
+    # Everything else `_guard` checks applies unchanged, including the two
+    # absent checks. Retrieval strength is the one input that does not exist
+    # here — nothing was retrieved — so it is passed as strong, which stands
+    # down the weak-retrieval check while leaving the confidence floor to do its
+    # work. Passing this whole guard by was how a whole-document run reported a
+    # coin-flip "absent" as settled.
+    figures = [item for item in evidence if item.get("sourceKind") == "figure"]
     verdict, rationale = _guard(
         verdict,
         confidence,
         evidence,
         1.0,
         rationale,
+        cited_generated={item["chunkId"] for item in figures},
+        cited_total=len(evidence),
         fabricated=fabricated,
         conflicted=conflicted,
+        clause_text=clause_text,
+        figure_text=" ".join(str(item.get("excerpt") or "") for item in figures),
     )
 
     if unverified and evidence and verdict != "needs_review":
         count = len(unverified)
-        rationale = (
-            f"{rationale} ({count} further quoted passage{'s' if count != 1 else ''} could "
-            f"not be found in the document and {'were' if count != 1 else 'was'} set aside.)"
-        )
+        note = f"({count} further quote{'s' if count != 1 else ''} not found, set aside.)"
+        rationale = f"{_shorten(rationale, MAX_RATIONALE - len(note) - 1)} {note}".strip()
     return verdict, rationale
 
 
@@ -903,6 +1006,8 @@ def _guard(
     cited_total: int = 0,
     fabricated: list[str] | None = None,
     conflicted: bool = False,
+    clause_text: str = "",
+    figure_text: str = "",
 ) -> tuple[str, str]:
     """Demote verdicts the evidence does not support.
 
@@ -911,64 +1016,74 @@ def _guard(
     the reviewer sees the machine's reasoning rather than an unexplained shrug.
     """
     if verdict in CITING_VERDICTS and not evidence:
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' but cited nothing in the submitted document, "
-            "so the claim could not be grounded. " + rationale,
-        )
+        return _demoted(f"Reported '{verdict}' but cited nothing in the document.", rationale)
 
     # A figure description may corroborate a verdict; it may not be the whole
-    # basis for a confident one. It is generated text, and a wrong reading of a
+    # basis for a shaky one. It is generated text, and a wrong reading of a
     # diagram would otherwise convict a design of something it never said.
+    #
+    # Asymmetric on purpose. "contradicts" is always demoted: accusing a design
+    # of breaching a clause on the strength of a model's reading of a picture is
+    # the more expensive mistake, and a reviewer must look at the figure. A
+    # confident "covered" is not, because designs really do state a component
+    # only in their architecture diagram — an API gateway drawn on page 14 and
+    # named in no paragraph — and demoting every one of those filled the review
+    # queue with clauses the design had plainly answered.
     if (
         verdict in DECISIVE_VERDICTS
         and cited_total > 0
         and cited_generated is not None
         and len(cited_generated) == cited_total
     ):
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' on the strength of a diagram description alone. "
-            "That description is a model's reading of an image, not text from the "
-            "document, so it cannot carry a verdict by itself — check the figure. "
-            + rationale,
+        stands = (
+            verdict == "covered"
+            and confidence >= FIGURE_COVERED_CONFIDENCE
+            and _figure_corroborates(clause_text, figure_text, len(cited_generated))
         )
+        if not stands:
+            return _demoted(
+                f"Reported '{verdict}' on a diagram description alone — check the figure.",
+                rationale,
+            )
 
     # A verdict resting on a decision nobody made is the register's version of
     # citing a passage that is not in the document, and gets the same treatment.
     if fabricated:
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' citing a standing decision that was not on "
-            "record. The verdict rests on a ruling this organisation has not "
-            "made. " + rationale,
+        return _demoted(
+            f"Reported '{verdict}' citing a standing decision that is not on record.",
+            rationale,
         )
 
     # Two rulings pulling opposite ways, and deliberately not resolved by taking
     # the newer one — that would hide a contradiction the customer needs to fix.
     if conflicted and verdict in DECISIVE_VERDICTS:
-        return (
-            "needs_review",
-            "Two standing decisions on this clause disagree — one accepts the "
-            "arrangement and another rejects it. Resolve the register before "
-            "this clause can be settled. " + rationale,
+        return _demoted(
+            "Two standing decisions on this clause disagree; resolve the register.",
+            rationale,
         )
 
     if verdict == "absent" and best_score < WEAK_RETRIEVAL:
-        return (
-            "needs_review",
-            "Nothing relevant was retrieved, which is not the same as the "
-            "requirement being unaddressed — the search may simply have missed "
-            "it. " + rationale,
+        return _demoted(
+            "Nothing relevant was retrieved, so the search may have missed it.", rationale
         )
 
     if verdict == "absent" and confidence < MIN_ABSENT_CONFIDENCE:
-        return (
-            "needs_review",
-            f"Reported as absent with low confidence ({confidence:.0%}). " + rationale,
-        )
+        return _demoted(f"Reported absent with low confidence ({confidence:.0%}).", rationale)
 
     return verdict, rationale
+
+
+def _demoted(reason: str, rationale: str) -> tuple[str, str]:
+    """A demotion to `needs_review`: the guard's sentence, then the model's.
+
+    Both are bounded. The guard's reason is why the verdict changed and is kept
+    whole; the model's is context and is shortened to fit beside it, so the two
+    together stay inside one row of the report.
+    """
+    reason = _shorten(reason, MAX_GUARD_REASON)
+    room = MAX_RATIONALE - len(reason) - 1
+    tail = _shorten(rationale, room) if room >= 40 else ""
+    return "needs_review", f"{reason} {tail}".strip()
 
 
 def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
@@ -981,7 +1096,7 @@ def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
     except (TypeError, ValueError):
         confidence = 0.0
 
-    rationale = " ".join(str(raw.get("rationale", "")).split())[:1200]
+    rationale = _shorten(str(raw.get("rationale", "")), MAX_RATIONALE)
 
     cited = raw.get("evidence") or []
     if isinstance(cited, str):

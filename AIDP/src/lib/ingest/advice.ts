@@ -73,7 +73,8 @@ export type AdviceView = {
   /** Long sections were shortened to fit one reading. */
   truncated: boolean;
   suggestions: Suggestion[];
-  /** Suggestions the checks refused: no section, no named component, or words the design does not contain. */
+  /** Suggestions the checks refused: no section, no named component, words the design
+   * does not contain, generic filler, or a repeat of one already kept. */
   setAside: number;
   /** Suggestions beyond the number kept. */
   overLimit: number;
@@ -100,6 +101,11 @@ const REFUSALS = [
   "missingQuote",
   "unverified",
   "outsideSection",
+  // Said nothing a reviewer could act on, and repeats of a suggestion already
+  // kept. Both were refusals the worker counted and the report did not, so the
+  // number it showed as set aside was short by however many it dropped here.
+  "generic",
+  "duplicate",
 ];
 
 function text(value: unknown, limit: number): string {

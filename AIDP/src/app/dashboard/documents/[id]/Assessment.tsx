@@ -77,6 +77,13 @@ export type RunView = {
   lifecycle: LifecycleView | null;
 } | null;
 
+/**
+ * Longer than this and the collapsed row's two-line clamp may be hiding some of
+ * the reason, so the expanded panel repeats it in full. Shorter and the clamp
+ * shows all of it, and repeating it would just be the same sentence twice.
+ */
+const RATIONALE_CLAMP = 160;
+
 const TONE: Record<string, string> = {
   bad: "border-danger-line bg-danger-tint text-danger",
   warn: "border-warn-line bg-warn-tint text-warn",
@@ -694,7 +701,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
             <span className="text-[13.5px] text-ink/88">{finding.clauseTitle}</span>
           </span>
           {finding.rationale && (
-            <span className="mt-1 block text-[12.5px] leading-relaxed text-ink/66">
+            <span className="mt-1 line-clamp-2 block text-[12.5px] leading-relaxed text-ink/66">
               {finding.rationale}
             </span>
           )}
@@ -725,6 +732,11 @@ function FindingRow({ finding }: { finding: FindingView }) {
 
       {open && (
         <div className="border-t border-line px-4 py-3.5">
+          {finding.rationale.length > RATIONALE_CLAMP && (
+            <p className="mb-3 text-[13px] leading-relaxed text-ink/78">
+              {finding.rationale}
+            </p>
+          )}
           {finding.clauseStatement && (
             <p className="mb-3 text-[13px] leading-relaxed text-ink/72">
               <span className="text-ink/62">Requires: </span>

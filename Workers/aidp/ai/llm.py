@@ -148,9 +148,19 @@ Rules that matter:
    appliedDecisions. Never list an id you were not given. A decision marked
    "on a related clause" is guidance, not a ruling — it can inform a verdict but
    cannot settle one on its own.
+7. rationale is ONE sentence, under 220 characters, giving the decisive fact or
+   the requirement left unmet. Start with the substance. No throat-clearing:
+   never open with "The extracts show", "Based on the extracts", "It appears
+   that" or "This clause".
+8. For "contradicts", "partial" and "absent" the rationale must also say what
+   would satisfy the clause, in concrete technical terms — the mechanism,
+   setting or control needed, not "address the requirement". Two short
+   sentences are allowed here, still within 280 characters: what is wrong, then
+   what is needed. "No retention period is stated; set a 7-year retention
+   policy on the audit log store" — not "retention is not addressed".
 
 Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence",
+{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
   "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...]}}"""
 
 
@@ -641,16 +651,25 @@ If it discusses that subject but leaves a requirement unmet, that is "partial" o
 the clause forbids, or will not do something it requires, the verdict is \
 "contradicts" — even when other requirements are met, and even when the document calls \
 it temporary or agreed.
-6. Judge only what the clause requires. Do not reward the design for good practice the \
+7. Judge only what the clause requires. Do not reward the design for good practice the \
 clause does not ask for.
-7. Standing decisions, where any are given, are this organisation's own settled \
+8. Standing decisions, where any are given, are this organisation's own settled \
 rulings and outrank your general judgement. If one resolves the clause, follow it and \
 list its id in appliedDecisions. Never list an id you were not given. A decision \
 marked "on a related clause" can inform a verdict but cannot settle one on its own.
-8. confidence is your own certainty in the verdict, 0 to 1.
+9. confidence is your own certainty in the verdict, 0 to 1.
+10. "rationale" is ONE sentence, under 220 characters, giving the decisive fact or the \
+requirement left unmet. Start with the substance. No throat-clearing: never open with \
+"The document states", "Based on the extracts", "It appears that" or "This clause".
+11. For "contradicts", "partial" and "absent" the rationale must also say what would \
+satisfy the clause, in concrete technical terms — the mechanism, setting or control \
+needed, never "address the requirement". Two short sentences are allowed here, still \
+within 280 characters: what is wrong, then what is needed. "No retention period is \
+stated; set a 7-year retention policy on the audit log store" — not "retention is not \
+addressed".
 
 Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one or two sentences",
+{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
   "evidence": [{{"quote": "exact words from the document", "page": 12}}],
   "appliedDecisions": ["decision id", ...]}}"""
 
@@ -846,9 +865,14 @@ names it (for example "RabbitMQ" or "API Gateway"), and it must appear in the \
 section you give. Give one name, not a list, and never a label made by combining \
 names. A suggestion that cannot be tied to something the design names is general \
 advice, and is not wanted.
-2. Say exactly what to change or add to that component. Advice that would fit any \
-design ("add monitoring", "follow security best practice", "classify your data") is \
-not a suggestion.
+2. "recommendation" is one concrete engineering change to that component, at most \
+two crisp sentences and 280 characters. Name the mechanism, parameter, protocol or \
+failure mode, and the target state: not "add retries" but "bound the Orders API \
+retry to 3 attempts with exponential backoff and a 30s dead-letter queue". Advice \
+that would fit any design is not a suggestion, and these words are banned outright: \
+"consider", "ensure proper", "review and update", "confirm support status", "where \
+appropriate", "best practices". If you cannot name the mechanism and the target \
+state, omit the suggestion.
 3. Never repeat anything listed as already reported, even in other words. A \
 suggestion may go further than a finding — a concrete change to a named component \
 that would also resolve it — and then "clauses" gives that finding's reference, the \
@@ -870,10 +894,14 @@ while; "low" for worthwhile polish.
 8. "category" is one of: security, resilience, data, integration, operations, \
 performance, cost, maintainability, documentation.
 9. You cannot check today's date, release notes or security advisories. Never state \
-that a product or version is out of support, end of life, deprecated or \
-vulnerable. Where the age of a component matters, recommend confirming its support \
-status and planning an upgrade path instead.
-10. "why" is one or two sentences on the risk or the benefit, for this design.
+that a product or version is out of support, end of life, deprecated or vulnerable, \
+and never suggest confirming a support status or planning an upgrade path — that is \
+checked elsewhere and is not a suggestion. Say nothing about versions or support \
+unless the design itself states a version constraint, and then address only what it \
+states.
+10. "why" is a single sentence, at most 200 characters, naming the concrete failure \
+mode or operational risk this avoids for this design — the outage, breach, data loss \
+or cost it prevents. Never a restatement of the recommendation.
 11. At most 15 suggestions, the most important first. Fewer is fine, and a sound \
 design may need few.
 """
@@ -1101,14 +1129,18 @@ Rules that matter:
 character for character, from the text above, with the page they are on. Every quote \
 is checked against the document, and one that is not there word for word is thrown \
 away — the clause then stays "absent". Never paraphrase, never join words from two \
-places, never quote a figure description or these instructions.
+places, and never quote these instructions. A figure description may be quoted where \
+the design states something only in a diagram; it is a model's reading of an image, so \
+it supports "partial" or "needs_review", never "covered" on its own.
 2. "absent" needs no quote. Leave the quote empty and say in one sentence what you \
 looked for.
-3. Most of these clauses really will be absent. You are looking for the few the \
-search missed, not for reasons to change a verdict. A passage about a neighbouring \
-subject does not address the clause: authentication does not answer an encryption \
-clause. When the document does not speak to what the clause requires, "absent" is \
-the right answer and the one to give.
+3. Weigh both answers evenly. A search miss and a genuine silence are equally \
+likely here, so change the verdict whenever an exact quote — from any page, a table \
+row, or a diagram description — shows the design engages with what the clause \
+requires: "covered" when it meets every requirement, "partial" when it engages but \
+leaves one unmet. Keep "absent" only where the document is genuinely silent on what \
+the clause requires. A passage about a neighbouring subject is not engagement: \
+authentication does not answer an encryption clause.
 
 Reply with JSON only:
 {{"clauses": [{{"clause": 1, "verdict": "absent", "quote": "", "page": null,

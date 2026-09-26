@@ -66,6 +66,13 @@ class Check:
     verified: bool
     page: int | None
     reason: str = ""
+    #: "page" when the words are the document's own; "figure" when they were
+    #: found only in a model's reading of a diagram. A figure match is evidence
+    #: a reviewer can act on — a design often states a capability only in its
+    #: architecture diagram — but it is generated text, so `_guard` has to know.
+    source_kind: str = "page"
+    #: The figure row the words came from, when `source_kind` is "figure".
+    figure_id: str | None = None
 
 
 @dataclass
@@ -78,6 +85,10 @@ class WholeDocument:
     text: str = ""
     _order: list[int | None] = field(default_factory=list)
     _normal: dict[int | None, str] = field(default_factory=dict)
+    #: Figure descriptions indexed the same way as pages, but kept apart from
+    #: them: a quote is the document's own words only if it is in `_normal`.
+    #: page -> [(figure id, normalised description)].
+    _figures: dict[int | None, list[tuple[str | None, str]]] = field(default_factory=dict)
 
     @property
     def tokens(self) -> int:
@@ -115,7 +126,42 @@ class WholeDocument:
                     else ""
                 )
                 return Check(True, found, reason)
+
+        # Not in the document's own words. A design often states a capability
+        # only inside an architecture diagram — an API gateway that appears in
+        # no paragraph — and refusing that quote reported the clause absent when
+        # the design had answered it. So the figure descriptions are searched
+        # too, and a match is returned labelled as one: it is a model's reading
+        # of an image, and `_guard` demotes a verdict resting on nothing else.
+        figure = self._locate_figure(parts, page)
+        if figure is not None:
+            found, figure_id = figure
+            return Check(
+                True,
+                found,
+                "found in a diagram description, not the document's own words",
+                source_kind="figure",
+                figure_id=figure_id,
+            )
         return Check(False, page, "the quoted words are not in the document")
+
+    def _locate_figure(
+        self, parts: list[str], page: int | None
+    ) -> tuple[int | None, str | None] | None:
+        """(page, figure id) for the first figure description holding the quote.
+
+        The page the model named is tried first, as in `verify`, then the rest
+        in reading order.
+        """
+        pages = list(self._figures)
+        if page in self._figures:
+            pages.remove(page)
+            pages.insert(0, page)
+        for candidate in pages:
+            for figure_id, description in self._figures[candidate]:
+                if _in_order(description, parts):
+                    return candidate, figure_id
+        return None
 
     def _locate(self, index: int, parts: list[str]) -> int | None:
         """The page a quote sits on, looking at one page and the page after it.
@@ -198,7 +244,12 @@ def build(title: str, lines: list[dict], figures: list[dict]) -> WholeDocument:
             str(row.get("correctedDescription") or row.get("description") or "").split()
         )
         if description:
-            document.figures.append((row.get("page"), description))
+            page = row.get("page")
+            document.figures.append((page, description))
+            figure_id = row.get("id")
+            document._figures.setdefault(page, []).append(
+                (str(figure_id) if figure_id else None, normalise(description))
+            )
 
     for page, page_lines in document.pages:
         joined = normalise(" ".join(page_lines))
@@ -224,7 +275,8 @@ def render(document: WholeDocument) -> str:
         out.append("<figure_descriptions>")
         out.append(
             "Written by a model from the diagrams in this document. They are not the "
-            "document's own words: use them to understand a diagram, never quote them."
+            "document's own words. Quote one only where the design states something "
+            "solely in a diagram, and never as the sole support for a confident verdict."
         )
         for page, description in document.figures:
             out.append(f"[figure on page {page if page is not None else '?'}] {description}")
@@ -249,7 +301,7 @@ def load(conn, document_id: str, title: str) -> WholeDocument | None:
     figures = db.query(
         conn,
         """
-        SELECT f."page", f."description", f."correctedDescription", f."reviewState"
+        SELECT f."id", f."page", f."description", f."correctedDescription", f."reviewState"
           FROM "figure" f
           JOIN "document_section" s ON s."id" = f."sectionId"
          WHERE s."documentId" = %s

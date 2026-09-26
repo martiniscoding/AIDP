@@ -68,7 +68,7 @@ from psycopg.types.json import Jsonb
 from . import cache, coverage, db, logs, usage, whole_document
 from .ai import llm
 from .config import get_config
-from .coverage import _checked_quote, _clean, _integer
+from .coverage import _checked_quote, _clean, _integer, _sentences
 
 log = logs.get(__name__)
 
@@ -100,6 +100,45 @@ CATEGORIES = (
 # Verdicts that did not pass, in the order a reviewer would fix them.
 FAILING = ("contradicts", "absent", "partial", "needs_review")
 
+# A suggestion is one change to one component. These caps are the prompt's own
+# limits (280 and 200) with a little room, so a reply a shade over them is
+# trimmed rather than thrown away, and a reply far over is cut to a whole
+# sentence instead of reaching a reviewer as three paragraphs.
+MAX_RECOMMENDATION = 320
+MAX_WHY = 220
+
+# The fewest words a recommendation can name a change in. Below this it is a
+# heading, not an instruction.
+MIN_RECOMMENDATION_WORDS = 6
+
+# Boilerplate that reads as advice and says nothing. Every one of these was in a
+# suggestion that passed the anchoring checks — it named a real component and
+# quoted the design — and still told the reviewer to do no particular thing.
+_GENERIC = re.compile(
+    r"\b("
+    r"consider\s+(implementing|adding|reviewing|using|adopting)"
+    r"|ensure\s+(that\s+)?proper"
+    r"|confirm\s+(its\s+|the\s+)?support\s+status"
+    r"|align\s+with\s+stakeholders"
+    r"|review\s+and\s+update"
+    r"|follow\s+(industry\s+)?best\s+practices?"
+    r"|as\s+appropriate|where\s+appropriate"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_generic(recommendation: str) -> bool:
+    """Whether a recommendation says nothing a reviewer could act on.
+
+    Deterministic on purpose. The prompt asks for a concrete change and mostly
+    gets one; this is the floor under it, so a reply that drifts back to filler
+    is refused by the same rule every time rather than by a model's mood.
+    """
+    if len(recommendation.split()) < MIN_RECOMMENDATION_WORDS:
+        return True
+    return bool(_GENERIC.search(recommendation))
+
 # The design is rendered uncut for the cache key. The budget the model is given
 # shrinks as the findings grow, and a key that moved with it would miss whenever
 # a verdict changed — the one thing the key is built to ignore.
@@ -117,6 +156,7 @@ class Checked:
             "missingQuote": 0,
             "unverified": 0,
             "outsideSection": 0,
+            "generic": 0,
             "duplicate": 0,
             "overLimit": 0,
         }
@@ -226,9 +266,15 @@ def check(
         if not isinstance(item, dict):
             continue
         title = _clean(item.get("title"), 160)
-        recommendation = _clean(item.get("recommendation"), 1200)
+        recommendation = _sentences(item.get("recommendation"), MAX_RECOMMENDATION)
         if not title or not recommendation:
             out.dropped["empty"] += 1
+            continue
+        if _is_generic(recommendation):
+            logs.warn(
+                log, "suggestion refused as generic", title=title, recommendation=recommendation
+            )
+            out.dropped["generic"] += 1
             continue
         ordinal = _integer(item.get("section"))
         section = by_ordinal.get(ordinal) if ordinal is not None else None
@@ -257,9 +303,12 @@ def check(
                     reason=reason,
                     quote=str(item.get("quote") or "")[:300],
                 )
-                if kind == "improve":
-                    out.dropped[reason] += 1
-                    continue
+                # Whatever the kind. An "add" used to keep its place with the
+                # quote dropped, which left a suggestion standing on words the
+                # design does not contain — the reviewer saw no quote and no
+                # sign that one had been refused.
+                out.dropped[reason] += 1
+                continue
         elif kind == "improve":
             # A change to what the design says, without showing where it says it.
             out.dropped["missingQuote"] += 1
@@ -306,7 +355,7 @@ def check(
                 "quote": quote[:1500] if quote else None,
                 "page": page,
                 "recommendation": recommendation,
-                "why": _clean(item.get("why"), 800),
+                "why": _sentences(item.get("why"), MAX_WHY),
                 "clauses": clauses,
             }
         )

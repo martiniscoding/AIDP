@@ -175,8 +175,11 @@ export function Improvements({ advice, runId }: { advice: AdviceView | null; run
             <Notice>No specific improvements were suggested for this design.</Notice>
           ) : (
             <ol className="space-y-2">
-              {complete.suggestions.map((suggestion) => (
-                <SuggestionRow key={suggestion.title} suggestion={suggestion} />
+              {complete.suggestions.map((suggestion, index) => (
+                <SuggestionRow
+                  key={`${suggestion.section}-${suggestion.title}-${index}`}
+                  suggestion={suggestion}
+                />
               ))}
             </ol>
           )}
