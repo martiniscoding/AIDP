@@ -187,6 +187,25 @@ MAX_RATIONALE = 280
 MAX_GUARD_REASON = 200
 
 
+# A rationale that states a breach outright, whatever verdict the model then
+# chose. Deliberately narrow: each alternative names the design doing something,
+# not merely lacking it, because "no dead-letter queue is mentioned" is a gap
+# and "messages are dropped" is a decision. Widening this to the vocabulary of
+# absence would turn ordinary "partial" findings into contradictions, which is
+# the expensive direction to be wrong in.
+_BREACH = re.compile(
+    r"\b("
+    r"violat(?:es|ing|ed)"
+    r"|breach(?:es|ing|ed)"
+    r"|conflicts?\s+with"
+    r"|directly\s+contradicts?"
+    r"|(?:messages?|events?|data|packets?|records?)\s+(?:are|is)\s+"
+    r"(?:dropped|discarded|deleted)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def _shorten(text: str, limit: int) -> str:
     """One or two whole sentences, within `limit` characters.
 
@@ -1192,6 +1211,22 @@ def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
         confidence = 0.0
 
     rationale = _shorten(str(raw.get("rationale", "")), MAX_RATIONALE)
+
+    # A model that describes a breach and then grades it "partial" has answered
+    # its own question. Both judge prompts say a breach is never partial, and
+    # both are ignored often enough to matter: on the sample corpus one clause
+    # came back "partial" with "failed messages are dropped after retries
+    # without dead-letter queue" as its reason. Prose is the model's real
+    # answer; the verdict field is a label it picked afterwards, so where the
+    # two disagree this trusts the prose.
+    #
+    # Only ever "partial" to "contradicts" — the direction the evidence already
+    # supports. And `_guard` still runs after this, so a promoted verdict with
+    # no verified quote behind it is demoted to needs_review exactly as a
+    # model-authored one would be. This can make a verdict stricter; it cannot
+    # make one unfounded.
+    if verdict == "partial" and _BREACH.search(rationale):
+        verdict = "contradicts"
 
     cited = raw.get("evidence") or []
     if isinstance(cited, str):

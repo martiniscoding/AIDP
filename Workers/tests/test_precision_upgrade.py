@@ -568,5 +568,159 @@ ok("a window that already has a diagram is untouched",
 ok("and a result set shorter than the window is returned whole",
    len(retrieval.with_figure(text_window[:3], CLAUSE_QUERY, 8)) == 3)
 
+print("\nA rationale that states a breach settles the verdict")
+
+# The model wrote the breach out and graded it "partial" anyway. On the sample
+# corpus this was telem Data 7.2, live, with both prompts telling it not to.
+ROW_12 = "Failed messages are dropped after retries without dead-letter queue."
+ok(
+    "the live rationale that started this promotes",
+    analyse._normalise({"verdict": "partial", "confidence": 0.9, "rationale": ROW_12})[0]
+    == "contradicts",
+)
+for stated in (
+    "The analytics service connects directly to the Oracle database, violating the rule.",
+    "This breaches the encryption requirement for data in transit.",
+    "The approach conflicts with the single-source-of-truth rule.",
+    "The design directly contradicts the versioning requirement.",
+    "Records are deleted before the retention period expires.",
+    "Events are discarded when the queue is full.",
+):
+    ok(
+        f"stated breach promotes: {stated[:44]!r}",
+        analyse._normalise({"verdict": "partial", "confidence": 0.9, "rationale": stated})[0]
+        == "contradicts",
+    )
+
+# The line this must not cross. Absence is not a breach, and reading it as one
+# would turn ordinary findings into contradictions — the expensive direction.
+for gap in (
+    "Encryption is specified, but key rotation is not mentioned.",
+    "No dead-letter queue is mentioned for failed messages.",
+    "Retention periods are defined but archival is not detailed.",
+    "The design does not address correlation identifiers.",
+    "Dropped connections are retried automatically.",
+):
+    ok(
+        f"a gap stays partial: {gap[:44]!r}",
+        analyse._normalise({"verdict": "partial", "confidence": 0.9, "rationale": gap})[0]
+        == "partial",
+    )
+
+for other in ("covered", "absent", "needs_review", "contradicts"):
+    ok(
+        f"{other!r} is never rewritten",
+        analyse._normalise(
+            {"verdict": other, "confidence": 0.9, "rationale": ROW_12}
+        )[0]
+        == other,
+    )
+
+# Promotion is not a way past the guards: a contradiction still needs a quote.
+ok(
+    "a promoted verdict with no evidence is still demoted",
+    analyse._guard_document(
+        *analyse._normalise({"verdict": "partial", "confidence": 0.9, "rationale": ROW_12})[:3],
+        evidence=[],
+        unverified=[],
+        fabricated=[],
+        conflicted=False,
+    )[0]
+    == "needs_review",
+)
+
+
+print("\nA verified quote in the wrong section moves to the right one")
+
+
+def _section(ordinal, title, body, page):
+    section = coverage.Section(
+        ordinal=ordinal, title=title, heading_path=title, page_start=page, page_end=page
+    )
+    section.lines = body
+    section.pages = {page}
+    return section
+
+
+FAILOVER = "Failed messages are written to the application log and discarded."
+GATEWAY = "The API Gateway terminates TLS for all inbound traffic."
+s1 = _section(1, "2 Ingest", ["The ingest service accepts device readings.", GATEWAY], 2)
+s2 = _section(2, "4 Failure Handling", [FAILOVER], 3)
+sections = [s1, s2]
+doc = whole_document.build(
+    "Telemetry",
+    [
+        {"page": 2, "kind": "text", "text": "The ingest service accepts device readings."},
+        {"page": 2, "kind": "text", "text": GATEWAY},
+        {"page": 3, "kind": "text", "text": FAILOVER},
+    ],
+    [],
+)
+
+quote, page, reason, home = coverage._checked_quote(
+    {"quote": FAILOVER, "page": 3}, s1, doc, sections
+)
+ok("the quote is kept", quote is not None, reason)
+ok("and rehomed to the section that holds it", home.ordinal == 2, home.ordinal)
+ok("with that section's page", page == 3, page)
+
+quote, _, reason, home = coverage._checked_quote({"quote": FAILOVER, "page": 3}, s2, doc, sections)
+ok("a correctly cited quote does not move", quote is not None and home.ordinal == 2)
+
+quote, _, reason, home = coverage._checked_quote(
+    {"quote": "The platform uses quantum-resistant cryptography.", "page": 2}, s1, doc, sections
+)
+ok("words in no section are still refused", quote is None and reason == "unverified", reason)
+
+quote, _, reason, _ = coverage._checked_quote({"quote": FAILOVER, "page": 3}, s1, doc, None)
+ok(
+    "and without the section list the old behaviour stands",
+    quote is None and reason == "outsideSection",
+    reason,
+)
+
+# Two sections holding the same words cannot say which was meant, so neither is
+# chosen — attaching a suggestion to the wrong part of a design is the failure
+# the section check exists to prevent.
+twin = _section(3, "6 Appendix", [FAILOVER], 9)
+quote, _, reason, _ = coverage._checked_quote(
+    {"quote": FAILOVER, "page": 3}, s1, doc, [s1, s2, twin]
+)
+ok("an ambiguous rehome is refused", quote is None and reason == "outsideSection", reason)
+
+# End to end through advice.check(): the suggestion survives, in section 2.
+checked = advice.check(
+    {
+        "suggestions": [
+            {
+                "title": "Dead-letter the failed telemetry messages",
+                "kind": "improve",
+                "category": "resilience",
+                "priority": "high",
+                "section": 1,
+                "component": "application log",
+                "quote": FAILOVER,
+                "page": 3,
+                "recommendation": (
+                    "Route failed telemetry messages to a dead-letter queue instead of "
+                    "discarding them after the retry budget is spent."
+                ),
+                "why": "Discarded readings cannot be replayed, so the billing feed loses data.",
+                "clauses": [],
+            }
+        ]
+    },
+    sections,
+    doc,
+    [],
+)
+ok("advice keeps the rehomed suggestion", len(checked.suggestions) == 1, checked.dropped)
+ok(
+    "recorded against the section that holds the quote",
+    checked.suggestions and checked.suggestions[0]["section"] == 2,
+    checked.suggestions[0]["section"] if checked.suggestions else None,
+)
+ok("and nothing was counted as refused", sum(checked.dropped.values()) == 0, checked.dropped)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

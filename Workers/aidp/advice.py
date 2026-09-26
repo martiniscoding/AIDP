@@ -274,7 +274,22 @@ def check(
         quote: str | None = None
         page: int | None = None
         if " ".join(str(item.get("quote") or "").split()):
-            quote, page, reason = _checked_quote(item, section, whole)
+            quote, page, reason, home = _checked_quote(item, section, whole, sections)
+            if home.ordinal != section.ordinal:
+                # The words were the design's own, in a neighbouring section.
+                # The quote decides where the suggestion belongs, so the
+                # component is re-checked against the section it moved to
+                # rather than the one the model guessed.
+                section = home
+                named = _named(section.text, component)
+                homes = (
+                    []
+                    if named
+                    else [other for other in sections if _named(other.text, component)]
+                )
+                if not named and not homes:
+                    out.dropped["unanchored"] += 1
+                    continue
             if quote is None:
                 logs.warn(
                     log,
