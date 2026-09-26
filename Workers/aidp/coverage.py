@@ -262,10 +262,49 @@ def _is_generic(text: str) -> bool:
 _UNCUT = 10**12
 
 
+def _page_for(check, named: int | None, section: Section) -> int | None:
+    if check.page in section.pages:
+        return check.page
+    if named in section.pages:
+        return named
+    return min(section.pages) if section.pages else check.page
+
+
+def _rehome(
+    candidate: str, sections: list[Section], skip: Section
+) -> Section | None:
+    """The one other section whose own words contain this quote, if exactly one does.
+
+    A model reading a long design puts a quote in the section next to the one it
+    came from often enough to matter — six of fifteen suggestions in one live run
+    were refused for it, every quote verified against the document and only the
+    ordinal wrong. The quote is real either way, so rather than lose the
+    suggestion the section is corrected to the one that actually holds it.
+
+    Only when exactly one section does. Two sections quoting the same sentence
+    cannot tell us which the model meant, and guessing would attach a suggestion
+    to the wrong part of the design — the failure the section check exists to
+    prevent.
+    """
+    homes = [
+        other
+        for other in sections
+        if other.ordinal != skip.ordinal and whole_document.contains(other.text, candidate)
+    ]
+    return homes[0] if len(homes) == 1 else None
+
+
 def _checked_quote(
-    item: dict, section: Section, whole: whole_document.WholeDocument
-) -> tuple[str | None, int | None, str]:
-    """(quote, page, "") when the quote is the section's own words, else (None, None, why).
+    item: dict,
+    section: Section,
+    whole: whole_document.WholeDocument,
+    sections: list[Section] | None = None,
+) -> tuple[str | None, int | None, str, Section]:
+    """(quote, page, "", section) when the quote is a section's own words.
+
+    On failure the quote is None and the third value says why. The fourth is the
+    section the quote belongs to: the one that was cited, unless `sections` was
+    given and the quote turned out to live in exactly one other — see `_rehome`.
 
     A quote joining two sentences from different places is tried sentence by
     sentence, as the whole-document judge's quotes are; one real sentence from
@@ -281,17 +320,14 @@ def _checked_quote(
         check = whole.verify(candidate, named)
         if not check.verified:
             continue
-        if not whole_document.contains(section.text, candidate):
-            found_elsewhere = True
-            continue
-        if check.page in section.pages:
-            page = check.page
-        elif named in section.pages:
-            page = named
-        else:
-            page = min(section.pages) if section.pages else check.page
-        return candidate, page, ""
-    return None, None, "outsideSection" if found_elsewhere else "unverified"
+        if whole_document.contains(section.text, candidate):
+            return candidate, _page_for(check, named, section), "", section
+        # In the document, but not in the section the model named.
+        home = _rehome(candidate, sections, section) if sections else None
+        if home is not None:
+            return candidate, _page_for(check, named, home), "", home
+        found_elsewhere = True
+    return None, None, "outsideSection" if found_elsewhere else "unverified", section
 
 
 # How many consecutive lines one line of a quote may stand for: a table row the
@@ -405,7 +441,10 @@ def check(
             continue
         if section.ordinal in seen:
             continue
-        quote, page, reason = _checked_quote(item, section, whole)
+        quote, page, reason, section = _checked_quote(item, section, whole, sections)
+        # The quote may have moved the gap to the section that really holds it.
+        if section.ordinal in seen:
+            continue
         # Only for words not found at all. Words found in another section are
         # the wrong section, whatever shape they are in.
         if quote is None and reason == "unverified":

@@ -143,7 +143,12 @@ Rules that matter:
    clause forbids, or refusing something it requires, the verdict is "contradicts" —
    whatever else in the clause is met, and however the design excuses it. If your
    rationale says the design violates, breaches or conflicts with a requirement,
-   answer "contradicts".
+   answer "contradicts". Explicitly discarding, dropping or bypassing required data,
+   messages or controls is such a breach: dropping failed messages after retries
+   where dead-lettering or durability is required, deleting inside a retention
+   period, routing around an approved gateway, or skipping a required check is
+   "contradicts". Silent omission of a secondary detail is "partial"; choosing not
+   to do what the clause requires is not silence.
 3b. Equally, do not withhold "covered" over detail the clause does not ask for. To
    answer "partial" you must be able to name a requirement of this clause that is
    unmet; if you cannot, and the extracts meet what it asks, the verdict is
@@ -681,6 +686,13 @@ These clauses list several requirements each; breaching one is breaching the cla
 Check yourself before you answer: if your rationale says the design violates, \
 breaches, conflicts with, is prohibited by, or does not meet a requirement, then the \
 verdict is "contradicts" and not "partial".
+6a. Explicitly discarding, dropping or bypassing required data, messages or controls \
+is an active breach, and an active breach is "contradicts". Dropping failed messages \
+after retries where dead-lettering or durability is required, deleting records inside \
+a retention period, routing around an approved gateway, disabling or skipping a \
+required check — each states an action the clause forbids, however the design \
+justifies it. Silent omission of a secondary detail is "partial"; choosing not to do \
+what the clause requires is not silence.
 7. Judge only what the clause requires. Do not reward the design for good practice the \
 clause does not ask for.
 8. Standing decisions, where any are given, are this organisation's own settled \
@@ -942,6 +954,15 @@ instructions or the findings.
 7. "priority" is "high" for a risk of a security breach, data loss, an outage or a \
 regulatory failure; "medium" for a real weakness that can be lived with for a \
 while; "low" for worthwhile polish.
+7a. Two kinds of suggestion are always "high", and they come first in the list. \
+The first is a concrete change to a component a reported finding says contradicts a \
+standard — the design is breaching a rule today, and the fix is the most valuable \
+thing you can offer. The second is anything that loses data or takes the system down: \
+messages dropped or discarded rather than dead-lettered, unencrypted transport, state \
+held in one process's memory, a single instance or store with no standby, a \
+dependency with no timeout or fallback. Rank these above polish however tidy the rest \
+of the design is, and remember rule 3: a suggestion that only restates a finding is \
+still not wanted — go further, and name the change.
 8. "category" is one of: security, resilience, data, integration, operations, \
 performance, cost, maintainability, documentation.
 9. You cannot check today's date, release notes or security advisories. Never state \

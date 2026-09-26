@@ -131,22 +131,39 @@ export function readAdvice(value: unknown): AdviceView | null {
   if (!state) return null;
 
   const seen = new Set<string>();
+  // Rows this reader refuses, on top of what the worker already counted. They
+  // are refusals for the same reasons and belong in the same total: a run that
+  // showed three suggestions and said nothing was set aside, while quietly
+  // dropping two more here, was under-reporting its own filtering.
+  let refusedHere = 0;
   const suggestions = (Array.isArray(raw.suggestions) ? raw.suggestions : []).flatMap(
     (item): Suggestion[] => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        refusedHere += 1;
+        return [];
+      }
       const entry = item as Record<string, unknown>;
       const title = text(entry.title, 200);
       const recommendation = text(entry.recommendation, 1500);
       const section = integer(entry.section);
-      if (!title || !recommendation || section === null) return [];
+      if (!title || !recommendation || section === null) {
+        refusedHere += 1;
+        return [];
+      }
 
       const kind = entry.kind === "add" ? "add" : "improve";
       const quote = text(entry.quote, 1500) || null;
       // A change to what the design says is only shown beside where it says it.
-      if (kind === "improve" && !quote) return [];
+      if (kind === "improve" && !quote) {
+        refusedHere += 1;
+        return [];
+      }
 
       const key = title.toLowerCase();
-      if (seen.has(key)) return [];
+      if (seen.has(key)) {
+        refusedHere += 1;
+        return [];
+      }
       seen.add(key);
 
       return [
@@ -194,7 +211,8 @@ export function readAdvice(value: unknown): AdviceView | null {
     sectionsRead: integer(raw.sections) ?? 0,
     truncated: raw.truncated === true,
     suggestions,
-    setAside: REFUSALS.reduce((sum, reason) => sum + count(dropped[reason]), 0),
+    setAside:
+      REFUSALS.reduce((sum, reason) => sum + count(dropped[reason]), 0) + refusedHere,
     overLimit: count(dropped.overLimit),
     source: raw.source === "cache" ? "cache" : "model",
     generatedAt: isoDate(raw.generatedAt),
