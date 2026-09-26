@@ -91,6 +91,15 @@ KEYWORD_MIN_CHARS = 4
 
 # Four-letter-plus words common enough in standards prose to match any diagram.
 # Matching one of these is not evidence a figure is about the clause.
+#
+# The second and third groups were measured, not guessed. Against the sample
+# corpus one ordinary context diagram — "governed data flow through the
+# integration platform" — corroborated 44 of 54 clauses, including the
+# encryption clause it says nothing about, on words like "data", "through" and
+# "rather". Those words are what architecture prose is made of; they appear in
+# every clause and every diagram, so matching them measures nothing. Removing
+# them takes that 44 down to 7 while a diagram genuinely about a clause still
+# matches. If this list is trimmed, re-run the sweep before trusting it.
 _STOPWORDS = frozenset(
     """
     that this with from they them have been will must should shall each other than
@@ -102,6 +111,17 @@ _STOPWORDS = frozenset(
     services provide provides provided ensure ensures ensured include includes
     including requirement requirements standard standards clause clauses section
     sections shall_not appropriate relevant necessary applicable
+
+    data through rather directly between flow flows across within around
+    context enterprise platform platforms component components interface
+    interfaces process processes manage managed management support supported
+    operate operated record records control controls access user users
+    application applications information business technical
+
+    related associated specific general various different additional further
+    following above below other others where whether during before after
+    because however therefore given based upon able need needs needed
+    required requires
     """.split()
 )
 

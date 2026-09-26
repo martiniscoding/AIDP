@@ -274,5 +274,54 @@ ok(
     == "partial",
 )
 
+print("\nArchitecture prose does not corroborate anything")
+
+# Measured against samples/: one ordinary context diagram matched 44 of the 54
+# clauses in the three sample standards -- the encryption clause among them --
+# on words like "data", "through" and "rather". These cases pin the words whose
+# removal took that to 7, because the gate is only worth having while a match
+# means the diagram is about the clause.
+CONTEXT_DIAGRAM = (
+    "Enterprise context diagram. Customer, billing and field domains are drawn as "
+    "grouped boxes. Arrows show governed data flow passing through a central "
+    "integration platform rather than directly between systems."
+)
+for governed, subject in (
+    (
+        "6.3 Encryption. Data must be encrypted in transit using TLS 1.2 or above, "
+        "including across private networks.",
+        "encryption",
+    ),
+    (
+        "3.3 Statelessness. Session state must be externalised to a shared cache "
+        "rather than held in local application memory.",
+        "statelessness",
+    ),
+    (
+        "3.1 Network segmentation. Production networks must be segmented from "
+        "corporate networks with controlled flow between them.",
+        "network segmentation",
+    ),
+):
+    ok(
+        f"a context diagram does not answer the {subject} clause",
+        not analyse._figure_corroborates(governed, CONTEXT_DIAGRAM, 1),
+        sorted(analyse._keywords(governed) & analyse._keywords(CONTEXT_DIAGRAM)),
+    )
+
+ok(
+    "but it does answer the clause it belongs to",
+    analyse._figure_corroborates(
+        "1.3 Enterprise Context. Figure 1 - Enterprise context. Systems are grouped "
+        "by domain; arrows indicate governed data flow through the integration "
+        "platform.",
+        CONTEXT_DIAGRAM,
+        1,
+    ),
+)
+
+for filler in ("data", "through", "rather", "between", "platform", "access", "control"):
+    ok(f"{filler!r} alone carries no subject matter", analyse._keywords(filler) == set())
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
