@@ -158,6 +158,13 @@ Rules that matter:
    sentences are allowed here, still within 280 characters: what is wrong, then
    what is needed. "No retention period is stated; set a 7-year retention
    policy on the audit log store" — not "retention is not addressed".
+9. Build that fix out of what the design already has. Name the components,
+   services, protocols and stores the extracts themselves name, and extend
+   them: if the design runs Kafka, the fix is a Kafka topic, not "a message
+   broker"; if it names an Oracle billing database, say so. Do not introduce a
+   product the document never mentions, and never name a vendor or tool the
+   design does not already use. Where the design names nothing that could carry
+   the fix, say what capability is missing instead of inventing a product.
 
 Reply with JSON only, no prose around it:
 {{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
@@ -667,6 +674,12 @@ needed, never "address the requirement". Two short sentences are allowed here, s
 within 280 characters: what is wrong, then what is needed. "No retention period is \
 stated; set a 7-year retention policy on the audit log store" — not "retention is not \
 addressed".
+12. Build that fix out of what the design already has. Name the components, services, \
+protocols and stores the document itself names, and extend them: if it runs Kafka the \
+fix is a Kafka topic, not "a message broker"; if it names an Oracle billing database, \
+say so. Never introduce a product or vendor the document does not mention. Where it \
+names nothing that could carry the fix, say what capability is missing instead of \
+inventing a product.
 
 Reply with JSON only, no prose around it:
 {{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
@@ -731,7 +744,8 @@ so that those parts are governed too.
 
 GAPS. For each section of the design that describes something no clause governs:
 - "section": its number, from the "=== S<number>" line that starts it
-- "what": what the design does there, in at most 30 words
+- "what": what the design does there, in ONE sentence of at most 180 characters,
+  in the design's own terms
 - "quote": one sentence or table row copied exactly, character for character, from \
 that section, showing what it describes. Never paraphrase, never join words from two \
 places, never quote these instructions or a clause.
@@ -739,8 +753,10 @@ places, never quote these instructions or a clause.
 
 SUGGESTIONS. The standards the organisation should add to govern those gaps. For each:
 - "title": the name of the standard, at most 10 words
-- "covers": what it should govern, at most 40 words
-- "why": what in this design shows it is needed, at most 40 words
+- "covers": what it should govern, at most 40 words and 280 characters, named as
+  concrete architectural additions to the components this design already has
+- "why": the part of this design that shows it is needed, one sentence of at most
+  200 characters
 - "sections": the numbers of the gap sections it would govern
 
 In "what", "covers" and "why", describe the parts of the design by what they do - \
@@ -769,6 +785,12 @@ frameworks by clause number.
 sections.
 6. If every part of the design is governed, return empty lists. That is a correct and \
 expected answer.
+7. Say something a reader could act on. "what", "covers" and "why" name the design's \
+own components, stores, interfaces and flows and what should govern them — not the \
+fact that governance is absent. These words are banned outright: "consider", \
+"ensure proper", "review and update", "where appropriate", "as appropriate", "follow \
+best practices", "align with stakeholders". A sentence that would fit any design at \
+all is not worth returning.
 
 Reply with JSON only:
 {{"gaps": [{{"section": 12, "what": "...", "quote": "...", "page": 31}}],
@@ -865,6 +887,12 @@ names it (for example "RabbitMQ" or "API Gateway"), and it must appear in the \
 section you give. Give one name, not a list, and never a label made by combining \
 names. A suggestion that cannot be tied to something the design names is general \
 advice, and is not wanted.
+1a. Build every suggestion on the passage you quote, naming three things in at most \
+two sentences: (a) the existing component or flow being extended, in the design's own \
+words; (b) the exact parameter, mechanism or protocol to add or change; and (c) the \
+runtime state that results — what is then true when the system runs. Extend the \
+stack the design already has rather than replacing it: propose a product it does not \
+already name only when nothing it names could do the job, and say why.
 2. "recommendation" is one concrete engineering change to that component, at most \
 two crisp sentences and 280 characters. Name the mechanism, parameter, protocol or \
 failure mode, and the target state: not "add retries" but "bound the Orders API \
@@ -1046,6 +1074,12 @@ technology out. Never join words from separate places.
 two entries, and the same one named twice is one. Leave out technologies the \
 design mentions only to reject them or to compare against.
 7. At most 60 entries.
+8. Every field is a fact copied from the design, never a judgement and never \
+prose. Do not explain, qualify or recommend anything: no "consider upgrading", no \
+"confirm support status", no note on whether a version is current or wise. Whether \
+a technology is still supported is looked up from its dates afterwards, and a \
+sentence of opinion here would be shown to a reviewer as though it were one of \
+those facts.
 """
 
 _LIFECYCLE_USER = "List the technologies this design uses."

@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from aidp import advice, coverage, whole_document  # noqa: E402
+from aidp import advice, coverage, lifecycle, whole_document  # noqa: E402
 from aidp.stages import analyse  # noqa: E402
 
 passed = 0
@@ -322,6 +322,56 @@ ok(
 
 for filler in ("data", "through", "rather", "between", "platform", "access", "control"):
     ok(f"{filler!r} alone carries no subject matter", analyse._keywords(filler) == set())
+
+
+print("\nCoverage holds its gaps and standards to the same standard")
+
+ok("the filter is shared, not copied", advice._is_generic is coverage._is_generic)
+ok("and so is its word floor", advice.MIN_RECOMMENDATION_WORDS == coverage.MIN_SPECIFIC_WORDS)
+ok("gap cap", coverage.MAX_GAP_WHAT == 220)
+ok("suggestion covers cap", coverage.MAX_SUGGESTION_COVERS == 300)
+ok("suggestion why cap", coverage.MAX_SUGGESTION_WHY == 220)
+ok("a refusal counter exists for generic wording", "generic" in coverage.Checked().dropped)
+
+for filler in (
+    "Consider implementing appropriate controls.",
+    "Ensure that proper governance is applied.",
+    "Review and update this area.",
+    "Follow best practices.",
+):
+    ok(f"coverage refuses {filler[:36]!r}", coverage._is_generic(filler))
+
+for real in (
+    "The storefront caches card numbers in Redis with no stated expiry or tokenisation.",
+    "Telemetry is written straight to the billing Oracle database with no staging table.",
+):
+    ok(f"coverage keeps {real[:36]!r}", not coverage._is_generic(real))
+
+long_what = "The portal stores customer addresses in its own schema. " * 8
+ok(
+    "a long gap is cut to the cap at a sentence",
+    len(coverage._sentences(long_what, coverage.MAX_GAP_WHAT)) <= coverage.MAX_GAP_WHAT
+    and coverage._sentences(long_what, coverage.MAX_GAP_WHAT).endswith("."),
+    coverage._sentences(long_what, coverage.MAX_GAP_WHAT),
+)
+
+
+print("\nLifecycle reports facts, and has nowhere to put an opinion")
+
+# Every stored lifecycle field is either copied from the design under a cap or
+# computed from endoflife.date. The only free text is `note`, which this module
+# writes itself. If a prose field is ever added, this test should start failing.
+outcome = lifecycle._outcome("skipped", "Turned off in this deployment.")
+ok("the note is ours, not the model's", outcome["note"] == "Turned off in this deployment.")
+ok("no technology carries prose by default", outcome["technologies"] == [])
+prose = {"name", "version", "quote", "note"}
+stored = set(outcome) | {"name", "product", "version", "section", "quote", "page"}
+ok(
+    "no summary, rationale or recommendation field exists",
+    not (stored & {"summary", "rationale", "recommendation", "advice", "why"}),
+    sorted(stored & {"summary", "rationale", "recommendation", "advice", "why"}),
+)
+ok("and the fields that do hold model text are capped", prose.issubset(stored))
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

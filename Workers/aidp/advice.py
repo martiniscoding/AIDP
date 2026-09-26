@@ -68,7 +68,14 @@ from psycopg.types.json import Jsonb
 from . import cache, coverage, db, logs, usage, whole_document
 from .ai import llm
 from .config import get_config
-from .coverage import _checked_quote, _clean, _integer, _sentences
+from .coverage import (
+    MIN_SPECIFIC_WORDS,
+    _checked_quote,
+    _clean,
+    _integer,
+    _is_generic,
+    _sentences,
+)
 
 log = logs.get(__name__)
 
@@ -107,37 +114,11 @@ FAILING = ("contradicts", "absent", "partial", "needs_review")
 MAX_RECOMMENDATION = 320
 MAX_WHY = 220
 
-# The fewest words a recommendation can name a change in. Below this it is a
-# heading, not an instruction.
-MIN_RECOMMENDATION_WORDS = 6
+# The filter and its word floor live beside the other text checks in
+# coverage.py, because coverage applies them to its gaps and suggested standards
+# too and cannot import this module.
+MIN_RECOMMENDATION_WORDS = MIN_SPECIFIC_WORDS
 
-# Boilerplate that reads as advice and says nothing. Every one of these was in a
-# suggestion that passed the anchoring checks — it named a real component and
-# quoted the design — and still told the reviewer to do no particular thing.
-_GENERIC = re.compile(
-    r"\b("
-    r"consider\s+(implementing|adding|reviewing|using|adopting)"
-    r"|ensure\s+(that\s+)?proper"
-    r"|confirm\s+(its\s+|the\s+)?support\s+status"
-    r"|align\s+with\s+stakeholders"
-    r"|review\s+and\s+update"
-    r"|follow\s+(industry\s+)?best\s+practices?"
-    r"|as\s+appropriate|where\s+appropriate"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def _is_generic(recommendation: str) -> bool:
-    """Whether a recommendation says nothing a reviewer could act on.
-
-    Deterministic on purpose. The prompt asks for a concrete change and mostly
-    gets one; this is the floor under it, so a reply that drifts back to filler
-    is refused by the same rule every time rather than by a model's mood.
-    """
-    if len(recommendation.split()) < MIN_RECOMMENDATION_WORDS:
-        return True
-    return bool(_GENERIC.search(recommendation))
 
 # The design is rendered uncut for the cache key. The budget the model is given
 # shrinks as the findings grow, and a key that moved with it would miss whenever

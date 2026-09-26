@@ -63,6 +63,13 @@ CITING_VERDICTS = ("covered", "partial", "contradicts")
 
 VERSION = 1
 
+# What a gap and a suggested standard may say, in characters. The prompt asks
+# for 180/280/200; these leave room for a reply a shade over rather than cutting
+# a sentence in half, and `_sentences` snaps each to a sentence end.
+MAX_GAP_WHAT = 220
+MAX_SUGGESTION_COVERS = 300
+MAX_SUGGESTION_WHY = 220
+
 
 @dataclass
 class Section:
@@ -89,6 +96,7 @@ class Checked:
             "unverified": 0,
             "outsideSection": 0,
             "alreadyJudged": 0,
+            "generic": 0,
         }
     )
     # Kept, but quoted by the section's own lines rather than the model's words;
@@ -214,6 +222,44 @@ def _sentences(value, limit: int) -> str:
     if cut >= limit // 3:
         return window[: cut + 1]
     return _clean(text, limit)
+
+
+# The fewest words a recommendation, a gap or a suggested standard can say
+# something in. Fewer than this is a heading, not a statement.
+MIN_SPECIFIC_WORDS = 6
+
+# Boilerplate that reads as advice and says nothing. Every one of these was in a
+# suggestion that passed the anchoring checks â€” it named a real component and
+# quoted the design â€” and still told the reviewer to do no particular thing.
+_GENERIC = re.compile(
+    r"\b("
+    r"consider\s+(implementing|adding|reviewing|using|adopting)"
+    r"|ensure\s+(that\s+)?proper"
+    r"|confirm\s+(its\s+|the\s+)?support\s+status"
+    r"|align\s+with\s+stakeholders"
+    r"|review\s+and\s+update"
+    r"|follow\s+(industry\s+)?best\s+practices?"
+    r"|as\s+appropriate|where\s+appropriate"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_generic(text: str) -> bool:
+    """Whether a line of advice says nothing a reviewer could act on.
+
+    Deterministic on purpose. The prompt asks for a concrete change and mostly
+    gets one; this is the floor under it, so a reply that drifts back to filler
+    is refused by the same rule every time rather than by a model's mood.
+    """
+    if len(text.split()) < MIN_SPECIFIC_WORDS:
+        return True
+    return bool(_GENERIC.search(text))
+
+# The design is rendered uncut for the cache key. The budget the model is given
+# shrinks as the findings grow, and a key that moved with it would miss whenever
+# a verdict changed â€” the one thing the key is built to ignore.
+_UNCUT = 10**12
 
 
 def _checked_quote(
@@ -389,6 +435,14 @@ def check(
             out.dropped["alreadyJudged"] += 1
             continue
 
+        what = _sentences(item.get("what"), MAX_GAP_WHAT)
+        # A gap a reader could not act on. It named a real section and quoted
+        # it, so it passed every other check, and still said nothing.
+        if _is_generic(what):
+            logs.warn(log, "coverage gap refused as generic", section=section.ordinal, what=what)
+            out.dropped["generic"] += 1
+            continue
+
         seen.add(section.ordinal)
         pages = sorted(section.pages)
         out.gaps.append(
@@ -398,7 +452,7 @@ def check(
                 "headingPath": section.heading_path[:1000],
                 "pageStart": pages[0] if pages else section.page_start,
                 "pageEnd": pages[-1] if pages else section.page_end,
-                "what": _clean(item.get("what"), 400),
+                "what": what,
                 "quote": quote[:1500],
                 "page": page,
             }
@@ -420,11 +474,19 @@ def check(
         # left in the design to point at.
         if not title or not numbers:
             continue
+        covers = _sentences(item.get("covers"), MAX_SUGGESTION_COVERS)
+        why = _sentences(item.get("why"), MAX_SUGGESTION_WHY)
+        # A standard nobody could write from. Both halves have to be filler:
+        # a vague "why" beside a concrete "covers" is still worth showing.
+        if _is_generic(covers) and _is_generic(why):
+            logs.warn(log, "coverage suggestion refused as generic", title=title)
+            out.dropped["generic"] += 1
+            continue
         out.suggestions.append(
             {
                 "title": title,
-                "covers": _clean(item.get("covers"), 500),
-                "why": _clean(item.get("why"), 500),
+                "covers": covers,
+                "why": why,
                 "sections": numbers,
             }
         )

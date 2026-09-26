@@ -45,7 +45,12 @@ export type CoverageView = {
   truncated: boolean;
   gaps: CoverageGap[];
   suggestions: StandardSuggestion[];
-  /** Gaps the model proposed that the checks refused. */
+  /**
+   * Gaps and standards the model proposed that the checks refused: a quote not
+   * in the section, a section already judged, or wording too generic to act on.
+   * Every counter the worker records is summed, so a new refusal reason is
+   * counted here the day it is added.
+   */
   setAside: number;
 };
 
@@ -81,7 +86,7 @@ export function readCoverage(value: unknown): CoverageView | null {
         title: text(entry.title, 300),
         pageStart: integer(entry.pageStart),
         pageEnd: integer(entry.pageEnd),
-        what: text(entry.what, 600),
+        what: text(entry.what, 220),
         quote,
         page: integer(entry.page),
       },
@@ -103,7 +108,9 @@ export function readCoverage(value: unknown): CoverageView | null {
       // A suggestion that covers no reported gap has nothing on this page to
       // justify it.
       if (!title || sections.length === 0) return [];
-      return [{ title, covers: text(entry.covers, 600), why: text(entry.why, 600), sections }];
+      // Caps match Workers/aidp/coverage.py, which already cut these at a
+      // sentence. A longer value means an older run, from before the caps.
+      return [{ title, covers: text(entry.covers, 300), why: text(entry.why, 220), sections }];
     },
   );
 
