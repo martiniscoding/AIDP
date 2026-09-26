@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import db, logs, progress, queue, usage
+from . import cache, db, logs, progress, queue, usage
 from .config import get_config
 from .stages import analyse as analyse_stage
 from .stages import chunk as chunk_stage
@@ -70,6 +70,35 @@ def _reaper(interval: float = 60.0) -> None:
             logs.error(log, "reaper sweep failed", error=str(exc)[:300])
 
 
+# How often expired suggestions are deleted. The limit is counted in days, so an
+# hour late costs nothing; doing it every minute beside the reaper would be a
+# table scan in every worker for no one's benefit.
+EXPIRE_EVERY = 3600.0
+
+
+def _expire_suggestions(max_age_days: int, interval: float = EXPIRE_EVERY) -> None:
+    """Deletes stored suggestions — and stored readings of a design's
+    technologies — once they are past reuse. See `cache.sweep`.
+
+    Once at start, then every `interval`: a worker that restarts more often than
+    hourly would otherwise never get round to it.
+    """
+    while True:
+        try:
+            deleted = sum(
+                cache.sweep(kind, max_age_days=max_age_days)
+                for kind in (cache.ADVICE, cache.LIFECYCLE)
+            )
+            if deleted:
+                logs.info(
+                    log, "expired suggestions deleted", count=deleted, maxAgeDays=max_age_days
+                )
+        except Exception as exc:  # noqa: BLE001 — a failed sweep must not kill the worker
+            logs.error(log, "suggestion expiry failed", error=str(exc)[:300])
+        if _shutdown.wait(interval):
+            return
+
+
 def main() -> int:
     cfg = get_config()
     logs.setup()
@@ -83,6 +112,12 @@ def main() -> int:
     signal.signal(signal.SIGINT, _on_signal)
 
     threading.Thread(target=_reaper, daemon=True).start()
+    # Only the stage that writes suggestions deletes them, so four workers do not
+    # run the same delete.
+    if cfg.stage == "analyse" and cfg.advice_cache_days > 0:
+        threading.Thread(
+            target=_expire_suggestions, args=(cfg.advice_cache_days,), daemon=True
+        ).start()
     backoff = _Backoff(cfg.poll_min_seconds, cfg.poll_max_seconds)
 
     logs.info(
@@ -141,7 +176,11 @@ def main() -> int:
                 # spinner forever.
                 if job.stage == "analyse":
                     run_id = job.payload.get("runId")
-                    if run_id:
+                    if run_id and job.payload.get("adviceOnly"):
+                        # Fresh suggestions for a finished run. The run and its
+                        # findings stand; only the request is reported failed.
+                        analyse_stage.mark_advice_failed(run_id)
+                    elif run_id:
                         analyse_stage.mark_failed(run_id, reason)
                 else:
                     _mark_document_failed(job.document_id, reason)

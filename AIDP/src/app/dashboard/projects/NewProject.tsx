@@ -21,17 +21,26 @@ export function NewProject({ defaultOpen = false }: { defaultOpen?: boolean }) {
 
   if (!open) {
     return (
-      <div className="mb-5">
+      // Centred and stated as the action it is. As a small outlined button at
+      // the left margin it read as a caption above the list, and starting a
+      // project is the one thing this screen exists for.
+      <div className="mb-6 flex flex-col items-center gap-2">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/80 transition-colors hover:border-line-strong hover:text-ink"
+          className={cn(
+            "inline-flex items-center gap-2 rounded-full bg-royal px-5 py-2.5",
+            "text-[14px] font-medium text-white shadow-card",
+            "transition-[transform,box-shadow] duration-300",
+            "hover:-translate-y-0.5 hover:shadow-card-hover",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+          )}
         >
-          <FolderPlus size={13} />
+          <FolderPlus size={15} aria-hidden="true" />
           New project
         </button>
         {message && (
-          <p role="status" className={cn("mt-2 text-[12.5px]", message.ok ? "text-ok" : "text-warn")}>
+          <p role="status" className={cn("text-[12.5px]", message.ok ? "text-ok" : "text-warn")}>
             {message.text}
           </p>
         )}
@@ -52,7 +61,7 @@ export function NewProject({ defaultOpen = false }: { defaultOpen?: boolean }) {
           }
         })
       }
-      className="mb-5 rounded-2xl border border-line bg-card p-4"
+      className="mx-auto mb-6 w-full max-w-2xl rounded-2xl border border-line bg-card p-4 shadow-card"
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">

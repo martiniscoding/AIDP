@@ -34,13 +34,19 @@ slower pipeline; a cache that raises is a broken one.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
+from dataclasses import dataclass
+
+from psycopg.types.json import Jsonb
 
 from . import db, logs, usage
 
 log = logs.get(__name__)
 
 EMBEDDING = "embedding"
+ADVICE = "advice"
+LIFECYCLE = "lifecycle"
 
 
 def fingerprint(*parts: str) -> str:
@@ -210,3 +216,230 @@ def put_embeddings(
             db.execute(conn, sql, params)
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         logs.warn(log, "cache write failed, continuing", error=str(exc)[:200])
+
+
+# ------------------------------------------------------------------ #
+# Answers stored as JSON — suggested improvements
+# ------------------------------------------------------------------ #
+
+
+def advice_key(
+    *,
+    design: str,
+    title: str,
+    standards: str,
+    provider: str,
+    model: str,
+    prompt: str,
+    version: int,
+) -> str:
+    """The identity of one set of suggested improvements.
+
+    Everything the model is shown except the findings: the design's text, its
+    title, the clause set it was assessed against, which model, and the exact
+    instructions. A change to any of them is a different question and misses.
+
+    The findings are left out on purpose, and it is the one place this module
+    departs from "everything that can change the output". Verdicts drift between
+    runs of an unchanged design, so a key that held them would miss on the very
+    repeat it exists for. What the findings decide in a reply — which clause a
+    suggestion says it would help with — is re-checked against the current run
+    every time the reply is reused; see advice.py.
+    """
+    return fingerprint(ADVICE, str(version), provider, model, prompt, title, standards, design)
+
+
+def lifecycle_key(
+    *,
+    design: str,
+    title: str,
+    products: str,
+    provider: str,
+    model: str,
+    prompt: str,
+    version: int,
+) -> str:
+    """The identity of one reading of which technologies a design uses.
+
+    Everything the model is shown: the design, its title, the product list it
+    chooses ids from, the model and the instructions. No findings are involved,
+    so unlike `advice_key` nothing is left out. Only the reading is keyed; the
+    support dates are looked up fresh every run. See lifecycle.py.
+    """
+    return fingerprint(LIFECYCLE, str(version), provider, model, prompt, title, products, design)
+
+
+@dataclass
+class Stored:
+    """One answer read back: what it said, which model said it, and when."""
+
+    payload: dict
+    model: str
+    created_at: dt.datetime
+    hits: int
+
+
+_SELECT_PAYLOAD = """
+SELECT "payload", "model", "createdAt", "hits"
+  FROM "ai_cache"
+ WHERE "organisationId" = %(org)s
+   AND "kind" = %(kind)s
+   AND "fingerprint" = %(key)s
+   AND "payload" IS NOT NULL
+   AND "createdAt" > %(since)s
+"""
+
+_TOUCH_ONE = """
+UPDATE "ai_cache"
+   SET "hits" = "hits" + 1, "lastUsedAt" = %(now)s
+ WHERE "organisationId" = %(org)s
+   AND "kind" = %(kind)s
+   AND "fingerprint" = %(key)s
+"""
+
+# Replaces rather than ignores, unlike the embeddings insert. A payload is only
+# written after a miss, and a miss on a key that has a row means the row is too
+# old to use — or a reviewer asked for a fresh answer on purpose. Either way the
+# new answer is the one to keep, and its age starts again.
+_UPSERT_PAYLOAD = """
+INSERT INTO "ai_cache" (
+    "id", "organisationId", "kind", "fingerprint", "model",
+    "payload", "costTokens", "hits", "lastUsedAt", "createdAt"
+) VALUES (
+    %(id)s, %(org)s, %(kind)s, %(key)s, %(model)s,
+    %(payload)s, %(cost)s, 0, %(now)s, %(now)s
+)
+ON CONFLICT ("organisationId", "kind", "fingerprint") DO UPDATE SET
+    "model" = EXCLUDED."model",
+    "payload" = EXCLUDED."payload",
+    "costTokens" = EXCLUDED."costTokens",
+    "hits" = 0,
+    "lastUsedAt" = EXCLUDED."lastUsedAt",
+    "createdAt" = EXCLUDED."createdAt"
+"""
+
+
+def get_payload(
+    organisation_id: str | None,
+    kind: str,
+    key: str,
+    *,
+    max_age_days: int,
+) -> Stored | None:
+    """The stored answer for this key, if there is one younger than the limit.
+
+    None for no organisation or a limit of zero, which is how reuse is turned
+    off, and None rather than an exception for anything that goes wrong.
+    """
+    if not organisation_id or max_age_days <= 0:
+        return None
+    try:
+        with db.connection() as conn:
+            now = db.now()
+            row = db.one(
+                conn,
+                _SELECT_PAYLOAD,
+                {
+                    "org": organisation_id,
+                    "kind": kind,
+                    "key": key,
+                    "since": now - dt.timedelta(days=max_age_days),
+                },
+            )
+            if row is None or not isinstance(row["payload"], dict):
+                return None
+            try:
+                db.execute(
+                    conn,
+                    _TOUCH_ONE,
+                    {"org": organisation_id, "kind": kind, "key": key, "now": now},
+                )
+            except Exception as exc:  # noqa: BLE001 — the answer is already read
+                logs.warn(log, "cache hit not counted", kind=kind, error=str(exc)[:200])
+            created = row["createdAt"]
+            # The column has no zone; every writer stores UTC.
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=dt.UTC)
+            return Stored(
+                payload=row["payload"],
+                model=row["model"],
+                created_at=created,
+                hits=int(row["hits"]) + 1,
+            )
+    except Exception as exc:  # noqa: BLE001 — a cold cache is not a failure
+        logs.warn(log, "cache read failed, continuing without it", kind=kind, error=str(exc)[:200])
+        return None
+
+
+_SWEEP = """
+DELETE FROM "ai_cache"
+ WHERE "kind" = %(kind)s
+   AND "createdAt" <= %(cutoff)s
+"""
+
+
+def sweep(kind: str, *, max_age_days: int) -> int:
+    """Delete stored answers of this kind that are too old to be reused.
+
+    `get_payload` already refuses them, but a refused row still holds what the
+    customer's design said — quotes and all — for as long as nobody asks about
+    that design again, which may be never. Expiry has to mean deletion, not just
+    being ignored. The cutoff is the exact complement of the read: a row is either
+    young enough to be served or old enough to be deleted, never both, never
+    neither.
+
+    Every organisation at once. Returns how many were deleted; 0 for a limit of
+    0 — reuse switched off writes nothing new, and deleting everything on a
+    setting meant to pause reuse would surprise — and 0 rather than an exception
+    when the delete fails, since the next sweep will simply try again.
+    """
+    if max_age_days <= 0:
+        return 0
+    try:
+        with db.connection() as conn:
+            return db.execute(
+                conn,
+                _SWEEP,
+                {"kind": kind, "cutoff": db.now() - dt.timedelta(days=max_age_days)},
+            )
+    except Exception as exc:  # noqa: BLE001 — see the module docstring
+        logs.warn(log, "cache sweep failed, will retry", kind=kind, error=str(exc)[:200])
+        return 0
+
+
+def put_payload(
+    organisation_id: str | None,
+    kind: str,
+    key: str,
+    *,
+    model: str,
+    payload: dict,
+    cost_tokens: int,
+    created_at: dt.datetime | None = None,
+) -> None:
+    """Store an answer we have just paid for, replacing any older one.
+
+    `created_at` lets the caller store the same instant it reports, so an
+    answer read back later carries exactly the time it was first given.
+    """
+    if not organisation_id:
+        return
+    now = created_at or db.now()
+    try:
+        with db.connection() as conn:
+            db.execute(
+                conn,
+                _UPSERT_PAYLOAD,
+                {
+                    "id": db.new_id(),
+                    "org": organisation_id,
+                    "kind": kind,
+                    "key": key,
+                    "model": model,
+                    "payload": Jsonb(payload),
+                    "cost": max(0, int(cost_tokens)),
+                    "now": now,
+                },
+            )
+    except Exception as exc:  # noqa: BLE001 — see the module docstring
+        logs.warn(log, "cache write failed, continuing", kind=kind, error=str(exc)[:200])

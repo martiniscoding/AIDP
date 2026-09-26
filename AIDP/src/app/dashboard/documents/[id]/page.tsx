@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import { AlertTriangle, ArrowLeft, ImageIcon, Info, Table2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, ScrollText } from "lucide-react";
 import { auth } from "@/lib/auth";
-import { cn } from "@/lib/cn";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
 import { formatDuration } from "@/lib/ingest/pipeline";
+import { readCoverage } from "@/lib/ingest/coverage";
+import { readAdvice } from "@/lib/ingest/advice";
+import { readLifecycle } from "@/lib/ingest/lifecycle";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
@@ -13,13 +15,11 @@ import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
+import { currentUser } from "@/lib/access/gate";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Comparison } from "./Comparison";
 import { compareModes } from "@/lib/ingest/comparison";
-import { Figures, type FigureView } from "./Figures";
 import { Understanding } from "./Understanding";
-import { SetAside } from "./SetAside";
-import { setAside } from "@/lib/ingest/rules";
 import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
 import { PipelineStatus } from "../PipelineStatus";
@@ -58,36 +58,22 @@ export default async function DocumentPage({
   const mayChange =
     document.role === "assessed" || canManageStandards(membership.role);
 
-  const clauses = document.sections.reduce((n, s) => n + s.clauses.length, 0);
-  const setAsideView =
-    document.role === "reference" ? await setAside(session.user.id, document.id) : null;
-  const tables = document.sections.reduce((n, s) => n + s.tables.length, 0);
-  const figureViews: FigureView[] = document.sections
-    .flatMap((s) =>
-      s.figures.map((f) => ({
-        id: f.id,
-        page: f.page,
-        caption: f.caption,
-        description: f.description,
-        correctedDescription: f.correctedDescription,
-        reviewState: f.reviewState,
-        complexity: f.complexity,
-        headingPath: s.headingPath,
-      })),
-    )
-    .sort(
-      (a, b) =>
-        Number(a.reviewState !== "pending") - Number(b.reviewState !== "pending") ||
-        b.complexity - a.complexity,
-    );
-  const high = document.issues.filter((i) => i.severity === "high");
-  const other = document.issues.filter((i) => i.severity !== "high");
+  // What the parse made of the document — its sections, tables, figures and the
+  // notes the pipeline raised — is a page of its own; see ./parsed. The count of
+  // things needing a look is worth carrying here, because a reader with no
+  // reason to open that page still has to know there is one.
+  const toReview = document.issues.filter((i) => i.severity === "high").length;
 
   // Only a submitted design gets assessed; a reference standard is what it is
   // assessed against.
   const assessed = document.role === "assessed";
   const run = assessed ? await latestRun(session.user.id, document.id) : null;
-  const findings = run ? await listFindings(session.user.id, run.id) : [];
+  // A clause the design says nothing about is no longer reported. The report's
+  // "Absent" section is the reverse question — the parts of the design no clause
+  // governs (run.coverage) — so these stay on record and out of the report.
+  const findings = run
+    ? (await listFindings(session.user.id, run.id)).filter((f) => f.verdict !== "absent")
+    : [];
   const counts: VerdictCounts = run ? await verdictCounts(run.id) : emptyCounts();
 
   const runView: RunView = run
@@ -103,11 +89,22 @@ export default async function DocumentPage({
         mode: run.mode,
         note: run.note,
         orphaned: run.orphaned,
+        job: run.job,
+        coverage: readCoverage(run.coverage),
+        advice: readAdvice(run.advice),
+        lifecycle: readLifecycle(run.lifecycle),
       }
     : null;
 
-  // Search and whole-document verdicts side by side, once both have run.
-  const comparison = assessed ? await compareModes(session.user.id, document.id) : null;
+  // Search and whole-document verdicts side by side. A design is assessed one
+  // way now — searched, with anything that looks absent re-read against the whole
+  // document — so this is a diagnostic for whoever tunes the system, kept for the
+  // runs that were made both ways, and shown to the operator alone.
+  const operator = await currentUser();
+  const comparison =
+    assessed && operator?.isPlatformAdmin
+      ? await compareModes(session.user.id, document.id)
+      : null;
 
   // Which of these reviews were already kept as decisions, so the report can
   // say so rather than inviting the same ruling to be recorded twice.
@@ -127,9 +124,7 @@ export default async function DocumentPage({
         }))
       : [];
   const unreviewed = findings.filter((f) => f.reviewerState === "pending").length;
-  const openFindings = findings.filter(
-    (f) => f.verdict === "contradicts" || f.verdict === "absent",
-  ).length;
+  const openFindings = findings.filter((f) => f.verdict === "contradicts").length;
   const promoted = await promotedFrom(
     document.organisationId,
     findings.map((f) => f.id),
@@ -158,7 +153,9 @@ export default async function DocumentPage({
           !isTerminal(document.status) ||
           // A ready document can be working again: a corrected figure re-embeds.
           (document.pipeline.state !== "ready" && document.pipeline.state !== "failed") ||
-          (!run?.orphaned && (run?.state === "queued" || run?.state === "running"))
+          (!run?.orphaned && (run?.state === "queued" || run?.state === "running")) ||
+          // A new set of suggestions asked for on a finished report.
+          runView?.advice?.refreshing === true
         }
       />
 
@@ -192,9 +189,30 @@ export default async function DocumentPage({
           </p>
         </div>
 
-        {mayChange && (
-          <DocumentActions documentId={document.id} title={document.title} redirectAfterDelete />
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* A new tab, not this one: it is looked at beside a finding, to see
+              what the finding was drawn from, and coming back to the report
+              should not mean loading it again. */}
+          <Link
+            href={`/dashboard/documents/${document.id}/parsed`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+          >
+            <ScrollText size={13} aria-hidden="true" />
+            Parsed content
+            {toReview > 0 && (
+              <span className="rounded-full border border-warn-line bg-warn-tint px-1.5 text-[11px] text-warn">
+                {toReview}
+              </span>
+            )}
+            <ExternalLink size={11} aria-hidden="true" className="text-ink/50" />
+          </Link>
+
+          {mayChange && (
+            <DocumentActions documentId={document.id} title={document.title} redirectAfterDelete />
+          )}
+        </div>
       </header>
 
       {/* Until the document is in, where it has got to is the whole story. */}
@@ -217,13 +235,6 @@ export default async function DocumentPage({
         editable={mayChange}
         assessed={assessed}
       />
-
-      <dl className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Sections" value={document.sections.length} />
-        <Stat label="Clauses" value={clauses} />
-        <Stat label="Tables" value={tables} />
-        <Stat label="Chunks" value={document._count.chunks} />
-      </dl>
 
       {assessed && (
         <Assessment
@@ -248,165 +259,6 @@ export default async function DocumentPage({
           open={openFindings}
         />
       )}
-
-      {/*
-        Issues come before content on purpose. An empty section or a table that
-        extracted at low confidence is the single most useful thing this page
-        can tell a reviewer, and burying it under an outline is how a document
-        with a hole in it gets treated as complete.
-      */}
-      {document.issues.length > 0 && (
-        <section className="mb-9">
-          <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
-            Review
-          </h2>
-          <ul className="space-y-2">
-            {[...high, ...other].map((issue) => (
-              <li
-                key={issue.id}
-                className={cn(
-                  "flex gap-3 rounded-xl border px-4 py-3",
-                  issue.severity === "high"
-                    ? "border-warn-line bg-warn-tint"
-                    : "border-line bg-card",
-                )}
-              >
-                <span
-                  className={cn(
-                    "mt-0.5 shrink-0",
-                    issue.severity === "high" ? "text-warn" : "text-ink/62",
-                  )}
-                >
-                  {issue.severity === "high" ? <AlertTriangle size={15} /> : <Info size={15} />}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13.5px] leading-relaxed text-ink/84">
-                    {issue.detail}
-                  </span>
-                  <span className="mt-0.5 block text-[11.5px] text-ink/62">
-                    {issue.kind.replace(/_/g, " ")}
-                    {issue.page != null && ` · page ${issue.page}`}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* After the review notes, which point into it, and before the outline:
-          a rule wrongly set aside is invisible everywhere else on this page. */}
-      {setAsideView && <SetAside view={setAsideView} editable={mayChange} />}
-
-      <Figures figures={figureViews} />
-
-      <section>
-        <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
-          Structure
-        </h2>
-
-        {document.sections.length === 0 ? (
-          <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
-            {isTerminal(document.status)
-              ? "No sections were detected in this document."
-              : "Still reading the document…"}
-          </p>
-        ) : (
-          /*
-            A tree, not a stack of cards. Thirty sections rendered as identical
-            full-width bars gives no sense of depth and no way to skim — the
-            hierarchy is the most useful thing this outline carries, so it is
-            drawn: parents sit at the margin with weight, children hang off a
-            rule, and only the counts that exist are shown.
-          */
-          <ol className="border-t border-line">
-            {document.sections.map((section) => {
-              const child = section.depth > 1;
-              return (
-                <li key={section.id}>
-                  <div
-                    style={{ paddingLeft: `${Math.min(section.depth - 1, 3) * 22}px` }}
-                    className={cn(
-                      "border-b border-line-soft",
-                      section.isEmpty && "bg-warn-tint",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "flex items-baseline gap-3 py-2",
-                        child && "border-l border-line pl-3",
-                      )}
-                    >
-                      {section.numberText && (
-                        <span
-                          className={cn(
-                            "shrink-0 font-mono text-[11px] tabular-nums",
-                            child ? "text-ink/58" : "text-ink/64",
-                          )}
-                        >
-                          {section.numberText}
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "min-w-0 flex-1 truncate",
-                          child
-                            ? "text-[13px] text-ink/74"
-                            : "text-[13.5px] font-medium text-ink/92",
-                        )}
-                      >
-                        {section.title}
-                      </span>
-
-                      <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-ink/62">
-                        {section.clauses.length > 0 && (
-                          <span className="text-ink/66">
-                            {section.clauses.length}{" "}
-                            {section.clauses.length === 1 ? "clause" : "clauses"}
-                          </span>
-                        )}
-                        {section.tables.length > 0 && (
-                          <span className="inline-flex items-center gap-1">
-                            <Table2 size={11} />
-                            {section.tables.length}
-                          </span>
-                        )}
-                        {section.figures.length > 0 && (
-                          <span className="inline-flex items-center gap-1">
-                            <ImageIcon size={11} />
-                            {section.figures.length}
-                          </span>
-                        )}
-                        {section.isEmpty && (
-                          <span className="text-warn">empty in source</span>
-                        )}
-                        {section.pageStart != null && (
-                          <span className="w-7 text-right tabular-nums text-ink/62">
-                            p{section.pageStart}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </section>
-
-
     </>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-line bg-card px-4 py-3">
-      <dt className="text-[11.5px] uppercase tracking-[0.1em] text-ink/62">{label}</dt>
-      <dd className="mt-1 font-display text-[22px] font-semibold tracking-[-0.02em] text-ink">
-        {value}
-      </dd>
-    </div>
   );
 }

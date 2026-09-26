@@ -21,11 +21,25 @@ gap into production.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, replace
 
 from psycopg.types.json import Jsonb
 
-from .. import db, decisions, logs, queue, retrieval, usage, whole_document
+from .. import (
+    advice,
+    coverage,
+    db,
+    decisions,
+    lifecycle,
+    logs,
+    progress,
+    queue,
+    retrieval,
+    usage,
+    whole_document,
+)
 from ..ai import llm
 from ..config import get_config
 from ..queue import Job
@@ -56,10 +70,139 @@ WEAK_RETRIEVAL = 0.018
 # An "absent" this uncertain is a question, not an answer.
 MIN_ABSENT_CONFIDENCE = 0.55
 
+# How sure a "covered" resting only on diagram descriptions has to be to stand.
+# Below it the figure is put in front of a reviewer. Confidence alone is a weak
+# signal — a model reports it about itself — so it is one of two conditions, not
+# the whole test: see `_figure_corroborates`.
+FIGURE_COVERED_CONFIDENCE = 0.80
+
+# How many words of the clause a diagram has to actually use before its
+# description counts as answering that clause rather than merely being nearby.
+FIGURE_KEYWORD_HITS = 2
+
+# How many separate diagrams saying the same thing stand in for those words. Two
+# figures independently describing the arrangement is corroboration of a
+# different kind, and it is what a reviewer would accept.
+FIGURE_CORROBORATING_COUNT = 2
+
+# The shortest word that can carry subject matter. Below this they are almost
+# all function words, and "of" appearing in a caption proves nothing.
+KEYWORD_MIN_CHARS = 4
+
+# Four-letter-plus words common enough in standards prose to match any diagram.
+# Matching one of these is not evidence a figure is about the clause.
+#
+# The second and third groups were measured, not guessed. Against the sample
+# corpus one ordinary context diagram — "governed data flow through the
+# integration platform" — corroborated 44 of 54 clauses, including the
+# encryption clause it says nothing about, on words like "data", "through" and
+# "rather". Those words are what architecture prose is made of; they appear in
+# every clause and every diagram, so matching them measures nothing. Removing
+# them takes that 44 down to 7 while a diagram genuinely about a clause still
+# matches. If this list is trimmed, re-run the sweep before trusting it.
+_STOPWORDS = frozenset(
+    """
+    that this with from they them have been will must should shall each other than
+    when where which what while whose into onto upon over under about above below
+    such same both more most some many much very also only just then than there
+    these those their your ours theirn used using uses make makes made take taken
+    does done being were was are for the and but not any all can may via per
+    system systems design designs document documents solution solutions service
+    services provide provides provided ensure ensures ensured include includes
+    including requirement requirements standard standards clause clauses section
+    sections shall_not appropriate relevant necessary applicable
+
+    data through rather directly between flow flows across within around
+    context enterprise platform platforms component components interface
+    interfaces process processes manage managed management support supported
+    operate operated record records control controls access user users
+    application applications information business technical
+
+    related associated specific general various different additional further
+    following above below other others where whether during before after
+    because however therefore given based upon able need needs needed
+    required requires
+    """.split()
+)
+
+
+def _keywords(text: str) -> set[str]:
+    """The words of a clause that could identify a diagram as being about it."""
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(word) >= KEYWORD_MIN_CHARS and word not in _STOPWORDS
+    }
+
+
+def _figure_corroborates(
+    clause_text: str, figure_text: str, figure_count: int
+) -> bool:
+    """Whether diagrams alone are enough to say a clause is covered.
+
+    Confidence says how sure the model is; this says whether the diagram is
+    even on the subject. A description that shares no substantive word with the
+    clause is a picture of something else, and a confident "covered" on top of
+    it is the failure the figure guard exists to catch — so either the diagram
+    uses the clause's own words, or two separate diagrams say it.
+    """
+    if figure_count >= FIGURE_CORROBORATING_COUNT:
+        return True
+    shared = _keywords(clause_text) & _keywords(figure_text)
+    return len(shared) >= FIGURE_KEYWORD_HITS
+
 # How many passages the judge sees per clause. Wide enough that a requirement
 # split across two sections is still visible; narrow enough that the model is
 # not asked to read the whole document for every clause.
 CANDIDATES = 8
+
+# How many absent clauses one confirmation call carries. The document is sent
+# once however many there are; what grows is the reply, and a reply cut off at
+# the output limit would lose the clauses at the end of the batch.
+CONFIRM_BATCH = 25
+
+# An absent at or above this needs no second opinion: the model was sure, and
+# `_guard` has already refused everything below its own floor. Between the two
+# sits the band the re-read exists for, and those are the ones marked unchecked
+# when it cannot run.
+CONFIRM_REQUIRED_CONFIDENCE = 0.85
+
+# What such a finding says instead. Short, because `_demoted` prepends it to the
+# model's own sentence and the pair has to stay inside one row of the report.
+UNCONFIRMED_ABSENT = "Absent confirmation unavailable; verify manually."
+
+# The confidence recorded for a verdict the re-read produced. Deliberately not
+# the model's own: this is a second opinion on a clause the search had already
+# given up on, and it carries a checked quote rather than certainty.
+CONFIRM_CONFIDENCE = 0.7
+
+# The longest rationale kept. A finding's reason is shown in the collapsed row,
+# before anything is expanded, and a guard demotion prepends its own sentence to
+# it — so a model that writes four sentences pushed the clause title off the row
+# and buried the reason the verdict changed.
+MAX_RATIONALE = 280
+
+# A guard's own sentence, which is prepended to the model's. Kept short for the
+# same reason: the two together have to stay readable in one row.
+MAX_GUARD_REASON = 200
+
+
+def _shorten(text: str, limit: int) -> str:
+    """One or two whole sentences, within `limit` characters.
+
+    Clipped at a sentence end where there is one inside the limit, so a
+    rationale reads as a finished thought rather than a severed clause.
+    """
+    collapsed = " ".join(str(text or "").split())
+    if len(collapsed) <= limit:
+        return collapsed
+    window = collapsed[:limit]
+    cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if cut >= limit // 3:
+        return window[: cut + 1]
+    if window.endswith("."):
+        return window
+    return window[: limit - 1].rstrip() + "…"
 
 
 def handle(job: Job, heartbeat) -> None:
@@ -72,6 +215,16 @@ def handle(job: Job, heartbeat) -> None:
             "no model API key configured — assessment needs one to reach a verdict"
         )
 
+    # "Fresh suggestions" on a finished report: the last step again, and nothing
+    # else. The verdicts stand and the run keeps its state; see `_suggest_again`.
+    if job.payload.get("adviceOnly"):
+        _suggest_again(job, run_id, heartbeat)
+        return
+
+    # The run row only turns "running" once everything below is ready, which can
+    # take a while on a large design; these steps are what the page shows
+    # meanwhile. See progress.py.
+    progress.step("Loading the standards and the design")
     with db.connection() as conn:
         run = db.one(conn, 'SELECT * FROM "assessment_run" WHERE "id" = %s', (run_id,))
         if run is None:
@@ -91,6 +244,14 @@ def handle(job: Job, heartbeat) -> None:
             )
         }
 
+    # Stopped, or failed elsewhere, before a worker reached it. Its job is closed
+    # rather than retried: there is nothing left to advance.
+    if run["state"] not in ("queued", "running"):
+        logs.info(log, "run is not live, nothing to do", runId=run_id, state=run["state"])
+        with db.transaction() as conn:
+            queue.complete(conn, job, chain=False)
+        return
+
     if not clauses:
         _fail(run_id, "The framework contains no clauses. Ingest a reference document first.")
         raise RuntimeError("framework has no clauses")
@@ -98,10 +259,12 @@ def handle(job: Job, heartbeat) -> None:
     # Before any retrieval. A document embedded under an earlier embedding model
     # has no vectors that search can see, and a clause judged on an empty
     # search reads as absent. See `embed.embed_missing`.
+    progress.step("Checking the search index")
     healed = embed_stage.embed_missing(run["documentId"], heartbeat)
     if healed:
         logs.info(log, "embedded missing chunks before assessing", runId=run_id, chunks=healed)
 
+    progress.step("Preparing the assessment")
     mode, note, whole = _resolve_mode(run)
 
     pending = [c for c in clauses if c["id"] not in done]
@@ -132,7 +295,13 @@ def handle(job: Job, heartbeat) -> None:
     else:
         logs.warn(log, "no submission summary — verdicts reached without document context")
 
+    step_label = (
+        "Assessing clauses, reading the whole document"
+        if whole is not None
+        else "Assessing clauses by search"
+    )
     for index, clause in enumerate(pending, start=1):
+        progress.step(step_label, done=len(done) + index - 1, total=len(clauses))
         if whole is not None:
             _assess_document_one(run, clause, whole, document_context)
         else:
@@ -144,7 +313,48 @@ def handle(job: Job, heartbeat) -> None:
         # which is what a progress bar exists to rule out. The cost is one small
         # UPDATE per clause against a row already in cache, spaced fifteen
         # seconds apart; the model call beside it dwarfs it.
-        _progress(run_id, len(done) + index)
+        if _progress(run_id, len(done) + index) == 0:
+            logs.info(
+                log,
+                "run is no longer running, abandoning it",
+                runId=run_id,
+                clausesDone=len(done) + index,
+            )
+            with db.transaction() as conn:
+                queue.complete(conn, job, chain=False)
+            return
+
+    # Search shows the judge eight passages, so "absent" is the one verdict it
+    # cannot really reach: a claim about everywhere it did not look. Every clause
+    # that came back absent is read again against the whole document — one call
+    # for the lot, not one per clause — and a verdict changes only on a quote
+    # found in the document word for word. A whole-document run has already read
+    # everything, so this is for search runs alone. Never fails the run.
+    if whole is None:
+        progress.step("Re-reading what looked absent")
+        heartbeat()
+        _confirm_absents(run, clauses)
+
+    # The reverse question: what the design does that no clause governs, and the
+    # standards that would. After the clauses, so a passage a clause has already
+    # judged is never reported as ungoverned. Never fails the run; see coverage.py.
+    progress.step("Finding parts of the design no standard covers")
+    heartbeat()
+    coverage.record(run, clauses)
+
+    # What an experienced reviewer would still ask of the design, beyond the
+    # standards. Last, and in its own call, so it can draw on every finding above
+    # and can never soften one. Never fails the run; see advice.py.
+    progress.step("Suggesting improvements to the design")
+    heartbeat()
+    advice.record(run, fresh=bool(job.payload.get("freshAdvice")))
+
+    # Whether the products the design builds on are still supported, from public
+    # lifecycle data — facts beside the findings, never a verdict. Only product
+    # ids are looked up. Never fails the run; see lifecycle.py.
+    progress.step("Checking the technologies' support dates")
+    heartbeat()
+    lifecycle.record(run)
 
     # "Compare both": this run is done, and the other mode's run is opened in
     # the same transaction and carried on by this same job. See
@@ -159,6 +369,36 @@ def handle(job: Job, heartbeat) -> None:
         return
 
     _complete(job, run_id)
+
+
+def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
+    """Work out a finished run's suggested improvements again, and nothing else.
+
+    Queued from the report by a reviewer who wants a new set rather than the
+    one reused for an unchanged design. Only the advice column is written: the
+    findings, the coverage and the run's state are the assessment's, and asking
+    for new advice is not re-assessing. `freshAdvice` on the payload is what
+    skips the stored reply; without it this would hand back the same set.
+    """
+    progress.step("Suggesting improvements to the design")
+    with db.connection() as conn:
+        run = db.one(conn, 'SELECT * FROM "assessment_run" WHERE "id" = %s', (run_id,))
+    if run is None:
+        raise RuntimeError(f"assessment run {run_id} no longer exists")
+
+    heartbeat()
+    fresh = bool(job.payload.get("freshAdvice"))
+    result = advice.record(run, fresh=fresh)
+    with db.transaction() as conn:
+        queue.complete(conn, job)
+    logs.info(
+        log,
+        "suggestions worked out again",
+        runId=run_id,
+        fresh=fresh,
+        state=result.get("state"),
+        suggestions=len(result.get("suggestions") or []),
+    )
 
 
 def _framework_clauses(conn, framework_id: str) -> list[dict]:
@@ -328,11 +568,16 @@ def _judge_by_search(
 
     applied, fabricated = _applied(precedents, claimed)
 
+    cited_figures = set(cited) & generated
     verdict, rationale = _guard(
-        verdict, confidence, evidence, best, rationale, cited_generated=set(cited) & generated,
+        verdict, confidence, evidence, best, rationale, cited_generated=cited_figures,
         cited_total=len([c for c in cited if c in by_id]),
         fabricated=fabricated,
         conflicted=decisions.conflicting(precedents),
+        clause_text=_render_clause(clause),
+        figure_text=" ".join(
+            c.excerpt for cid in cited_figures if (c := by_id.get(cid)) is not None
+        ),
     )
     return _Judged(verdict, confidence, rationale, evidence, applied, best)
 
@@ -433,6 +678,7 @@ def _assess_document_one(
         unverified=unverified,
         fabricated=fabricated,
         conflicted=decisions.conflicting(precedents),
+        clause_text=_render_clause(clause),
     )
 
     score = 0.0
@@ -466,6 +712,207 @@ def _assess_document_one(
         retrieval_score=score,
         applied=applied,
     )
+
+
+def _confirm_absents(run: dict, clauses: list[dict]) -> None:
+    """Re-read the whole document for every clause the search found nothing for.
+
+    Never raises: a run's verdicts have to reach the report even when the re-read
+    cannot run. But they do not reach it unchanged. Turning a wrong "absent" into
+    the verdict the document supports is the most expensive mistake this stage can
+    fix — it is what stops somebody being sent to build what already exists — so
+    when the re-read fails, every absent that was relying on it is marked as
+    unchecked rather than presented as settled.
+
+    Only the ones relying on it. An absent the model was near-certain of stands on
+    its own; `_guard` has already refused the ones below its own floor. What is
+    left in between is exactly what the second opinion existed to catch.
+    """
+    try:
+        _confirm(run, clauses)
+    except Exception as exc:  # noqa: BLE001 — the clause verdicts stand without it
+        logs.warn(
+            log, "absent clauses could not be re-read", runId=run["id"], error=str(exc)[:300]
+        )
+        _demote_unconfirmed(run, clauses, str(exc))
+
+
+def _demote_unconfirmed(run: dict, clauses: list[dict], why: str) -> int:
+    """Mark absents that the failed re-read would have checked as needing a person.
+
+    Silence here was the bug: a confirmation pass that never ran left every
+    "absent" looking exactly like one the whole document had confirmed, and the
+    report has no other way to tell them apart.
+    """
+    by_id = {clause["id"]: clause for clause in clauses}
+    try:
+        with db.connection() as conn:
+            rows = db.query(
+                conn,
+                'SELECT "clauseId", "confidence", "rationale" FROM "finding" '
+                'WHERE "runId" = %s AND "verdict" = %s AND "confidence" < %s',
+                (run["id"], "absent", CONFIRM_REQUIRED_CONFIDENCE),
+            )
+    except Exception as exc:  # noqa: BLE001 — nothing more can be done for this run
+        logs.warn(
+            log, "unconfirmed absents could not be marked", runId=run["id"], error=str(exc)[:300]
+        )
+        return 0
+
+    demoted = 0
+    for row in rows:
+        clause = by_id.get(row["clauseId"])
+        if clause is None:
+            continue
+        verdict, rationale = _demoted(UNCONFIRMED_ABSENT, str(row.get("rationale") or ""))
+        try:
+            _write(
+                run["id"],
+                clause,
+                verdict=verdict,
+                confidence=float(row.get("confidence") or 0.0),
+                rationale=rationale,
+                evidence=[],
+                retrieval_score=0.0,
+                applied=[],
+            )
+        except Exception as exc:  # noqa: BLE001 — one clause must not sink the rest
+            logs.warn(
+                log, "could not mark an absent unconfirmed", clauseId=clause["id"],
+                error=str(exc)[:200],
+            )
+            continue
+        demoted += 1
+
+    logs.warn(
+        log,
+        "absents left unchecked by a failed re-read",
+        runId=run["id"],
+        demoted=demoted,
+        of=len(rows),
+        error=why[:200],
+    )
+    return demoted
+
+
+def _confirm(run: dict, clauses: list[dict]) -> None:
+    with db.connection() as conn:
+        absent_ids = db.query(
+            conn,
+            'SELECT "clauseId" FROM "finding" WHERE "runId" = %s AND "verdict" = %s',
+            (run["id"], "absent"),
+        )
+        if not absent_ids:
+            return
+        row = db.one(
+            conn, 'SELECT "title" FROM "document" WHERE "id" = %s', (run["documentId"],)
+        )
+        whole = whole_document.load(conn, run["documentId"], (row or {}).get("title") or "")
+
+    # Both of these leave the search's verdicts exactly as they are, which is the
+    # behaviour this stage had before the pass existed.
+    if whole is None:
+        logs.info(
+            log,
+            "no stored pages: absent verdicts stand as the search left them",
+            runId=run["id"],
+        )
+        return
+    limit = get_config().whole_document_max_tokens
+    if whole.tokens > limit:
+        logs.info(
+            log,
+            "document too large to re-read for absent clauses",
+            runId=run["id"],
+            tokens=whole.tokens,
+            limit=limit,
+        )
+        return
+
+    by_id = {clause["id"]: clause for clause in clauses}
+    absent = [by_id[row["clauseId"]] for row in absent_ids if row["clauseId"] in by_id]
+    changed = 0
+    for start in range(0, len(absent), CONFIRM_BATCH):
+        batch = absent[start : start + CONFIRM_BATCH]
+        raw = llm.confirm_absent(document=whole.text, clauses=_render_absent(batch))
+        changed += _adopt_confirmations(run, batch, raw, whole)
+
+    logs.info(
+        log,
+        "absent clauses re-read against the whole document",
+        runId=run["id"],
+        clauses=len(absent),
+        changed=changed,
+    )
+
+
+def _render_absent(clauses: list[dict]) -> str:
+    """The batch, numbered. The reply answers by number, never in the clause's words."""
+    return "\n\n".join(
+        f"[{index}] {clause['documentTitle']} — {clause['headingPath']}\n{_render_clause(clause)}"
+        for index, clause in enumerate(clauses, start=1)
+    )
+
+
+def _adopt_confirmations(
+    run: dict, batch: list[dict], raw: dict, whole: whole_document.WholeDocument
+) -> int:
+    """Rewrite the findings the re-read overturned, and only those.
+
+    A verdict moves off "absent" on one condition: the reply quotes the document,
+    and the quote is in the document word for word. Anything else — a clause
+    number that is not in this batch, a verdict that is not one of ours, a quote
+    nowhere in the text — leaves the finding as the search left it.
+    """
+    items = raw.get("clauses") if isinstance(raw.get("clauses"), list) else []
+    changed = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        number = _page_number(item.get("clause"))
+        if number is None or not 1 <= number <= len(batch):
+            continue
+        verdict = str(item.get("verdict", "")).strip().lower()
+        if verdict == "absent" or verdict not in VERDICTS:
+            continue
+
+        quote = " ".join(str(item.get("quote") or "").split())
+        check = whole.verify(quote, _page_number(item.get("page")))
+        if not check.verified:
+            logs.warn(
+                log,
+                "absent stands: the quoted words are not in the document",
+                reason=check.reason,
+                quote=quote[:300],
+            )
+            continue
+
+        clause = batch[number - 1]
+        rationale = " ".join(str(item.get("rationale") or "").split())[:900]
+        _write(
+            run["id"],
+            clause,
+            verdict=verdict,
+            confidence=CONFIRM_CONFIDENCE,
+            rationale=(
+                "A search of this design found nothing for this clause, so the whole "
+                f"document was read again — and it does address it. {rationale}"
+            ),
+            evidence=[
+                {
+                    "chunkId": f"confirm-{clause['id']}",
+                    "headingPath": "",
+                    "page": check.page,
+                    "excerpt": quote[:1500],
+                    "sourceKind": "quote",
+                    "figureId": None,
+                }
+            ],
+            retrieval_score=0.0,
+            applied=[],
+        )
+        changed += 1
+    return changed
 
 
 def _page_number(value) -> int | None:
@@ -529,8 +976,11 @@ def _checked_quotes(
                     "headingPath": "",
                     "page": found.page,
                     "excerpt": text[:1500],
-                    "sourceKind": "quote",
-                    "figureId": None,
+                    # A quote found only in a diagram description is labelled as
+                    # one, so it renders with the figure beside it and `_guard`
+                    # can refuse to let it carry a verdict alone.
+                    "sourceKind": found.source_kind if found.source_kind == "figure" else "quote",
+                    "figureId": found.figure_id,
                     "claimedPage": page,
                 }
             )
@@ -546,6 +996,7 @@ def _guard_document(
     unverified: list[tuple[str, str]],
     fabricated: list[str],
     conflicted: bool,
+    clause_text: str = "",
 ) -> tuple[str, str]:
     """The same standard of proof as `_guard`, where the proof is a quote.
 
@@ -557,36 +1008,38 @@ def _guard_document(
     if verdict in CITING_VERDICTS and not evidence:
         if unverified:
             quote, reason = unverified[0]
-            return (
-                "needs_review",
-                f"Reported as '{verdict}', but the passage it quoted could not be found in "
-                f"the document ({reason}: “{quote[:140]}”), so the claim could not be "
-                "checked. " + rationale,
+            return _demoted(
+                f"Reported '{verdict}', but its quote is not in the document "
+                f"({reason}: “{quote[:60]}”).",
+                rationale,
             )
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' but quoted nothing from the document, so the claim "
-            "could not be grounded. " + rationale,
-        )
+        return _demoted(f"Reported '{verdict}' but quoted nothing from the document.", rationale)
 
-    # Everything else `_guard` checks applies unchanged. Retrieval strength does
-    # not: nothing was retrieved, so it is passed as strong.
+    # Everything else `_guard` checks applies unchanged, including the two
+    # absent checks. Retrieval strength is the one input that does not exist
+    # here — nothing was retrieved — so it is passed as strong, which stands
+    # down the weak-retrieval check while leaving the confidence floor to do its
+    # work. Passing this whole guard by was how a whole-document run reported a
+    # coin-flip "absent" as settled.
+    figures = [item for item in evidence if item.get("sourceKind") == "figure"]
     verdict, rationale = _guard(
         verdict,
         confidence,
         evidence,
         1.0,
         rationale,
+        cited_generated={item["chunkId"] for item in figures},
+        cited_total=len(evidence),
         fabricated=fabricated,
         conflicted=conflicted,
+        clause_text=clause_text,
+        figure_text=" ".join(str(item.get("excerpt") or "") for item in figures),
     )
 
     if unverified and evidence and verdict != "needs_review":
         count = len(unverified)
-        rationale = (
-            f"{rationale} ({count} further quoted passage{'s' if count != 1 else ''} could "
-            f"not be found in the document and {'were' if count != 1 else 'was'} set aside.)"
-        )
+        note = f"({count} further quote{'s' if count != 1 else ''} not found, set aside.)"
+        rationale = f"{_shorten(rationale, MAX_RATIONALE - len(note) - 1)} {note}".strip()
     return verdict, rationale
 
 
@@ -648,6 +1101,8 @@ def _guard(
     cited_total: int = 0,
     fabricated: list[str] | None = None,
     conflicted: bool = False,
+    clause_text: str = "",
+    figure_text: str = "",
 ) -> tuple[str, str]:
     """Demote verdicts the evidence does not support.
 
@@ -656,64 +1111,74 @@ def _guard(
     the reviewer sees the machine's reasoning rather than an unexplained shrug.
     """
     if verdict in CITING_VERDICTS and not evidence:
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' but cited nothing in the submitted document, "
-            "so the claim could not be grounded. " + rationale,
-        )
+        return _demoted(f"Reported '{verdict}' but cited nothing in the document.", rationale)
 
     # A figure description may corroborate a verdict; it may not be the whole
-    # basis for a confident one. It is generated text, and a wrong reading of a
+    # basis for a shaky one. It is generated text, and a wrong reading of a
     # diagram would otherwise convict a design of something it never said.
+    #
+    # Asymmetric on purpose. "contradicts" is always demoted: accusing a design
+    # of breaching a clause on the strength of a model's reading of a picture is
+    # the more expensive mistake, and a reviewer must look at the figure. A
+    # confident "covered" is not, because designs really do state a component
+    # only in their architecture diagram — an API gateway drawn on page 14 and
+    # named in no paragraph — and demoting every one of those filled the review
+    # queue with clauses the design had plainly answered.
     if (
         verdict in DECISIVE_VERDICTS
         and cited_total > 0
         and cited_generated is not None
         and len(cited_generated) == cited_total
     ):
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' on the strength of a diagram description alone. "
-            "That description is a model's reading of an image, not text from the "
-            "document, so it cannot carry a verdict by itself — check the figure. "
-            + rationale,
+        stands = (
+            verdict == "covered"
+            and confidence >= FIGURE_COVERED_CONFIDENCE
+            and _figure_corroborates(clause_text, figure_text, len(cited_generated))
         )
+        if not stands:
+            return _demoted(
+                f"Reported '{verdict}' on a diagram description alone — check the figure.",
+                rationale,
+            )
 
     # A verdict resting on a decision nobody made is the register's version of
     # citing a passage that is not in the document, and gets the same treatment.
     if fabricated:
-        return (
-            "needs_review",
-            f"Reported as '{verdict}' citing a standing decision that was not on "
-            "record. The verdict rests on a ruling this organisation has not "
-            "made. " + rationale,
+        return _demoted(
+            f"Reported '{verdict}' citing a standing decision that is not on record.",
+            rationale,
         )
 
     # Two rulings pulling opposite ways, and deliberately not resolved by taking
     # the newer one — that would hide a contradiction the customer needs to fix.
     if conflicted and verdict in DECISIVE_VERDICTS:
-        return (
-            "needs_review",
-            "Two standing decisions on this clause disagree — one accepts the "
-            "arrangement and another rejects it. Resolve the register before "
-            "this clause can be settled. " + rationale,
+        return _demoted(
+            "Two standing decisions on this clause disagree; resolve the register.",
+            rationale,
         )
 
     if verdict == "absent" and best_score < WEAK_RETRIEVAL:
-        return (
-            "needs_review",
-            "Nothing relevant was retrieved, which is not the same as the "
-            "requirement being unaddressed — the search may simply have missed "
-            "it. " + rationale,
+        return _demoted(
+            "Nothing relevant was retrieved, so the search may have missed it.", rationale
         )
 
     if verdict == "absent" and confidence < MIN_ABSENT_CONFIDENCE:
-        return (
-            "needs_review",
-            f"Reported as absent with low confidence ({confidence:.0%}). " + rationale,
-        )
+        return _demoted(f"Reported absent with low confidence ({confidence:.0%}).", rationale)
 
     return verdict, rationale
+
+
+def _demoted(reason: str, rationale: str) -> tuple[str, str]:
+    """A demotion to `needs_review`: the guard's sentence, then the model's.
+
+    Both are bounded. The guard's reason is why the verdict changed and is kept
+    whole; the model's is context and is shortened to fit beside it, so the two
+    together stay inside one row of the report.
+    """
+    reason = _shorten(reason, MAX_GUARD_REASON)
+    room = MAX_RATIONALE - len(reason) - 1
+    tail = _shorten(rationale, room) if room >= 40 else ""
+    return "needs_review", f"{reason} {tail}".strip()
 
 
 def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
@@ -726,7 +1191,7 @@ def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
     except (TypeError, ValueError):
         confidence = 0.0
 
-    rationale = " ".join(str(raw.get("rationale", "")).split())[:1200]
+    rationale = _shorten(str(raw.get("rationale", "")), MAX_RATIONALE)
 
     cited = raw.get("evidence") or []
     if isinstance(cited, str):
@@ -850,11 +1315,19 @@ def _start(
         )
 
 
-def _progress(run_id: str, completed: int) -> None:
+def _progress(run_id: str, completed: int) -> int:
+    """Record a clause, and report whether the run is still one to work on.
+
+    0 means the row is no longer running — somebody stopped it (see
+    `cancelAssessment` in the app's actions.ts) or it was failed elsewhere. The
+    caller stops there rather than spending a model call per remaining clause on
+    a report nobody is waiting for.
+    """
     with db.connection() as conn:
-        db.execute(
+        return db.execute(
             conn,
-            'UPDATE "assessment_run" SET "completedClauses" = %s WHERE "id" = %s',
+            'UPDATE "assessment_run" SET "completedClauses" = %s '
+            "WHERE \"id\" = %s AND \"state\" = 'running'",
             (completed, run_id),
         )
 
@@ -886,7 +1359,7 @@ def _complete(job: Job, run_id: str) -> None:
                SET "state" = 'complete',
                    "completedClauses" = "totalClauses",
                    "completedAt" = now()
-             WHERE "id" = %s
+             WHERE "id" = %s AND "state" IN ('queued', 'running')
             """,
             (run_id,),
         )
@@ -903,4 +1376,25 @@ def _complete(job: Job, run_id: str) -> None:
 def mark_failed(run_id: str, reason: str) -> None:
     """Called from the worker loop when the job is dead-lettered."""
     _fail(run_id, reason)
+
+
+def mark_advice_failed(run_id: str) -> None:
+    """A dead-lettered request for fresh suggestions on a finished run.
+
+    `mark_failed` is for an assessment, and would turn a finished run into a
+    failed one over what is only advice. This clears the in-progress mark the
+    report keeps checking on and says the request failed; the suggestions
+    already on the report stay.
+    """
+    with db.connection() as conn:
+        db.execute(
+            conn,
+            """
+            UPDATE "assessment_run"
+               SET "advice" = COALESCE("advice", '{}'::jsonb)
+                              || jsonb_build_object('refreshing', false, 'refreshError', %s::text)
+             WHERE "id" = %s
+            """,
+            ("A new set could not be worked out: the request kept failing.", run_id),
+        )
 

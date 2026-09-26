@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, TriangleAlert, X } from "lucide-react";
+import { Check, Plus, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { uploadFiles } from "@/lib/uploadthing";
 
@@ -212,8 +212,10 @@ export function UploadZone({
           } as React.CSSProperties
         }
         className={cn(
-          "ring-gradient group relative block w-full overflow-hidden rounded-xl",
-          "bg-canvas-sunk px-4 py-7 text-center",
+          // Narrower than the list it follows, and centred: at full width it
+          // read as another row of the page rather than the thing to press.
+          "ring-gradient group relative mx-auto block w-full max-w-xl overflow-hidden rounded-2xl",
+          "bg-canvas-sunk px-4 py-10 text-center",
           "transition-[box-shadow,transform,background-color] duration-300",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           armed
@@ -245,8 +247,22 @@ export function UploadZone({
         <span className="pointer-events-none relative flex flex-col items-center gap-3.5">
           <SheetStack armed={armed} />
 
-          <span className="flex flex-col items-center gap-1">
-            <span className="text-[13.5px] font-medium text-ink/88">
+          {/* The whole panel takes the click; this says so. A drop target alone
+              is discoverable by people who already know they can drop, and by
+              nobody else — so the action is stated as the button it is, and the
+              drop stays the shortcut for those who know it. */}
+          <span className="flex flex-col items-center gap-2.5">
+            <span
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full bg-royal px-5 py-2.5",
+                "text-[14px] font-medium text-white shadow-card",
+                "transition-[transform,box-shadow] duration-300",
+                armed
+                  ? "-translate-y-0.5 shadow-card-hover"
+                  : "group-hover:-translate-y-0.5 group-hover:shadow-card-hover",
+              )}
+            >
+              <Plus size={15} aria-hidden="true" />
               {dragging
                 ? "Drop to upload"
                 : busy
@@ -254,7 +270,9 @@ export function UploadZone({
                   : label}
             </span>
             <span className="text-[11.5px] text-ink/62">
-              {busy ? "Queued in order" : `PDF, PPTX or XLSX · up to ${formatSize(MAX_BYTES)}`}
+              {busy
+                ? "Queued in order"
+                : `or drop them here — PDF, PPTX or XLSX · up to ${formatSize(MAX_BYTES)}`}
             </span>
           </span>
         </span>

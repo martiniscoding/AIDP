@@ -24,6 +24,38 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+# Which key selects which provider, in the order they are tried.
+_PROVIDER_KEYS = (
+    ("gemini", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+    ("openrouter", ("OPENROUTER_API_KEY",)),
+    ("anthropic", ("ANTHROPIC_API_KEY",)),
+)
+
+
+def _provider() -> str:
+    """The provider to use: what LLM_PROVIDER says, else whichever key is set.
+
+    An explicit LLM_PROVIDER always wins, including when its key is missing —
+    a deployment that names a provider and forgets the key wants the error, not
+    a silent switch to another vendor's model and another vendor's bill.
+
+    Without it the old default was "gemini" whatever the environment held, so a
+    worker given only an OpenRouter key reported no model configured and
+    skipped the work that needed one. Every call reads the key belonging to the
+    provider, so the two have to agree; picking the provider from the key that
+    exists is the agreement that needs no second variable.
+    """
+    named = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if named:
+        return named
+    for provider, keys in _PROVIDER_KEYS:
+        if any(os.environ.get(key) for key in keys):
+            return provider
+    # Nothing configured. Keep the historic default so the error a caller sees
+    # is "no API key" rather than "unknown provider ''".
+    return "gemini"
+
+
 @dataclass(frozen=True)
 class Config:
     # Which loop this container runs. One image, four possible roles.
@@ -80,6 +112,28 @@ class Config:
     # the model's context; the ceiling is cost, since every clause of a run
     # sends the whole document (cached after the first).
     whole_document_max_tokens: int = 250_000
+    # How many times the design is read for parts no standard governs. A model
+    # asked once answers a slightly different question each time — on a real
+    # proposal the count moved between 5 and 14 — so it is asked several times
+    # and only what most reads found is reported. 1 turns that off. See
+    # `coverage.agree`.
+    coverage_reads: int = 3
+    # Whether an assessment ends with improvements to the design itself, suggested
+    # by a model after every clause is judged. One whole-document call per run.
+    improvement_suggestions: bool = True
+    # How long a design's suggested improvements are reused, in days, while the
+    # design, the standards, the model and the prompt are all unchanged. Asking
+    # again inside that window gives the same suggestions rather than a new set
+    # from the same inputs. 0 turns the reuse off. See advice.py.
+    advice_cache_days: int = 90
+    # Whether an assessment looks up the support status of the technologies a
+    # design names on endoflife.date. Only public product ids are sent, never
+    # anything from the design — see lifecycle.py. Off for a customer who wants
+    # nothing looked up outside at all.
+    lifecycle_check: bool = True
+    # Support ending within this many days is reported as ending soon.
+    lifecycle_soon_days: int = 365
+    lifecycle_base_url: str = "https://endoflife.date/api"
 
     # OpenRouter: one key for every model call, OpenAI's models behind it.
     openrouter_api_key: str | None = None
@@ -150,7 +204,7 @@ class Config:
             lease_seconds=_int("LEASE_SECONDS", 600),
             poll_min_seconds=float(os.environ.get("POLL_MIN_SECONDS", "1")),
             poll_max_seconds=float(os.environ.get("POLL_MAX_SECONDS", "30")),
-            llm_provider=os.environ.get("LLM_PROVIDER", "gemini"),
+            llm_provider=_provider(),
             gemini_api_key=os.environ.get("GEMINI_API_KEY")
             or os.environ.get("GOOGLE_API_KEY"),
             gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
@@ -161,6 +215,14 @@ class Config:
             not in ("0", "off", "false", "no"),
             rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
             whole_document_max_tokens=max(1_000, _int("WHOLE_DOCUMENT_MAX_TOKENS", 250_000)),
+            coverage_reads=max(1, min(5, _int("COVERAGE_READS", 3))),
+            improvement_suggestions=os.environ.get("IMPROVEMENT_SUGGESTIONS", "on").lower()
+            not in ("0", "off", "false", "no"),
+            advice_cache_days=max(0, _int("ADVICE_CACHE_DAYS", 90)),
+            lifecycle_check=os.environ.get("LIFECYCLE_CHECK", "on").lower()
+            not in ("0", "off", "false", "no"),
+            lifecycle_soon_days=max(0, _int("LIFECYCLE_SOON_DAYS", 365)),
+            lifecycle_base_url=os.environ.get("LIFECYCLE_BASE_URL", "https://endoflife.date/api"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
             openrouter_model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
             openrouter_fast_model=os.environ.get("OPENROUTER_FAST_MODEL", "openai/gpt-4.1-nano"),

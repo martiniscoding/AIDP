@@ -9,6 +9,7 @@ import {
   Loader2,
   Play,
   ShieldAlert,
+  Square,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -23,7 +24,15 @@ import {
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, type AppliedDecision } from "@/lib/ingest/decision-effects";
-import { reviewFinding, startAssessment } from "../actions";
+import type { CoverageView } from "@/lib/ingest/coverage";
+import type { AdviceView } from "@/lib/ingest/advice";
+import type { LifecycleView } from "@/lib/ingest/lifecycle";
+import { SLOW_PICKUP_MS, type JobView } from "@/lib/ingest/pipeline";
+import { cancelAssessment, reviewFinding, startAssessment } from "../actions";
+import { Ticker } from "../Ticker";
+import { CoverageGaps } from "./CoverageGaps";
+import { Improvements } from "./Improvements";
+import { Lifecycle } from "./Lifecycle";
 
 export type FindingView = {
   id: string;
@@ -58,7 +67,22 @@ export type RunView = {
   note: string | null;
   /** Queued or running with no job a worker could take, so it will never move. */
   orphaned: boolean;
+  /** The live run's job: picked up yet, preparing, retrying, or stalled. */
+  job: JobView | null;
+  /** Parts of the design no clause governs, and standards to add. The "Absent" section. */
+  coverage: CoverageView | null;
+  /** Improvements to the design itself, suggested after the assessment. Advice, not a verdict. */
+  advice: AdviceView | null;
+  /** Whether the products the design names are still supported, from endoflife.date. Facts, not a verdict. */
+  lifecycle: LifecycleView | null;
 } | null;
+
+/**
+ * Longer than this and the collapsed row's two-line clamp may be hiding some of
+ * the reason, so the expanded panel repeats it in full. Shorter and the clamp
+ * shows all of it, and repeating it would just be the same sentence twice.
+ */
+const RATIONALE_CLAMP = 160;
 
 const TONE: Record<string, string> = {
   bad: "border-danger-line bg-danger-tint text-danger",
@@ -67,13 +91,141 @@ const TONE: Record<string, string> = {
   good: "border-royal-mid/30 bg-royal/8 text-royal",
 };
 
-/** The quieter buttons beside "Run assessment". */
-const SECONDARY = [
-  "inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/80 transition-colors",
-  "hover:border-ink/30 hover:text-ink",
-  "disabled:cursor-not-allowed disabled:opacity-55",
-  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
-].join(" ");
+/**
+ * Where a live run has got to, told from its job as well as the run.
+ *
+ * The run row only turns "running" once the worker has loaded everything and
+ * reached the first clause, and stays "running" through a retry or a worker
+ * that died — so on its own it cannot tell a run nobody has touched from one a
+ * worker is preparing, one waiting to try again after a provider refused, or one
+ * nobody is working on any more. The job can. The page refreshes every few
+ * seconds, so this moves on its own as the worker does.
+ */
+function RunProgress({ run }: { run: NonNullable<RunView> }) {
+  const job = run.job;
+  const started = run.state === "running";
+  const slow = job?.state === "queued" && (job.sinceMs ?? 0) >= SLOW_PICKUP_MS;
+  const troubled = slow || job?.state === "retrying" || job?.state === "stalled";
+  const clock =
+    job && job.sinceMs !== null && (job.state === "queued" || job.state === "running")
+      ? job.sinceMs
+      : null;
+
+  let headline: string;
+  let detail: React.ReactNode = null;
+  switch (job?.state) {
+    case "queued":
+      headline = slow
+        ? "Still waiting for an analysis worker"
+        : "Queued — waiting for an analysis worker to pick this up";
+      if (slow) {
+        detail = "None has picked it up yet. Every analysis worker may be busy, or none may be running.";
+      }
+      break;
+    case "retrying":
+      headline = "Trying again after an error";
+      detail = (
+        <>
+          Attempt {job.attempt} of {job.maxAttempts} failed
+          {job.problem ? `: ${job.problem.summary}` : "."}{" "}
+          {job.retryInMs ? (
+            <>
+              Next attempt in <Ticker ms={job.retryInMs} direction="down" />.
+            </>
+          ) : (
+            "Next attempt shortly."
+          )}
+        </>
+      );
+      break;
+    case "stalled":
+      headline = "The analysis worker stopped responding";
+      detail =
+        "It goes back in the queue automatically, and carries on from the last clause it finished.";
+      break;
+    case "running":
+      headline = started
+        ? "Assessing clause by clause"
+        : "Picked up by an analysis worker — getting ready";
+      // Before the first clause the step is the only sign of life; after it, the
+      // clause count says more than "Assessing clauses" would.
+      if (!started && job.step) {
+        detail =
+          job.total !== null && job.done !== null
+            ? `${job.step} · ${job.done} of ${job.total}`
+            : job.step;
+      }
+      break;
+    default:
+      headline = started
+        ? "Assessing clause by clause"
+        : "Queued — waiting for an analysis worker to pick this up";
+  }
+
+  return (
+    <div
+      className={cn(
+        "mb-4 rounded-xl border bg-card px-4 py-3",
+        troubled ? "border-warn-line" : "border-line",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-[12.5px]">
+        <span role="status" className={cn("font-medium", troubled ? "text-warn" : "text-ink/80")}>
+          {headline}
+        </span>
+        <span className="text-ink/62 tabular-nums">
+          {started && `${run.completedClauses} / ${run.totalClauses} clauses`}
+          {started && clock !== null && " · "}
+          {clock !== null && <Ticker ms={clock} />}
+        </span>
+      </div>
+      {detail && <p className="mt-1 text-[12px] leading-relaxed text-ink/66">{detail}</p>}
+
+      {/* No bar while nothing has begun: a bar at 0% claims work has started
+          and is going slowly. Moving but uncountable while the worker gets
+          ready; counted once clauses are being judged. */}
+      {started ? (
+        <div
+          role="progressbar"
+          aria-label="Clauses assessed"
+          aria-valuemin={0}
+          aria-valuemax={run.totalClauses}
+          aria-valuenow={run.completedClauses}
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-canvas-sunk"
+        >
+          <div
+            className={cn(
+              "h-full rounded-full transition-[width] duration-700",
+              troubled ? "bg-warn/60" : "bg-royal-mid",
+            )}
+            style={{
+              width: `${Math.max(2, run.totalClauses ? Math.min(100, (run.completedClauses / run.totalClauses) * 100) : 0)}%`,
+            }}
+          />
+        </div>
+      ) : job?.state === "running" ? (
+        <span
+          aria-hidden="true"
+          className="mt-2 block h-1.5 overflow-hidden rounded-full bg-canvas-sunk"
+        >
+          <span className="rail-slide block h-full w-1/4 bg-linear-to-r from-transparent via-royal to-transparent" />
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * "Absent" asks the reverse of every other chip. The others count clauses by
+ * what the design does about them; this counts the parts of the design no clause
+ * governs at all. Clauses the design says nothing about are not listed: the
+ * question a reviewer asked for is what the standards leave uncovered.
+ */
+const ABSENT_META = {
+  label: "Absent",
+  tone: "bad",
+  blurb: "Parts of this design that no clause in your standards covers.",
+} as const;
 
 /**
  * The assessment surface for a submitted design.
@@ -132,9 +284,23 @@ export function Assessment({
   const folded = lens === "attention" ? counts.covered : 0;
 
 
-  const begin = (mode: "retrieval" | "document" | "both") =>
+  // One way to assess a design, so no mode to choose: every clause is judged on
+  // the passages a search finds, and whatever comes back absent is re-read
+  // against the whole document before it is reported. See Workers/aidp/stages.
+  const begin = () =>
     startTransition(async () => {
-      const result = await startAssessment(documentId, mode);
+      const result = await startAssessment(documentId);
+      setMessage(result.message);
+      router.refresh();
+    });
+
+  // Offered whenever a run has not finished. Waiting for a worker that is busy
+  // with somebody else's design can take a while, and the person watching is the
+  // one who knows it is no longer worth waiting for.
+  const stop = () =>
+    startTransition(async () => {
+      if (!run) return;
+      const result = await cancelAssessment(run.id);
       setMessage(result.message);
       router.refresh();
     });
@@ -170,9 +336,9 @@ export function Assessment({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => begin("retrieval")}
+            onClick={() => begin()}
             disabled={pending || inFlight}
-            title="For each clause, the judge sees the passages a search found."
+            title="Every clause is checked against this design, and anything that looks unaddressed is re-read against the whole document."
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors",
               "border-royal/40 bg-royal-tint text-royal-deep hover:bg-royal/15",
@@ -193,26 +359,24 @@ export function Assessment({
                   ? "Re-run assessment"
                   : "Run assessment"}
           </button>
-          {/* The whole-document mode is offered beside search rather than in
-              place of it until the comparison has shown which is right. */}
-          <button
-            type="button"
-            onClick={() => begin("document")}
-            disabled={pending || inFlight}
-            title="The judge reads the whole document and quotes it. Every quote is checked word for word against the document."
-            className={cn(SECONDARY)}
-          >
-            Read whole document
-          </button>
-          <button
-            type="button"
-            onClick={() => begin("both")}
-            disabled={pending || inFlight}
-            title="Assess by search, then by reading the whole document, and compare the verdicts clause by clause."
-            className={cn(SECONDARY)}
-          >
-            Compare both
-          </button>
+
+          {inFlight && (
+            <button
+              type="button"
+              onClick={() => stop()}
+              disabled={pending}
+              title="Stop this assessment. Whatever it has already found is kept, and you can run it again."
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12.5px] transition-opacity",
+                "border-warn-line bg-warn-tint text-warn hover:opacity-85",
+                "disabled:cursor-not-allowed disabled:opacity-55",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+              )}
+            >
+              <Square size={11} aria-hidden="true" />
+              Stop
+            </button>
+          )}
         </div>
       </div>
 
@@ -240,42 +404,16 @@ export function Assessment({
         </p>
       )}
 
-      {inFlight && (
-        <div className="mb-4 rounded-xl border border-line bg-card px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-[12.5px] text-ink/70">
-            <span>
-              {queued
-                ? "Queued — waiting for an analysis worker to pick this up."
-                : "Assessing clause by clause…"}
-            </span>
-            {assessing && (
-              <span>
-                {run.completedClauses} / {run.totalClauses}
-              </span>
-            )}
-          </div>
-          {/* No bar while queued. A bar at 0% claims work has started and is
-              going slowly; the truth is that nothing has begun. */}
-          {assessing && (
-            <div className="h-1 overflow-hidden rounded-full bg-canvas-sunk">
-              <div
-                className="h-full rounded-full bg-royal-mid transition-[width] duration-700"
-                style={{
-                  width: `${run.totalClauses ? (run.completedClauses / run.totalClauses) * 100 : 0}%`,
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
+      {inFlight && run && <RunProgress run={run} />}
 
-      {run && findings.length > 0 && (
+      {run && (findings.length > 0 || run.coverage !== null) && (
         <>
           {/* Coverage across the framework. Also the filter. */}
           <div className="mb-4 flex flex-wrap gap-2">
             {VERDICTS.map((verdict) => {
-              const meta = VERDICT_META[verdict];
-              const count = counts[verdict];
+              const gapsChip = verdict === "absent";
+              const meta = gapsChip ? ABSENT_META : VERDICT_META[verdict];
+              const count = gapsChip ? (run.coverage?.gaps.length ?? 0) : counts[verdict];
               const active = lens === verdict;
               return (
                 <button
@@ -283,7 +421,9 @@ export function Assessment({
                   type="button"
                   title={meta.blurb}
                   onClick={() => setLens(active ? "attention" : verdict)}
-                  disabled={count === 0}
+                  // Always open: with nothing to list it still says why — an
+                  // older run, a check that could not run, or no gaps at all.
+                  disabled={!gapsChip && count === 0}
                   className={cn(
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] transition-opacity",
                     TONE[meta.tone],
@@ -298,6 +438,26 @@ export function Assessment({
               );
             })}
           </div>
+
+          {lens === "absent" ? (
+            <CoverageGaps coverage={run.coverage} frameworkName={run.frameworkName} />
+          ) : (
+          <>
+          {lens === "attention" && (run.coverage?.gaps.length ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => setLens("absent")}
+              className="mb-3 flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border border-danger-line bg-danger-tint px-4 py-2.5 text-left text-[12.5px] text-danger transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+            >
+              <span>
+                {run.coverage?.gaps.length} part{run.coverage?.gaps.length === 1 ? "" : "s"} of
+                this design no standard covers
+                {(run.coverage?.suggestions.length ?? 0) > 0 &&
+                  ` · ${run.coverage?.suggestions.length} standard${run.coverage?.suggestions.length === 1 ? "" : "s"} suggested`}
+              </span>
+              <span className="shrink-0 underline underline-offset-2">View</span>
+            </button>
+          )}
 
           <p className="mb-3 text-[12px] text-ink/62">
             {reviewed} of {findings.length} reviewed
@@ -346,7 +506,7 @@ export function Assessment({
             // broken page rather than as the best possible result.
             <p className="rounded-xl border border-ok-line bg-ok-tint px-4 py-6 text-center text-[13px] text-ok">
               {lens === "attention" && findings.length > 0
-                ? `Nothing to resolve — all ${findings.length} clauses are covered.`
+                ? `Nothing to resolve — every one of the ${findings.length} clause findings is covered.`
                 : "No findings match that filter."}
               {lens === "attention" && findings.length > 0 && (
                 <>
@@ -368,14 +528,21 @@ export function Assessment({
               ))}
             </ul>
           )}
+          </>
+          )}
         </>
       )}
 
-      {run && findings.length === 0 && !inFlight && (
+      {run && findings.length === 0 && !inFlight && run.coverage === null && (
         <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
           No findings recorded. The run may have failed before it reached a clause.
         </p>
       )}
+
+      {/* After the findings, never among them: advice on the design, not a verdict
+          on a clause. Only for a finished run — a live one has nothing to show yet. */}
+      {run && run.state === "complete" && <Lifecycle lifecycle={run.lifecycle} />}
+      {run && run.state === "complete" && <Improvements advice={run.advice} runId={run.id} />}
     </section>
   );
 }
@@ -534,7 +701,7 @@ function FindingRow({ finding }: { finding: FindingView }) {
             <span className="text-[13.5px] text-ink/88">{finding.clauseTitle}</span>
           </span>
           {finding.rationale && (
-            <span className="mt-1 block text-[12.5px] leading-relaxed text-ink/66">
+            <span className="mt-1 line-clamp-2 block text-[12.5px] leading-relaxed text-ink/66">
               {finding.rationale}
             </span>
           )}
@@ -565,6 +732,11 @@ function FindingRow({ finding }: { finding: FindingView }) {
 
       {open && (
         <div className="border-t border-line px-4 py-3.5">
+          {finding.rationale.length > RATIONALE_CLAMP && (
+            <p className="mb-3 text-[13px] leading-relaxed text-ink/78">
+              {finding.rationale}
+            </p>
+          )}
           {finding.clauseStatement && (
             <p className="mb-3 text-[13px] leading-relaxed text-ink/72">
               <span className="text-ink/62">Requires: </span>
@@ -690,7 +862,9 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 {mode === "override" && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="mr-1 text-[11.5px] text-ink/64">Correct verdict:</span>
-                    {VERDICTS.filter((v) => v !== finding.verdict).map((verdict) => (
+                    {/* Not "Absent": that section lists parts of the design, not
+                        clauses, so a clause corrected to it would vanish. */}
+                    {VERDICTS.filter((v) => v !== finding.verdict && v !== "absent").map((verdict) => (
                       <button
                         key={verdict}
                         type="button"

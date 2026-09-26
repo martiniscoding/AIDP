@@ -8,6 +8,7 @@ import { canEditProject, getProject, projectDesigns } from "@/lib/ingest/project
 import { UploadZone } from "../../documents/UploadZone";
 import { PipelineBadge } from "../../documents/PipelineStatus";
 import { PipelineWatcher } from "../../documents/PipelineWatcher";
+import { DesignResult } from "./DesignResult";
 import { ProjectSettings } from "./ProjectSettings";
 
 export async function generateMetadata({
@@ -99,7 +100,7 @@ export default async function ProjectPage({
             Nothing submitted yet. Add a design and assess it against your standards.
           </p>
         ) : (
-          <ul className="mb-4 space-y-2">
+          <ul className="mb-4 space-y-3">
             {designs.map((design) => (
               <li key={design.id}>
                 <Design design={design} />
@@ -129,10 +130,13 @@ function Design({
   const running =
     !latest?.orphaned && (latest?.state === "running" || latest?.state === "queued");
 
+  // The card is an article rather than one link: the result beneath the design
+  // has folds of its own, and interactive content cannot sit inside a link.
   return (
+    <article className="overflow-hidden rounded-xl border border-line bg-card transition-colors hover:border-line-strong">
     <Link
       href={`/dashboard/documents/${design.id}`}
-      className="group block rounded-xl border border-line bg-card p-4 transition-colors hover:border-line-strong"
+      className="group block p-4 transition-colors hover:bg-canvas-sunk/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-royal-mid"
     >
       <div className="flex flex-wrap items-start gap-3">
         <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-canvas-sunk text-ink/58">
@@ -167,7 +171,9 @@ function Design({
               <span className="text-warn">Assessment never started — start it again</span>
             ) : running ? (
               <span className="text-ink/64">
-                Assessing {latest.completedClauses}/{latest.totalClauses}
+                {latest.state === "queued"
+                  ? "Waiting for a worker"
+                  : `Assessing ${latest.completedClauses}/${latest.totalClauses}`}
               </span>
             ) : (
               <>
@@ -195,5 +201,9 @@ function Design({
         </div>
       </div>
     </Link>
+    {design.result && (
+      <DesignResult result={design.result} documentId={design.id} title={design.title} />
+    )}
+    </article>
   );
 }
