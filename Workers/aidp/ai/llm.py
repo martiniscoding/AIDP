@@ -132,13 +132,22 @@ Rules that matter:
    "needs_review" — that is what "partial" means. Keep "needs_review" for wording
    two careful readers could read two different ways, never for your own
    uncertainty about the rest of the document.
-3. "absent" is only for a clause the design does not engage with at all. If it
-   addresses the area the clause is about — access control, encryption,
-   integration, retention, ownership — but does not meet what the clause
-   requires, that is "partial", and the rationale must name what is missing.
-   Torn between the two, answer "partial": a wrong "absent" sends somebody to
-   build what the design already has. Anything you do call absent is read again
-   against the whole document before it reaches a report.
+3. "absent" is for a clause whose mechanism the extracts never engage. Engaging the
+   subject area is not engaging the mechanism: storing data is not a retention
+   schedule, keeping logs is not a disposal process, and naming the clause as an
+   open item still to be decided is "absent". Where the extracts do engage the
+   mechanism and leave part of it unmet, that is "partial", and the rationale must
+   name what is missing. Anything you call absent is read again against the whole
+   document before it reaches a report.
+3a. A breach is never "partial". If the extracts show the design doing something the
+   clause forbids, or refusing something it requires, the verdict is "contradicts" —
+   whatever else in the clause is met, and however the design excuses it. If your
+   rationale says the design violates, breaches or conflicts with a requirement,
+   answer "contradicts".
+3b. Equally, do not withhold "covered" over detail the clause does not ask for. To
+   answer "partial" you must be able to name a requirement of this clause that is
+   unmet; if you cannot, and the extracts meet what it asks, the verdict is
+   "covered".
 4. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 5. confidence is your own certainty in the verdict, 0 to 1.
@@ -644,20 +653,34 @@ that decides it, a full sentence or table row where there is one.
 3. "covered" means every requirement of the clause is met, so give a quote for each \
 one. A requirement with no passage that meets it makes the verdict "partial", and the \
 rationale must name it. A general statement ("data is encrypted") does not meet a \
-specific requirement ("TLS 1.2 or higher"). A wrong "covered" hides a gap from the \
-people relying on this report; when in doubt, it is "partial".
+specific requirement ("TLS 1.2 or higher").
+3a. But judge the clause as written, not an ideal version of it. Where the design \
+commits to the mechanism or policy the clause asks for, covering what is in scope for \
+this system, that is "covered". Do not downgrade to "partial" over detail the clause \
+never demanded, over an object type the design has no instance of, or because the \
+document does not restate a requirement it plainly satisfies. "Partial" names a \
+requirement of THIS clause that is unmet; if you cannot quote that requirement, the \
+verdict is not "partial".
 4. A quote must bear on what the clause requires. A passage about a neighbouring \
 subject is not partial compliance: authentication quoted for an encryption clause, or \
 logging quoted for an access-control clause, meets none of it. If nothing in the \
 document addresses any requirement of the clause itself, the verdict is "absent" or \
 "needs_review", not "partial".
-5. Choose "absent" only when the whole document is silent on what the clause requires. \
-If it discusses that subject but leaves a requirement unmet, that is "partial" or \
-"needs_review", never "absent".
-6. "contradicts" comes first. If the document states that the design does something \
-the clause forbids, or will not do something it requires, the verdict is \
-"contradicts" — even when other requirements are met, and even when the document calls \
-it temporary or agreed.
+5. Choose "absent" when the document is silent on the mechanism the clause requires. \
+Silence on the mechanism is what counts, not silence on the subject area: a design \
+that stores data, keeps logs or takes backups has not thereby addressed a retention, \
+archival or disposal schedule, and one that names a database has not thereby \
+addressed ownership. Naming a neighbouring topic, or listing the clause as an open \
+item still to be decided, is "absent". Reserve "partial" for a design that does \
+engage the mechanism and leaves part of it unmet.
+6. "contradicts" comes first, and it is never softened to "partial". A breach of ANY \
+prohibition or mandatory requirement in the clause is "contradicts", however many of \
+the clause's other requirements the design meets, and however the document excuses it — \
+temporary, agreed, carried over, or justified by a private network or a team's view. \
+These clauses list several requirements each; breaching one is breaching the clause. \
+Check yourself before you answer: if your rationale says the design violates, \
+breaches, conflicts with, is prohibited by, or does not meet a requirement, then the \
+verdict is "contradicts" and not "partial".
 7. Judge only what the clause requires. Do not reward the design for good practice the \
 clause does not ask for.
 8. Standing decisions, where any are given, are this organisation's own settled \

@@ -13,12 +13,14 @@ would fail no other check in this repository.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from aidp import advice, coverage, lifecycle, whole_document  # noqa: E402
+from aidp import advice, config, coverage, lifecycle, whole_document  # noqa: E402
 from aidp.stages import analyse  # noqa: E402
 
 passed = 0
@@ -372,6 +374,38 @@ ok(
     sorted(stored & {"summary", "rationale", "recommendation", "advice", "why"}),
 )
 ok("and the fields that do hold model text are capped", prose.issubset(stored))
+
+
+print("\nThe provider follows the key that is actually configured")
+
+# Every model call reads the key belonging to `llm_provider`, so the two have to
+# agree. They used to be set separately, and a worker given only an OpenRouter
+# key defaulted to gemini, found no gemini key, and reported no model configured
+# while holding a working one.
+for label, environment, expected in (
+    ("an OpenRouter key alone", {"OPENROUTER_API_KEY": "x"}, "openrouter"),
+    ("a Gemini key alone", {"GEMINI_API_KEY": "x"}, "gemini"),
+    ("Google's spelling of it", {"GOOGLE_API_KEY": "x"}, "gemini"),
+    ("an Anthropic key alone", {"ANTHROPIC_API_KEY": "x"}, "anthropic"),
+    (
+        "two keys, in preference order",
+        {"GEMINI_API_KEY": "x", "OPENROUTER_API_KEY": "x"},
+        "gemini",
+    ),
+    (
+        "an explicit choice outranks a key",
+        {"LLM_PROVIDER": "anthropic", "OPENROUTER_API_KEY": "x"},
+        "anthropic",
+    ),
+    # Named but unkeyed stays named: that deployment wants the missing-key
+    # error, not someone else's model quietly answering and billing.
+    ("a provider named without its key", {"LLM_PROVIDER": "openrouter"}, "openrouter"),
+    ("case and spacing around the name", {"LLM_PROVIDER": "  OpenRouter  "}, "openrouter"),
+    ("nothing configured at all", {}, "gemini"),
+):
+    with mock.patch.dict(os.environ, environment, clear=True):
+        chosen = config._provider()
+    ok(f"{label} -> {expected}", chosen == expected, chosen)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

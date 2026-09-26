@@ -24,6 +24,38 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+# Which key selects which provider, in the order they are tried.
+_PROVIDER_KEYS = (
+    ("gemini", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+    ("openrouter", ("OPENROUTER_API_KEY",)),
+    ("anthropic", ("ANTHROPIC_API_KEY",)),
+)
+
+
+def _provider() -> str:
+    """The provider to use: what LLM_PROVIDER says, else whichever key is set.
+
+    An explicit LLM_PROVIDER always wins, including when its key is missing —
+    a deployment that names a provider and forgets the key wants the error, not
+    a silent switch to another vendor's model and another vendor's bill.
+
+    Without it the old default was "gemini" whatever the environment held, so a
+    worker given only an OpenRouter key reported no model configured and
+    skipped the work that needed one. Every call reads the key belonging to the
+    provider, so the two have to agree; picking the provider from the key that
+    exists is the agreement that needs no second variable.
+    """
+    named = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if named:
+        return named
+    for provider, keys in _PROVIDER_KEYS:
+        if any(os.environ.get(key) for key in keys):
+            return provider
+    # Nothing configured. Keep the historic default so the error a caller sees
+    # is "no API key" rather than "unknown provider ''".
+    return "gemini"
+
+
 @dataclass(frozen=True)
 class Config:
     # Which loop this container runs. One image, four possible roles.
@@ -172,7 +204,7 @@ class Config:
             lease_seconds=_int("LEASE_SECONDS", 600),
             poll_min_seconds=float(os.environ.get("POLL_MIN_SECONDS", "1")),
             poll_max_seconds=float(os.environ.get("POLL_MAX_SECONDS", "30")),
-            llm_provider=os.environ.get("LLM_PROVIDER", "gemini"),
+            llm_provider=_provider(),
             gemini_api_key=os.environ.get("GEMINI_API_KEY")
             or os.environ.get("GOOGLE_API_KEY"),
             gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
