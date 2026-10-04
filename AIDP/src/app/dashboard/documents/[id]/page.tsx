@@ -249,7 +249,7 @@ export default async function DocumentPage({
 
       {assessed && (
         <Assessment
-          documentId={document.id}
+          scope={{ kind: "document", documentId: document.id }}
           run={runView}
           counts={counts}
           findings={findingViews}

@@ -8,6 +8,7 @@ import {
   ProjectRefused,
   createProject,
   setProjectStatus,
+  startProjectRun,
   updateProject,
 } from "@/lib/ingest/projects";
 
@@ -18,7 +19,7 @@ import {
  * and that check lives in the library beside the rule it enforces.
  */
 
-export type ProjectResult = { ok: boolean; message: string; id?: string };
+export type ProjectResult = { ok: boolean; message: string; id?: string; runId?: string };
 
 async function run(work: (access: Awaited<ReturnType<typeof requireAccess>>) => Promise<ProjectResult>) {
   try {
@@ -64,5 +65,22 @@ export async function archiveProject(id: string, archived: boolean): Promise<Pro
         ? "Archived. Nothing is deleted — reopen it to add designs again."
         : "Reopened.",
     };
+  });
+}
+
+/**
+ * Assess every design in the project at once.
+ *
+ * Any member may start one: assessing is the work, not an administrative
+ * change. The rules — the project is open, a design has finished indexing,
+ * there are standards to measure against — live in the library beside the
+ * tables they read.
+ */
+export async function startProjectAssessment(id: string): Promise<ProjectResult> {
+  return run(async (access) => {
+    const { runId, scope } = await startProjectRun(access, id);
+    revalidatePath(`/dashboard/projects/${id}`);
+    revalidatePath(`/dashboard/projects/${id}/assessment`);
+    return { ok: true, message: `Assessing ${scope}.`, runId };
   });
 }

@@ -364,6 +364,9 @@ model Project {
   updatedAt DateTime @updatedAt
 
   documents Document[]
+  /// Assessments of the project as a whole. A design's own runs hang off the
+  /// document, not here.
+  runs      AssessmentRun[]
 
   /// One name per organisation. Two projects called "Portal" in the same
   /// workspace is a support ticket waiting to happen, and the constraint gives
@@ -793,8 +796,15 @@ model Job {
 
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  documentId     String
-  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  /// The document this job is about.
+  ///
+  /// Null on an analyse job for a project run, which is about every design in
+  /// the project rather than one of them; those are found by the run id on
+  /// `payload` instead. Every parse, chunk and embed job has one by
+  /// construction — they are the stages that read a file.
+  documentId     String?
+  document       Document?    @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   // "parse" | "chunk" | "embed" | "analyse"
   stage String
@@ -908,8 +918,24 @@ model AssessmentRun {
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
   /// The submission under assessment — a document with role='assessed'.
-  documentId String
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ///
+  /// Null on a project run, which assesses every design in a project at once:
+  /// there is no single submission then, and `projectId` says what the scope
+  /// was. Exactly one of the two is set, which `startProjectAssessment` and the
+  /// worker's `designs()` both rely on.
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  /// The project under assessment, when every design in it was read together.
+  ///
+  /// A clause is judged once against all of them, because a design document
+  /// rarely stands alone: what one deck leaves out the next one answers, and
+  /// per-document runs reported those as gaps. Null on a single-design run.
+  ///
+  /// `SetNull` for the same reason as Document.projectId: a project is archived,
+  /// not deleted, and a report must outlive one if it ever is removed.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   frameworkId String
   framework   Framework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
@@ -958,6 +984,7 @@ model AssessmentRun {
 
   @@index([organisationId, state])
   @@index([documentId])
+  @@index([projectId, state])
   @@map("assessment_run")
 }
 
@@ -1112,7 +1139,14 @@ model SubmissionOutcome {
 
   /// Denormalised so a document's decision history is one query, and so it
   /// still reads correctly if the run is ever re-pointed.
-  documentId String
+  ///
+  /// Null when the run was over a whole project, which is signed off as one
+  /// piece of work; `projectId` carries it then. Exactly one of the two is set,
+  /// mirroring the run the outcome is about.
+  documentId String?
+
+  /// The project signed off, when the run was over all of its designs.
+  projectId  String?
 
   // "approved" | "revise" | "escalated"
   decision String

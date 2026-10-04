@@ -88,6 +88,14 @@ export type EvidenceItem = {
    * thing it was made about.
    */
   figureId: string | null;
+  /**
+   * Which design the passage is from, on a run over a whole project. A page
+   * number is not an address when four designs each have a page 12, so the
+   * finding names the file. Empty on a design run, and on findings from before
+   * projects could be assessed.
+   */
+  documentId: string;
+  documentTitle: string;
 };
 
 /** `evidence` is Json in the schema; narrow it before rendering. */
@@ -105,6 +113,8 @@ export function readEvidence(value: unknown): EvidenceItem[] {
         excerpt: typeof row.excerpt === "string" ? row.excerpt : "",
         sourceKind: typeof row.sourceKind === "string" ? row.sourceKind : "clause",
         figureId: typeof row.figureId === "string" ? row.figureId : null,
+        documentId: typeof row.documentId === "string" ? row.documentId : "",
+        documentTitle: typeof row.documentTitle === "string" ? row.documentTitle : "",
       },
     ];
   });

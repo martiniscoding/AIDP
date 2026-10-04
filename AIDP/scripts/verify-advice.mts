@@ -67,7 +67,9 @@ const replica = view?.suggestions.find((s) => s.title === "Add a read replica");
 ok("an addition may stand without a quote", replica?.kind === "add" && replica.quote === null);
 ok("clause references are strings, once each", JSON.stringify(replica?.clauses) === JSON.stringify(["Data §9.3"]), replica?.clauses);
 ok("section and pages carried", replica?.section === 3 && replica.pageStart === 3 && replica.pageEnd === 4);
-ok("refusals counted, duplicates and unknown reasons not", view?.setAside === 10, view?.setAside);
+// 10 the worker counted for the reasons it names, 4 duplicates it also counted,
+// and 7 rows this reader refused itself. "nonsense" and overLimit are neither.
+ok("refusals counted, with duplicates and the reader's own, and unknown reasons not", view?.setAside === 21, view?.setAside);
 ok("the named component is carried", replica?.component === "PostgreSQL", replica);
 ok("a run stored before components reads as none", view?.suggestions.find((s) => s.title === "Separate the backups")?.component === null);
 ok("left out for length counted separately", view?.overLimit === 5, view?.overLimit);

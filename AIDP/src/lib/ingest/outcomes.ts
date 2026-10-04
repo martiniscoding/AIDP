@@ -128,7 +128,13 @@ export async function record(
 ): Promise<OutcomeView> {
   const run = await prisma.assessmentRun.findUnique({
     where: { id: runId },
-    select: { id: true, organisationId: true, documentId: true, state: true },
+    select: {
+      id: true,
+      organisationId: true,
+      documentId: true,
+      projectId: true,
+      state: true,
+    },
   });
   if (!run) throw new OutcomeRefused("That assessment no longer exists.");
   await requireMembership(userId, run.organisationId);
@@ -152,7 +158,10 @@ export async function record(
     data: {
       organisationId: run.organisationId,
       runId: run.id,
+      // Whichever the run was over. The constraint on the run guarantees one
+      // of the two, so the outcome inherits it rather than deciding anything.
       documentId: run.documentId,
+      projectId: run.projectId,
       decision,
       note: trimmed,
       snapshot: await snapshotOf(run.id),

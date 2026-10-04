@@ -106,7 +106,8 @@ ok("a table row keeps its columns", "Control: Encryption at rest | Minimum Stand
 ok(
     "figure descriptions are labelled as a model's reading, apart from the document",
     "<figure_descriptions>" in doc.text
-    and "never quote them" in doc.text
+    and "not the document's own words" in doc.text
+    and "never as the sole support for a confident verdict" in doc.text
     and doc.text.index("</design_document>") < doc.text.index("<figure_descriptions>"),
 )
 ok(
@@ -149,7 +150,13 @@ ok(
 check = doc.verify("multi-factor authentication via Okt", 1)
 ok("half a word is not a match", not check.verified, check)
 check = doc.verify("MQTT broker feeding ingestion workers", 2)
-ok("a figure description is not the document's text", not check.verified, check)
+ok(
+    "a quote the design makes only in a diagram verifies, marked as a diagram reading",
+    check.verified
+    and check.source_kind == "figure"
+    and "not the document's own words" in check.reason,
+    check,
+)
 check = doc.verify("Secrets are stored in HashiCorp Vault", None)
 ok("a quote with no page is still found", check.verified and check.page == 1, check)
 
@@ -330,7 +337,9 @@ verdict, rationale, evidence = judged(
 )
 ok(
     "an invented quote cannot carry a verdict",
-    verdict == "needs_review" and "could not be found" in rationale and not evidence,
+    verdict == "needs_review"
+    and "its quote is not in the document" in rationale
+    and not evidence,
     rationale,
 )
 

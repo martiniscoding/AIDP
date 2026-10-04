@@ -45,6 +45,44 @@ TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 # provider allows.
 _SEED = 7
 
+# How much room a reply cut off at its limit is given on the second attempt.
+# Doubling stops at this, because a reply still unfinished here is a model that
+# will not stop, not one that needed a little more.
+_LENGTH_CEILING = 8192
+
+# What each model will accept, from OpenRouter's own catalogue, fetched once per
+# worker. Models differ: a reasoning model takes no `temperature`, and sending
+# one alongside `require_parameters` leaves no endpoint able to serve the
+# request — a 404 on every call, which is how changing the model to
+# gpt-6.1-sol-pro took the whole stage down until the parameter was dropped.
+_CAPABILITIES: dict[str, set[str]] | None = None
+_CATALOGUE = "https://openrouter.ai/api/v1/models"
+# Parameters worth sending but not worth failing over. Anything a model does not
+# list is left out rather than argued with.
+_OPTIONAL_PARAMS = ("temperature", "seed")
+
+
+def _supported(model: str) -> set[str] | None:
+    """The parameters a model accepts, or None when the catalogue cannot be read.
+
+    None means "send everything and let the provider decide", which is what this
+    did before the catalogue was consulted at all.
+    """
+    global _CAPABILITIES
+    if _CAPABILITIES is None:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(20.0, connect=10.0)) as client:
+                rows = client.get(_CATALOGUE).json().get("data") or []
+            _CAPABILITIES = {
+                str(row.get("id")): set(row.get("supported_parameters") or []) for row in rows
+            }
+            logs.info(log, "model catalogue read", models=len(_CAPABILITIES))
+        except Exception as exc:  # noqa: BLE001 — a catalogue we cannot read is not a failure
+            _CAPABILITIES = {}
+            logs.warn(log, "could not read the model catalogue", error=str(exc)[:200])
+    # A model missing from the catalogue is unknown, not unsupported.
+    return _CAPABILITIES.get(model)
+
 _FIGURE_PROMPT = """\
 This image is a figure from an enterprise architecture or governance document.
 
@@ -103,7 +141,7 @@ of the WHOLE submitted document ranked closest to this clause, by meaning and by
 keyword together, with every rule, table row, figure description and section of it \
 searched separately. If the design addressed this clause, its words would almost \
 certainly be among them.
-{document_context}
+{scope_rule}{document_context}
 <standard_clause>
 Reference: {reference}
 {clause}
@@ -181,7 +219,8 @@ Rules that matter:
    the fix, say what capability is missing instead of inventing a product.
 
 Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
+{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
+the concrete fix when not covered, 280 max",
   "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...]}}"""
 
 
@@ -281,6 +320,7 @@ class LLM(Protocol):
         extracts: str,
         precedents: str = "",
         document: str = "",
+        designs: int = 1,
     ) -> dict: ...
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
@@ -301,6 +341,36 @@ class LLM(Protocol):
 # Without it the model returns plausible-looking but truncated JSON — observed
 # as `{"verdict": "covered", ""}` with a finish reason of STOP, which parses as
 # nothing and would silently cost a clause.
+
+# Several designs, read as one solution. Empty on a single-design run, so that
+# prompt stays byte for byte what it was — the verdicts it produces are tuned
+# and cached against it.
+#
+# Needed because the prompt around it says "the submitted design document",
+# singular, nine times. Reading a project without this, the judge picked one
+# design and answered about that: a clause the smaller design satisfied outright
+# came back absent with a rationale naming only the larger one.
+_SCOPE_RULE = """
+<the_designs_you_are_reading>
+These extracts come from several design documents that describe ONE solution \
+between them, and each is labelled with the design it is from. Judge the clause \
+against all of them together, not one at a time:
+
+- A requirement met in any one of these designs is met. Do not report it absent \
+  or partial because another design is silent on it.
+- "absent" means no design engages with the clause at all.
+- "contradicts" still holds if any design states what the clause forbids, \
+  whatever the others say — one design doing the right thing does not undo \
+  another doing the forbidden thing.
+- Say which design your evidence is from in the rationale.
+</the_designs_you_are_reading>
+"""
+
+
+def _scope_block(designs: int) -> str:
+    """The rule for reading several designs as one solution, or nothing."""
+    return _SCOPE_RULE if designs > 1 else ""
+
 
 def _document_block(summary: str) -> str:
     """What the submitted document is, or contribute nothing.
@@ -717,7 +787,8 @@ names nothing that could carry the fix, say what capability is missing instead o
 inventing a product.
 
 Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add the concrete fix when not covered, 280 max",
+{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
+the concrete fix when not covered, 280 max",
   "evidence": [{{"quote": "exact words from the document", "page": 12}}],
   "appliedDecisions": ["decision id", ...]}}"""
 
@@ -1390,6 +1461,7 @@ class GeminiLLM:
         extracts: str,
         precedents: str = "",
         document: str = "",
+        designs: int = 1,
     ) -> dict:
         text = self._generate(
             [
@@ -1399,6 +1471,7 @@ class GeminiLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
+                        scope_rule=_scope_block(designs),
                         document_context=_document_block(document),
                     )
                 }
@@ -1639,6 +1712,7 @@ class AnthropicLLM:
         extracts: str,
         precedents: str = "",
         document: str = "",
+        designs: int = 1,
     ) -> dict:
         data = self._send(
             {
@@ -1653,6 +1727,7 @@ class AnthropicLLM:
                             clause=clause,
                             extracts=extracts,
                             precedents=_precedent_block(precedents),
+                            scope_rule=_scope_block(designs),
                             document_context=_document_block(document),
                         ),
                     },
@@ -1894,6 +1969,7 @@ class OpenRouterLLM:
         schema: dict | None = None,
         name: str = "reply",
         attempts: int = 4,
+        retry_on_length: bool = True,
     ) -> str:
         chosen = model or self.model
         provider: dict = {"data_collection": "deny"}
@@ -1912,6 +1988,12 @@ class OpenRouterLLM:
             # Providers that do not support it ignore it.
             "seed": _SEED,
         }
+        accepted = _supported(chosen)
+        if accepted is not None:
+            for parameter in _OPTIONAL_PARAMS:
+                if parameter in payload and parameter not in accepted:
+                    payload.pop(parameter)
+
         if schema is not None:
             payload["response_format"] = {
                 "type": "json_schema",
@@ -1938,9 +2020,31 @@ class OpenRouterLLM:
             logs.warn(log, "openrouter returned no choices", model=chosen)
             return ""
         if choices[0].get("finish_reason") == "length":
-            # Not raised: the caller's parse fails on a cut-off reply and its
-            # own retry decides what to do. Logged so the cause is findable.
-            logs.warn(log, "reply cut off at the output limit", model=chosen)
+            # A reply stopped at the limit is unparseable JSON, and the caller
+            # has no way to tell that from a model that answered badly: on a real
+            # run it reached the report as "this clause could not be judged",
+            # over a rationale the model simply wrote at length. So ask once
+            # more with room to finish rather than handing the caller a stump.
+            if retry_on_length and max_tokens < _LENGTH_CEILING:
+                wider = min(max_tokens * 2, _LENGTH_CEILING)
+                logs.warn(
+                    log,
+                    "reply cut off at the output limit, asking again with more room",
+                    model=chosen,
+                    was=max_tokens,
+                    now=wider,
+                )
+                return self._chat(
+                    messages,
+                    max_tokens=wider,
+                    model=model,
+                    temperature=temperature,
+                    schema=schema,
+                    name=name,
+                    attempts=attempts,
+                    retry_on_length=False,
+                )
+            logs.warn(log, "reply cut off at the output limit", model=chosen, limit=max_tokens)
         content = (choices[0].get("message") or {}).get("content") or ""
         if isinstance(content, list):
             content = "".join(
@@ -2013,6 +2117,7 @@ class OpenRouterLLM:
         extracts: str,
         precedents: str = "",
         document: str = "",
+        designs: int = 1,
     ) -> dict:
         text = self._chat(
             [
@@ -2023,6 +2128,7 @@ class OpenRouterLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
+                        scope_rule=_scope_block(designs),
                         document_context=_document_block(document),
                     ),
                 }
@@ -2277,16 +2383,20 @@ def judge(
     extracts: str,
     precedents: str = "",
     document: str = "",
+    designs: int = 1,
 ) -> dict:
-    # `document` has to be passed through here. Without it the analyse stage's
-    # `document=` raised TypeError on every clause, which its per-clause guard
-    # caught — so every clause of every run failed, quietly.
+    # `document` and `designs` both have to be passed through here. Without
+    # `document` the analyse stage's `document=` raised TypeError on every
+    # clause, which its per-clause guard caught — so every clause of every run
+    # failed, quietly. `designs` is the same shape of trap: dropped here, a
+    # project run would silently be judged one design at a time.
     return client().judge(
         reference=reference,
         clause=clause,
         extracts=extracts,
         precedents=precedents,
         document=document,
+        designs=designs,
     )
 
 

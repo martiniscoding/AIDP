@@ -43,7 +43,9 @@ MAX_BACKOFF_SECONDS = 3600
 class Job:
     id: str
     organisation_id: str
-    document_id: str
+    # None on an analyse job for a project run: it is about every design in the
+    # project, not one of them. Every parse, chunk and embed job has one.
+    document_id: str | None
     stage: str
     attempts: int
     correlation_id: str

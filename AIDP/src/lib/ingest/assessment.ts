@@ -88,6 +88,21 @@ export async function countClauses(frameworkId: string): Promise<number> {
   });
 }
 
+/**
+ * Where to find a run's analyse job.
+ *
+ * A design run's jobs are its document's. A project run's have no document at
+ * all — they are about every design in the project — and are identified by the
+ * run id on their payload. Scoping one by `documentId: null` would match every
+ * project's jobs in the workspace at once, which is why this is a function and
+ * not a spread-in object.
+ */
+export function runJobWhere(run: { id: string; documentId: string | null }) {
+  return run.documentId
+    ? { documentId: run.documentId, stage: "analyse" }
+    : { stage: "analyse", payload: { path: ["runId"], equals: run.id } };
+}
+
 export async function latestRun(userId: string, documentId: string) {
   const document = await prisma.document.findUnique({
     where: { id: documentId },

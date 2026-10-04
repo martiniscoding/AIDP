@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from psycopg.types.json import Jsonb
 
-from . import db, logs, whole_document
+from . import db, designs, logs, whole_document
 from .ai import llm
 from .config import get_config
 
@@ -645,6 +645,22 @@ def _cited(conn, run_id: str) -> list[str]:
     return passages
 
 
+# The lists a coverage outcome carries, and so the ones a merge concatenates.
+_ITEMS = ("gaps", "suggestions")
+
+
+def _worked_out(
+    run: dict, clauses: list[dict], scope: list[designs.Design] | None
+) -> dict:
+    """One design's coverage, or every design's merged. Raises as `work_out` does."""
+    if not scope:
+        return work_out(run, clauses)
+    outcomes = [
+        designs.tag(work_out(run, clauses, design), design, keys=_ITEMS) for design in scope
+    ]
+    return designs.merge(outcomes, items=_ITEMS)
+
+
 def _outcome(state: str, note: str | None, **rest) -> dict:
     return {
         "version": VERSION,
@@ -663,13 +679,18 @@ def _outcome(state: str, note: str | None, **rest) -> dict:
     }
 
 
-def work_out(run: dict, clauses: list[dict]) -> dict:
-    """The coverage of one run's design, ready to store. Raises on a model failure."""
+def work_out(run: dict, clauses: list[dict], design: designs.Design | None = None) -> dict:
+    """The coverage of one design, ready to store. Raises on a model failure.
+
+    `design` names which one, for a run over a project. Without it the run's own
+    document is read, which is every run opened for a single design.
+    """
     if not clauses:
         return _outcome("skipped", "There are no standard clauses to compare this design with.")
 
+    document_id = design.document_id if design else run["documentId"]
     with db.connection() as conn:
-        sections, whole = _load(conn, run["documentId"])
+        sections, whole = _load(conn, document_id)
         cited = _cited(conn, run["id"])
 
     if whole is None or not sections:
@@ -732,10 +753,18 @@ def work_out(run: dict, clauses: list[dict]) -> dict:
     )
 
 
-def record(run: dict, clauses: list[dict]) -> dict:
-    """Work out and store the run's coverage. Never raises."""
+def record(
+    run: dict, clauses: list[dict], scope: list[designs.Design] | None = None
+) -> dict:
+    """Work out and store the run's coverage, design by design. Never raises.
+
+    One design is read exactly as it was before projects existed. Several are
+    read one at a time and the results merged: each design's quotes are checked
+    against its own sections, which is the whole reason the section check can be
+    trusted, and merging afterwards cannot undo that.
+    """
     try:
-        result = work_out(run, clauses)
+        result = _worked_out(run, clauses, scope)
     except Exception as exc:  # noqa: BLE001 — a run's clauses stand without this
         logs.warn(log, "coverage could not be worked out", runId=run["id"], error=str(exc)[:300])
         why = (

@@ -62,7 +62,13 @@ _scripted: dict[str, dict] = {}
 
 
 def _stub_judge(
-    *, reference: str, clause: str, extracts: str, precedents: str = "", document: str = ""
+    *,
+    reference: str,
+    clause: str,
+    extracts: str,
+    precedents: str = "",
+    document: str = "",
+    designs: int = 1,
 ):  # noqa: ARG001
     # Same signature as `llm.judge`. When the analyse stage began passing
     # `document=`, a stub without it raised TypeError on every clause — exactly
@@ -353,8 +359,14 @@ def main() -> int:
                     "rationale": "Invented a verdict.",
                     "evidence": [first_chunk],
                 },
+                # An accusation resting on a diagram alone. A *confident* "covered"
+                # on a corroborating diagram is allowed to stand these days — a
+                # design really can state a component only in its architecture
+                # picture — but "contradicts" is still demoted, because convicting
+                # a design on a model's reading of an image is the expensive way
+                # to be wrong. See the asymmetry in `_guard`.
                 "figure-only": {
-                    "verdict": "covered",
+                    "verdict": "contradicts",
                     "confidence": 0.95,
                     "rationale": "The diagram shows it.",
                     "evidence": [chunk_ids[-1]],
@@ -430,7 +442,7 @@ def main() -> int:
             str(by_title.get("absent-lowconf")),
         )
         check(
-            "a decisive verdict resting only on a figure is demoted",
+            "an accusation resting only on a figure is demoted",
             by_title.get("figure-only", {}).get("verdict") == "needs_review",
             str(by_title.get("figure-only")),
         )

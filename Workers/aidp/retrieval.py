@@ -44,6 +44,12 @@ class Candidate:
     # which is what lets a finding render the diagram beside the model's reading
     # of it — verification at the point of use rather than at ingest.
     source_id: str | None = None
+    # Which design this passage is from. A project run searches every design in
+    # the project at once, so "page 4" is only an address when the document is
+    # named beside it — and a finding has to tell the reviewer which file to
+    # open. Defaulted so a single-design caller need not pass it.
+    document_id: str = ""
+    document_title: str = ""
 
     @property
     def is_generated(self) -> bool:
@@ -76,7 +82,7 @@ WITH dense AS (
       FROM "chunk" c
       JOIN "embedding" e ON e."chunkId" = c."id" AND e."model" = %(model)s
      WHERE c."organisationId" = %(org)s
-       AND c."documentId" = %(doc)s
+       AND c."documentId" = ANY(%(docs)s)
      ORDER BY e."vector" <=> %(vector)s::vector
      LIMIT %(pool)s
 ),
@@ -103,7 +109,7 @@ lexical AS (
      -- the word out instead.
      CROSS JOIN (SELECT aidp_search_query(%(query)s) AS query) q
      WHERE c."organisationId" = %(org)s
-       AND c."documentId" = %(doc)s
+       AND c."documentId" = ANY(%(docs)s)
        AND aidp_chunk_vector(c."headingPath", c."text") @@ q.query
      LIMIT %(pool)s
 ),
@@ -116,7 +122,8 @@ fused AS (
       FROM dense d
       FULL OUTER JOIN lexical l ON l."id" = d."id"
 )
-SELECT c."id", c."headingPath", c."text", c."pageStart", c."sourceKind", c."sourceId",
+SELECT c."id", c."documentId", c."headingPath", c."text", c."pageStart",
+       c."sourceKind", c."sourceId",
        f.score::float8 AS score, f.vector_rank, f.lexical_rank
   FROM fused f
   JOIN "chunk" c ON c."id" = f.id
@@ -144,19 +151,104 @@ def search_document(
     limit: int = 8,
     vector: str | None = None,
 ) -> list[Candidate]:
-    """Best passages in one document for one query.
+    """Best passages in one document for one query. See `search`."""
+    return search(
+        conn,
+        organisation_id=organisation_id,
+        document_ids=[document_id],
+        query=query,
+        limit=limit,
+        vector=vector,
+    )
 
-    `organisation_id` is required and lands in the predicate even though
-    `document_id` alone would be selective enough. Belt and braces: a document
-    id arriving from a job payload is not a capability check, and the tenant
-    filter should be present on every path that reads chunks.
+
+def search(
+    conn: psycopg.Connection,
+    *,
+    organisation_id: str,
+    document_ids: list[str],
+    query: str,
+    limit: int = 8,
+    vector: str | None = None,
+    titles: dict[str, str] | None = None,
+) -> list[Candidate]:
+    """Best passages across one or more designs for one query.
+
+    More than one when a project is assessed as a whole: a solution described
+    across a proposal, an architecture deck and a data model is one design, and
+    a clause answered in the second file is not a gap in the first.
+
+    Each design is searched for its own window rather than all of them for one
+    shared window, and this is the whole point. Fusion scores a passage against
+    the other passages it is ranked with, so one shared window of eight goes to
+    whichever design has the most text: on a real project the 52-chunk proposal
+    took all eight slots and the 18-chunk telemetry design was never shown, so a
+    clause it answered outright came back absent — the exact failure assessing a
+    project together exists to fix, moved rather than removed. A design searched
+    on its own is shown the passages it would have been shown had it been
+    assessed alone, so the project's verdict can only be as good as the best of
+    the individual ones.
+
+    `titles` names the designs for the judge; a passage from a document not in
+    it keeps an empty title rather than failing.
+
+    `organisation_id` is required and lands in the predicate even though the
+    document ids alone would be selective enough. Belt and braces: ids arriving
+    from a job payload are not a capability check, and the tenant filter should
+    be present on every path that reads chunks.
     """
-    if not query.strip():
+    if not query.strip() or not document_ids:
         return []
-
-    cfg = get_config()
     if vector is None:
         vector = embed_query(query)
+
+    names = titles or {}
+    if len(document_ids) == 1:
+        return _in_one(conn, organisation_id, document_ids[0], query, limit, vector, names)
+
+    windows = [
+        _in_one(conn, organisation_id, document_id, query, limit, vector, names)
+        for document_id in document_ids
+    ]
+    return _woven(windows, limit)
+
+
+# The most passages a judge is shown for one clause, however many designs a
+# project holds. Each design's best passage is in before any design's second,
+# so a design is never silent; past this the tail is dropped.
+MAX_PASSAGES = 24
+
+
+def _woven(windows: list[list[Candidate]], limit: int) -> list[Candidate]:
+    """Every design's window, best first, round by round.
+
+    Round-robin rather than by score: a score is only comparable inside the
+    search that produced it, and sorting the designs' windows together would
+    hand the slots back to the largest design. The order still puts the best
+    passages first, which is what the judge reads first.
+    """
+    out: list[Candidate] = []
+    budget = min(MAX_PASSAGES, max(limit, limit * len(windows)))
+    for rank in range(max((len(w) for w in windows), default=0)):
+        for window in windows:
+            if rank < len(window):
+                out.append(window[rank])
+                if len(out) >= budget:
+                    return out
+    return out
+
+
+def _in_one(
+    conn: psycopg.Connection,
+    organisation_id: str,
+    document_id: str,
+    query: str,
+    limit: int,
+    vector: str,
+    titles: dict[str, str],
+) -> list[Candidate]:
+    """One design's best passages, fused and with room kept for a diagram."""
+    cfg = get_config()
 
     # HNSW discards non-matching rows *after* walking the graph, so a filter as
     # tight as a single document can starve the result set. pgvector 0.8 keeps
@@ -171,12 +263,12 @@ def search_document(
             "vector": vector,
             "model": cfg.embedding_model,
             "org": organisation_id,
-            "doc": document_id,
+            "docs": [document_id],
             "query": query,
             # Fuse from a wider pool than we return, or the two rankings barely
             # overlap and fusion has nothing to work with.
             "pool": max(limit * 4, 32),
-            # Read past the window so `_with_figure` has somewhere to find a
+            # Read past the window so `with_figure` has somewhere to find a
             # diagram that fused just outside it. Trimmed back to `limit` below.
             "limit": max(limit * 2, limit + FIGURE_LOOKAHEAD),
             "k": RRF_K,
@@ -186,6 +278,8 @@ def search_document(
     candidates = [
         Candidate(
             chunk_id=r["id"],
+            document_id=r["documentId"],
+            document_title=titles.get(r["documentId"], ""),
             heading_path=r["headingPath"],
             text=r["text"],
             page_start=r["pageStart"],
@@ -237,14 +331,21 @@ def with_figure(candidates: list[Candidate], query: str, limit: int) -> list[Can
     if limit <= 1 or any(c.is_generated for c in window):
         return window
 
-    pages = {c.page_start for c in window if c.page_start is not None}
-    headings = {c.heading_path for c in window if c.heading_path}
+    # Addressed by (design, page) and (design, heading), never by page alone.
+    # Across a project every design has a page 4 and most have an "Architecture"
+    # heading, and a diagram is only "on a page the window already reached" if
+    # it is in the same document as that page.
+    pages = {(c.document_id, c.page_start) for c in window if c.page_start is not None}
+    headings = {(c.document_id, c.heading_path) for c in window if c.heading_path}
     wanted = _keywords(query)
 
     for candidate in candidates[limit:]:
         if not candidate.is_generated:
             continue
-        near = candidate.page_start in pages or candidate.heading_path in headings
+        near = (candidate.document_id, candidate.page_start) in pages or (
+            candidate.document_id,
+            candidate.heading_path,
+        ) in headings
         if near and wanted & _keywords(candidate.text):
             return window[: limit - 1] + [candidate]
     return window

@@ -105,6 +105,80 @@ which is the realistic case, since designs rarely breach a standard by accident.
 
 ---
 
+## Both designs as one project — expected verdicts
+
+A project is assessed as one piece of work: every clause judged once against
+every design in it. These two designs are the eval set for that, because they
+disagree. Where one is silent the other answers, and where one complies the
+other breaches — which is exactly the case a per-design report got wrong and a
+project report exists to get right.
+
+**The rule.** A project verdict follows from the designs' own verdicts:
+
+| If any design is | The project is | Because |
+|---|---|---|
+| `contradicts` | **contradicts** | One design doing the right thing does not undo another doing the forbidden thing. The breach is real and shipping. |
+| else `covered` | **covered** | The requirement is met somewhere in the solution. This is the whole point: what one design leaves out, another answers. |
+| else `partial` | **partial** | Addressed across the designs, with a requirement still unmet in all of them. |
+| else `needs_review` | **needs_review** | On the subject, wording ambiguous. |
+| else all `absent` | **absent** | No design engages with the clause at all. |
+
+`contradicts` outranking `covered` is the one place this is stricter than "met
+anywhere is met", and it is deliberate: a reviewer has to see a breach even when
+another document in the same project does the right thing.
+
+**The judgement call, stated so it can be argued with.** "Else `covered`" takes a
+clause met fully in one design as met for the project. For a clause about a
+property every component must have — observability, containerisation — a reviewer
+may reasonably want `partial`, on the grounds that half the solution lacks it.
+This key takes the reading the product asks for (judge the designs together,
+what one leaves out another may answer); the stricter reading would be a
+different rule, not a bug in this one. It is enforced in one place, the scope
+rule in `Workers/aidp/ai/llm.py`, so it can be changed in one place.
+
+### Must get these right
+
+| Clause | Portal | Telemetry | Expected | Rule |
+|---|---|---|---|---|
+| Architecture §3.3 Statelessness | contradicts | covered | **contradicts** | a breach stands |
+| Data §4.1 Naming conventions | contradicts | covered | **contradicts** | a breach stands |
+| Data §7.2 Resilience and idempotency | partial | contradicts | **contradicts** | a breach stands |
+| Architecture §5.1 Event-driven integration | partial | contradicts | **contradicts** | a breach stands |
+| Data §3.2 Single source of truth | — | contradicts | **contradicts** | only one engages |
+| Data §6.3 Encryption | — | contradicts | **contradicts** | only one engages |
+| Security §5.1 Cryptographic standards | — | contradicts | **contradicts** | only one engages |
+| Data §8.1 Retention | absent | covered | **covered** | answered in the other |
+| Security §2.2 Authentication | covered | absent | **covered** | answered in the other |
+| Security §5.2 Key management | covered | partial | **covered** | answered in full in one |
+| Architecture §6.1 Observability | covered | partial | **covered** | answered in full in one |
+| Architecture §4.1 Containerisation | covered | partial | **covered** | answered in full in one |
+
+The five `covered` rows are the ones a per-design report cannot reach. Data §8.1
+is the clearest: the portal is silent on retention and the telemetry design
+states it outright, so assessed separately the project carries a gap it does not
+have.
+
+### Directionally right
+
+| Clause | Portal | Telemetry | Expected | Rule |
+|---|---|---|---|---|
+| Data §8.2 Secure disposal | absent | partial | partial | addressed, not fully |
+| Data §6.2 Access control | partial | absent | partial | addressed, not fully |
+| Architecture §6.2 Availability and recovery | partial | partial | partial | neither states RTO or RPO |
+| Security §2.3 Least privilege | partial | — | partial | only one engages |
+| Architecture §3.4 Resilience by design | partial | — | partial | only one engages |
+| Security §7.1 Vendor risk | absent | — | absent | no design engages |
+| Security §3.1 Network segmentation | absent | — | absent | no design engages |
+| Data §2.1 Data ownership | absent | — | absent | no design engages |
+| Architecture §2.1 ADRs | — | absent | absent | no design engages |
+
+Audited by `Workers/tests/test_project_answer_key.py`, which checks the rule
+against the two per-design tables above rather than trusting this one was
+derived by hand correctly, and checks that each clause's answer is reachable in
+the design the key credits it to and nowhere else.
+
+---
+
 ## How to use it
 
 1. Upload the three standards as **Reference standard**, wait for `ready`.

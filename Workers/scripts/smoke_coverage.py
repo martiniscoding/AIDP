@@ -120,44 +120,44 @@ REPLY = {
     "gaps": [
         {
             "section": 2,
-            "what": "Takes card payments through Moneris.",
+            "what": "Card payments are taken through Moneris with no tokenisation described.",
             "quote": "Card payments are captured in the storefront and settled through Moneris "
             "nightly.",
             "page": 2,
         },
         {
             "section": 2,
-            "what": "Duplicate.",
+            "what": "The same card capture sentence is quoted a second time.",
             "quote": "Card payments are captured in the storefront",
             "page": 2,
         },
         {
             "section": 9,
-            "what": "Not a section.",
+            "what": "The reply names a section number the design does not have.",
             "quote": "Orders are shipped with Canada Post",
             "page": 4,
         },
         {
             "section": 4,
-            "what": "Invented.",
+            "what": "The quoted sentence appears nowhere in the design document.",
             "quote": "Orders are delivered by drone within the hour.",
             "page": 4,
         },
         {
-            "section": 1,
-            "what": "Real words, wrong section.",
-            "quote": "Orders are shipped with Canada Post using its label API.",
-            "page": 4,
+            "section": 4,
+            "what": "Real design words are filed under the wrong section number.",
+            "quote": "Revision 0.3, approved by the architecture board.",
+            "page": 1,
         },
         {
             "section": 3,
-            "what": "Sign-in.",
+            "what": "Administrator sign-in is not described against the standard's requirement.",
             "quote": "Administrators sign in with multi-factor authentication through Okta.",
             "page": 3,
         },
         {
             "section": 4,
-            "what": "Ships through Canada Post.",
+            "what": "Shipping goes through Canada Post with no second carrier named.",
             "quote": "Orders are shipped with Canada Post using its label API. "
             "Tracking numbers are emailed to the customer.",
             "page": 7,
@@ -172,14 +172,14 @@ REPLY = {
         },
         {
             "title": "Identity for administrators",
-            "covers": "Admin sign-in.",
-            "why": "Okta.",
+            "covers": "Administrator sign-in to the management console.",
+            "why": "The design signs administrators in through Okta.",
             "sections": [3],
         },
         {
             "title": "Carrier integrations",
-            "covers": "Shipping carriers.",
-            "why": "Canada Post.",
+            "covers": "The carriers that shipments are handed to.",
+            "why": "The design ships orders through Canada Post.",
             "sections": [4],
         },
         {"title": "", "covers": "No title.", "why": "", "sections": [2]},
@@ -207,9 +207,10 @@ ok(
 )
 ok("an invented quote is refused", checked.dropped["unverified"] == 1, checked.dropped)
 ok(
-    "real words claimed for the wrong section are refused",
-    checked.dropped["outsideSection"] == 1,
-    checked.dropped,
+    "real words claimed for the wrong section are moved to the section that holds them",
+    by_section.get(1, {}).get("quote") == "Revision 0.3, approved by the architecture board."
+    and checked.dropped["outsideSection"] == 0,
+    (by_section.get(1), checked.dropped),
 )
 ok(
     "a passage a clause already cited is not ungoverned",
@@ -229,7 +230,7 @@ STITCHED = {
     "gaps": [
         {
             "section": 4,
-            "what": "Ships through Canada Post.",
+            "what": "Shipping goes through Canada Post with no second carrier named.",
             "quote": "Orders are shipped with Canada Post using its label API. Card payments are "
             "captured in the storefront and settled through Moneris nightly.",
             "page": 4,

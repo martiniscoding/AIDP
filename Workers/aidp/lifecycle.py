@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 import httpx
 from psycopg.types.json import Jsonb
 
-from . import cache, coverage, db, logs, usage, whole_document
+from . import cache, coverage, db, designs, logs, usage, whole_document
 from .ai import llm
 from .config import get_config
 from .coverage import _checked_quote, _clean, _integer
@@ -129,6 +129,9 @@ class Checked:
             "unmatchedProduct": 0,
             "unstatedVersion": 0,
             "lineQuote": 0,
+            # The model named one section and the quote was really in another;
+            # the section that holds it is used. See coverage._rehome.
+            "rehomed": 0,
         }
     )
 
@@ -434,7 +437,16 @@ def check(
         if not " ".join(str(item.get("quote") or "").split()):
             out.dropped["missingQuote"] += 1
             continue
-        quote, page, reason = _checked_quote(item, section, whole)
+        # Four values since the rehome landed in coverage.py: the section a
+        # quote is really in may not be the one the model named. Taking it is
+        # what keeps the page number and the section title on the right design
+        # section — and unpacking three of them silently broke this whole check
+        # with a TypeError that `record` reported as "the model could not be
+        # reached".
+        quote, page, reason, home = _checked_quote(item, section, whole, sections)
+        if home.ordinal != section.ordinal:
+            section = home
+            out.corrected["rehomed"] += 1
         if quote is None:
             home, line = _line_naming(sections, section, name)
             if home is None or line is None:
@@ -563,7 +575,9 @@ def _outcome(state: str, note: str | None, **rest) -> dict:
     }
 
 
-def work_out(run: dict, *, today: dt.date | None = None) -> dict:
+def work_out(
+    run: dict, *, today: dt.date | None = None, design: designs.Design | None = None
+) -> dict:
     """The support status of every technology the run's design names.
 
     Raises when the model or endoflife.date's product list cannot be reached;
@@ -578,7 +592,9 @@ def work_out(run: dict, *, today: dt.date | None = None) -> dict:
         )
 
     with db.connection() as conn:
-        sections, whole = coverage._load(conn, run["documentId"])
+        sections, whole = coverage._load(
+            conn, design.document_id if design else run["documentId"]
+        )
     if whole is None or not sections:
         return _outcome(
             "skipped",
@@ -667,10 +683,61 @@ def work_out(run: dict, *, today: dt.date | None = None) -> dict:
     )
 
 
-def record(run: dict) -> dict:
-    """Check and store the design's technology support. Never raises."""
+# The lists a lifecycle outcome carries, and so the ones a merge concatenates.
+_ITEMS = ("technologies",)
+
+
+def _collapse(technologies: list) -> list:
+    """One row per product and version, naming every design that uses it.
+
+    Five designs in a project will name PostgreSQL five times and the support
+    date is the same fact each time, so the rows are folded together and the
+    other designs listed in `alsoIn`. Folded on the version too, not just the
+    name: "PostgreSQL 11" in one design and "PostgreSQL 15" in another is a
+    disagreement worth seeing, not a duplicate.
+    """
+    out: list[dict] = []
+    at: dict[tuple[str, str], dict] = {}
+    for item in technologies:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        key = (str(item.get("name") or "").lower(), str(item.get("version") or ""))
+        first = at.get(key)
+        if first is None:
+            at[key] = item
+            out.append(item)
+            continue
+        title = str(item.get("documentTitle") or "")
+        if title and title != first.get("documentTitle"):
+            also = first.setdefault("alsoIn", [])
+            if title not in also:
+                also.append(title)
+    return out
+
+
+def _worked_out(run: dict, scope: list[designs.Design] | None) -> dict:
+    """One design's technologies, or every design's merged. Raises as `work_out` does."""
+    if not scope:
+        return work_out(run)
+    outcomes = [
+        designs.tag(work_out(run, design=design), design, keys=_ITEMS) for design in scope
+    ]
+    merged = designs.merge(outcomes, items=_ITEMS)
+    merged["technologies"] = _collapse(merged.get("technologies") or [])
+    return merged
+
+
+def record(run: dict, scope: list[designs.Design] | None = None) -> dict:
+    """Check and store the designs' technology support. Never raises.
+
+    One design behaves exactly as it did before projects existed. Several are
+    read one at a time — the extraction is a model reading one design's sections
+    — and the results folded together, because a product's support date is one
+    fact about the project however many designs name it.
+    """
     try:
-        result = work_out(run)
+        result = _worked_out(run, scope)
     except Exception as exc:  # noqa: BLE001 — a run's verdicts stand without this
         logs.warn(log, "technology support not checked", runId=run["id"], error=str(exc)[:300])
         if isinstance(exc, Unreachable):

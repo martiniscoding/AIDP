@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 
 from psycopg.types.json import Jsonb
 
-from . import cache, coverage, db, logs, usage, whole_document
+from . import cache, coverage, db, designs, logs, usage, whole_document
 from .ai import llm
 from .config import get_config
 from .coverage import (
@@ -420,6 +420,23 @@ def _read_standards(run: dict) -> str | None:
         return None
 
 
+# The lists an advice outcome carries, and so the ones a merge concatenates.
+_ITEMS = ("suggestions",)
+
+
+def _worked_out(
+    run: dict, scope: list[designs.Design] | None, *, fresh: bool
+) -> dict:
+    """One design's suggestions, or every design's merged. Raises as `work_out` does."""
+    if not scope:
+        return work_out(run, fresh=fresh)
+    outcomes = [
+        designs.tag(work_out(run, fresh=fresh, design=design), design, keys=_ITEMS)
+        for design in scope
+    ]
+    return designs.merge(outcomes, items=_ITEMS)
+
+
 def _outcome(state: str, note: str | None, **rest) -> dict:
     generated = rest.get("generated_at")
     return {
@@ -441,8 +458,15 @@ def _outcome(state: str, note: str | None, **rest) -> dict:
     }
 
 
-def work_out(run: dict, *, fresh: bool = False) -> dict:
-    """The improvements suggested for one run's design, ready to store.
+def work_out(
+    run: dict, *, fresh: bool = False, design: designs.Design | None = None
+) -> dict:
+    """The improvements suggested for one design, ready to store.
+
+    `design` names which one, for a run over a project. Without it the run's own
+    document is read, which is every run opened for a single design. The cache
+    key is built from the design's own text, so a project's designs each keep
+    their own stored reply and adding a design does not invalidate the others.
 
     Reuses the reply stored for the same design, standards, model and prompt
     unless `fresh` is set, in which case the model is asked again and its answer
@@ -458,7 +482,9 @@ def work_out(run: dict, *, fresh: bool = False) -> dict:
         )
 
     with db.connection() as conn:
-        sections, whole = coverage._load(conn, run["documentId"])
+        sections, whole = coverage._load(
+            conn, design.document_id if design else run["documentId"]
+        )
         failing = _failing(conn, run["id"])
 
     if whole is None or not sections:
@@ -556,15 +582,22 @@ def work_out(run: dict, *, fresh: bool = False) -> dict:
     )
 
 
-def record(run: dict, *, fresh: bool = False) -> dict:
-    """Suggest and store improvements for the run's design. Never raises.
+def record(
+    run: dict, scope: list[designs.Design] | None = None, *, fresh: bool = False
+) -> dict:
+    """Suggest and store improvements for the run's designs. Never raises.
+
+    One design behaves exactly as it did before projects existed. Several are
+    asked about one at a time and the suggestions merged, each carrying the
+    design it is about — a suggestion that named no design would send a reviewer
+    looking through four files for a section 4.
 
     A fresh set that could not be worked out does not wipe the one already on
     the report: that stays, with the reason the new attempt failed beside it.
     """
     why: str | None = None
     try:
-        result = work_out(run, fresh=fresh)
+        result = _worked_out(run, scope, fresh=fresh)
     except Exception as exc:  # noqa: BLE001 — a run's verdicts stand without this
         logs.warn(log, "improvements could not be suggested", runId=run["id"], error=str(exc)[:300])
         why = (

@@ -4,8 +4,9 @@ The sections are built from the lines a real design (the LCL proposal) was parse
 into, and the quotes are ones a model really gave for it — the ones the phrase
 check refused on one run and kept on another. What this proves: a quote made of
 the section's own lines is kept and shown as those lines; a quote with one line
-the design does not have, or in the wrong section, is still refused; and a gap
-quoted this way is still dropped when a finding already cited its words.
+the design does not have is still refused, and one filed under the wrong section
+is rehomed to the section that holds it; and a gap quoted this way is still
+dropped when a finding already cited its words.
 
     docker run --rm -v "$PWD/Workers":/w -w /w -e STAGE=analyse \\
       -e DATABASE_URL=postgresql://nobody@127.0.0.1:1/none \\
@@ -78,7 +79,7 @@ SECTIONS = coverage.group(HEADS, ROWS)
 WHOLE = whole_document.build("LCL B2B Proposal", ROWS, [])
 
 
-def gap(section: int, quote: str, page: int | None = None, what: str = "A part") -> dict:
+def gap(section: int, quote: str, page: int | None = None, what: str = "The design does not say which tool does this") -> dict:
     return {"section": section, "page": page if page is not None else section, "what": what,
             "quote": quote}
 
@@ -135,8 +136,13 @@ elsewhere = coverage.check(
     {"gaps": [gap(18, "Frameworks & Libraries | Angular, HTML5, SpringBoot, Java")]},
     SECTIONS, WHOLE, [],
 )
-ok("words found in another section are still refused as the wrong section",
-   not elsewhere.gaps and elsewhere.dropped["outsideSection"] == 1, elsewhere.dropped)
+# Since the rehome landed, a quote whose words live in exactly one other section
+# is moved to that section rather than refused; two sections holding it is still
+# a refusal, which tests/test_precision_upgrade.py covers.
+ok("words found in exactly one other section are rehomed to it, not refused",
+   [g["section"] for g in elsewhere.gaps] == [16]
+   and elsewhere.dropped["outsideSection"] == 0,
+   (elsewhere.gaps, elsewhere.dropped))
 
 print("\nA gap quoted by its lines is still checked against the findings")
 labels = ("Build and Test(Junit)\nSource Code Repository\nVulnerability Scanning\n"

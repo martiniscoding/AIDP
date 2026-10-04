@@ -182,7 +182,7 @@ def main() -> int:
                         analyse_stage.mark_advice_failed(run_id)
                     elif run_id:
                         analyse_stage.mark_failed(run_id, reason)
-                else:
+                elif job.document_id is not None:
                     _mark_document_failed(job.document_id, reason)
         finally:
             logs.bind(correlation_id=None, document_id=None)

@@ -105,7 +105,7 @@ def stub_judge_document(*, document, reference, clause, precedents=""):
     }
 
 
-def stub_judge(*, reference, clause, extracts, precedents="", document=""):
+def stub_judge(*, reference, clause, extracts, precedents="", document="", designs=1):
     calls["search"] += 1
     reply = scripted(SEARCH_REPLIES, clause) or {
         "verdict": "covered",
@@ -128,19 +128,19 @@ def stub_find_uncovered(*, design, standards, title):
         "gaps": [
             {
                 "section": 2,
-                "what": "Sends device telemetry over MQTT.",
+                "what": "The platform sends device telemetry over plain MQTT to ingestion workers.",
                 "quote": "Telemetry is transmitted over plain MQTT to the ingestion workers.",
                 "page": 2,
             },
             {
                 "section": 1,
-                "what": "Administrators sign in with Okta.",
+                "what": "Administrators sign in to the platform through Okta with a second factor.",
                 "quote": "All administrative access uses multi-factor authentication via Okta.",
                 "page": 2,
             },
             {
                 "section": 1,
-                "what": "Invented.",
+                "what": "The platform writes every telemetry message to a blockchain ledger.",
                 "quote": "Telemetry is written to a blockchain ledger forever.",
                 "page": 2,
             },
@@ -148,8 +148,8 @@ def stub_find_uncovered(*, design, standards, title):
         "suggestions": [
             {
                 "title": "Device telemetry transport",
-                "covers": "How devices send telemetry.",
-                "why": "Telemetry travels over plain MQTT.",
+                "covers": "How field devices send telemetry, and over which transport.",
+                "why": "This design moves telemetry over plain MQTT with no transport encryption.",
                 "sections": [2, 1],
             }
         ],
@@ -354,7 +354,7 @@ try:
     tls = got.get("tls-invented", {})
     ok(
         "an invented quote cannot carry a verdict",
-        tls.get("verdict") == "needs_review" and "could not be found" in tls.get("rationale", ""),
+        tls.get("verdict") == "needs_review" and "not in the document" in tls.get("rationale", ""),
         tls.get("rationale"),
     )
     ok(

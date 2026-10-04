@@ -29,6 +29,7 @@ import type { AdviceView } from "@/lib/ingest/advice";
 import type { LifecycleView } from "@/lib/ingest/lifecycle";
 import { SLOW_PICKUP_MS, type JobView } from "@/lib/ingest/pipeline";
 import { cancelAssessment, reviewFinding, startAssessment } from "../actions";
+import { startProjectAssessment } from "../../projects/actions";
 import { Ticker } from "../Ticker";
 import { CoverageGaps } from "./CoverageGaps";
 import { Improvements } from "./Improvements";
@@ -242,14 +243,25 @@ const ABSENT_META = {
  * screen and they are one click away; what changes is only which of them a
  * reviewer has to scroll past to reach the work.
  */
+/**
+ * What is being assessed.
+ *
+ * A design, or a whole project — the panel is the same report either way, and
+ * only the action behind "Assess" differs. A union rather than two optional ids
+ * so a caller cannot pass neither, or both.
+ */
+export type Scope =
+  | { kind: "document"; documentId: string }
+  | { kind: "project"; projectId: string };
+
 export function Assessment({
-  documentId,
+  scope,
   run,
   counts,
   findings,
   decisionsInForce,
 }: {
-  documentId: string;
+  scope: Scope;
   run: RunView;
   counts: VerdictCounts;
   findings: FindingView[];
@@ -289,7 +301,10 @@ export function Assessment({
   // against the whole document before it is reported. See Workers/aidp/stages.
   const begin = () =>
     startTransition(async () => {
-      const result = await startAssessment(documentId);
+      const result =
+        scope.kind === "project"
+          ? await startProjectAssessment(scope.projectId)
+          : await startAssessment(scope.documentId);
       setMessage(result.message);
       router.refresh();
     });
@@ -753,11 +768,20 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 >
                   <div className="px-3 py-2.5">
                     <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-ink/62">
+                      {/* Which design, when the run covered several. A heading
+                          and a page number are not an address on their own
+                          across a project, and the reviewer has to know which
+                          file to open. */}
+                      {item.documentTitle && (
+                        <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/72">
+                          {item.documentTitle}
+                        </span>
+                      )}
                       {/* A quote from a whole-document reading has no heading;
                           what a reviewer needs to know is that it was checked. */}
                       <span>
                         {item.sourceKind === "quote"
-                          ? "Quoted from the document, checked word for word"
+                          ? "Quoted from the design, checked word for word"
                           : item.headingPath}
                       </span>
                       {item.page != null && <span>· page {item.page}</span>}

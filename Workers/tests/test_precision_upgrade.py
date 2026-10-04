@@ -21,7 +21,15 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from aidp import advice, config, coverage, lifecycle, retrieval, whole_document  # noqa: E402
+from aidp import (  # noqa: E402
+    advice,
+    config,
+    coverage,
+    designs,
+    lifecycle,
+    retrieval,
+    whole_document,
+)
 from aidp.ai import llm  # noqa: E402
 from aidp.stages import analyse  # noqa: E402
 
@@ -465,7 +473,11 @@ ok("and a failure inside it is still swallowed", raised is None, raised)
 
 raised = None
 try:
-    analyse._confirm_absents({"id": "run-1", "documentId": "doc-1"}, [])
+    analyse._confirm_absents(
+        {"id": "run-1", "documentId": "doc-1"},
+        [],
+        designs.Scope([designs.Design("doc-1", "A design")], []),
+    )
 except Exception as exc:  # noqa: BLE001
     raised = exc
 ok("as it is for the pass as a whole", raised is None, raised)

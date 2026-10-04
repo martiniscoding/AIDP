@@ -4,10 +4,19 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, ArrowRight, FileSearch } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { requireWorkspace } from "@/lib/access/gate";
-import { canEditProject, getProject, projectDesigns } from "@/lib/ingest/projects";
+import { verdictCounts } from "@/lib/ingest/assessment";
+import { emptyCounts, type VerdictCounts } from "@/lib/ingest/verdicts";
+import {
+  assessableDesigns,
+  canEditProject,
+  getProject,
+  latestProjectRun,
+  projectDesigns,
+} from "@/lib/ingest/projects";
 import { UploadZone } from "../../documents/UploadZone";
 import { PipelineBadge } from "../../documents/PipelineStatus";
 import { PipelineWatcher } from "../../documents/PipelineWatcher";
+import { AssessProject, type ProjectRunSummary } from "./AssessProject";
 import { DesignResult } from "./DesignResult";
 import { ProjectSettings } from "./ProjectSettings";
 
@@ -42,14 +51,39 @@ export default async function ProjectPage({
   const designs = await projectDesigns(access.organisation.id, id);
   const archived = project.status !== "active";
   const mayEdit = canEditProject(access, project);
+
+  // The project's own assessment, which is separate from its designs' runs.
+  const projectRun = await latestProjectRun(access.organisation.id, id);
+  const inScope = await assessableDesigns(access.organisation.id, id);
+  const readyDesigns = inScope.filter(
+    (design) => design.status === "ready" && design._count.chunks > 0,
+  );
+  const projectCounts = projectRun ? await verdictCounts(projectRun.id) : emptyCounts();
+  const projectRunView: ProjectRunSummary | null = projectRun
+    ? {
+        state: projectRun.state,
+        totalClauses: projectRun.totalClauses,
+        completedClauses: projectRun.completedClauses,
+        orphaned: projectRun.orphaned,
+        // As the report counts them: a clause the designs are silent on is not
+        // shown there, so it is not counted here either.
+        reported: reported(projectCounts),
+        open: projectCounts.contradicts,
+        failureReason: projectRun.failureReason,
+      }
+    : null;
   // Keep the page current while a design is being read or assessed; without
   // it a fresh upload sat at its first status until someone reloaded.
-  const inFlight = designs.some(
-    (design) =>
-      (design.pipeline !== null && design.pipeline.state !== "failed") ||
-      (!design.runs[0]?.orphaned &&
-        (design.runs[0]?.state === "queued" || design.runs[0]?.state === "running")),
-  );
+  const inFlight =
+    designs.some(
+      (design) =>
+        (design.pipeline !== null && design.pipeline.state !== "failed") ||
+        (!design.runs[0]?.orphaned &&
+          (design.runs[0]?.state === "queued" || design.runs[0]?.state === "running")),
+    ) ||
+    (projectRun !== null &&
+      !projectRun.orphaned &&
+      (projectRun.state === "queued" || projectRun.state === "running"));
 
   return (
     <>
@@ -88,6 +122,17 @@ export default async function ProjectPage({
       </header>
 
       {mayEdit && <ProjectSettings project={project} />}
+
+      {/* Before the designs: the project is the unit of work, and its own
+          assessment is the one a reviewer wants. A design's run stays
+          underneath its design, for when one file is what changed. */}
+      <AssessProject
+        projectId={project.id}
+        designs={readyDesigns.length}
+        unready={inScope.length - readyDesigns.length}
+        archived={archived}
+        run={projectRunView}
+      />
 
       <section className="mt-7">
         <h2 className="mb-3.5 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
@@ -206,4 +251,9 @@ function Design({
     )}
     </article>
   );
+}
+
+/** Findings a reviewer is asked to read: everything but the clauses nothing answers. */
+function reported(counts: VerdictCounts): number {
+  return counts.covered + counts.partial + counts.contradicts + counts.needs_review;
 }

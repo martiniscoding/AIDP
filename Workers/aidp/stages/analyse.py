@@ -22,7 +22,6 @@ gap into production.
 from __future__ import annotations
 
 import re
-
 from dataclasses import dataclass, replace
 
 from psycopg.types.json import Jsonb
@@ -32,6 +31,7 @@ from .. import (
     coverage,
     db,
     decisions,
+    designs,
     lifecycle,
     logs,
     progress,
@@ -224,6 +224,56 @@ def _shorten(text: str, limit: int) -> str:
     return window[: limit - 1].rstrip() + "…"
 
 
+def _context(conn, scope: designs.Scope) -> str:
+    """What the work under assessment is for, in the judge's words.
+
+    One design gives its own summary, exactly as it did before projects existed.
+    Several give one labelled block each: the judge is told it is reading a set
+    of designs for one solution, because the alternative — three summaries run
+    together — reads as three unrelated systems and invites a verdict about the
+    wrong one.
+    """
+    if not scope.designs:
+        return ""
+    rows = db.query(
+        conn,
+        'SELECT "id", "summary" FROM "document" WHERE "id" = ANY(%s)',
+        (scope.document_ids,),
+    )
+    summaries = {r["id"]: (r["summary"] or "").strip() for r in rows}
+    if len(scope.designs) == 1:
+        return summaries.get(scope.designs[0].document_id, "")
+
+    blocks = [
+        f'=== design: "{design.title}" ===\n{summaries[design.document_id]}'
+        for design in scope.designs
+        if summaries.get(design.document_id)
+    ]
+    if not blocks:
+        return ""
+    return (
+        "These designs describe one solution between them. Judge the clause against all "
+        "of them together: what one leaves out another may answer.\n\n" + "\n\n".join(blocks)
+    )
+
+
+def _with_unready(note: str | None, scope: designs.Scope) -> str | None:
+    """The run's note, saying which designs it could not read.
+
+    A project report that silently covers four of five designs is worse than one
+    that covers four and says so — the fifth one's gaps would read as the
+    project's.
+    """
+    if not scope.unready:
+        return note
+    missing = ", ".join(f'"{title}"' for title in scope.unready)
+    said = (
+        f"Not included: {missing} — still being processed. Assess the project again "
+        "once they finish."
+    )
+    return f"{note} {said}" if note else said
+
+
 def handle(job: Job, heartbeat) -> None:
     run_id = job.payload.get("runId")
     if not run_id:
@@ -249,13 +299,14 @@ def handle(job: Job, heartbeat) -> None:
         if run is None:
             raise RuntimeError(f"assessment run {run_id} no longer exists")
         clauses = _framework_clauses(conn, run["frameworkId"])
-        # What the submitted document is, read once per run. The same string
-        # for every clause, so fetching it inside the loop would be a hundred
-        # round trips for one column.
-        submission = db.one(
-            conn, 'SELECT "summary" FROM "document" WHERE "id" = %s', (run["documentId"],)
-        )
-        document_context = (submission or {}).get("summary") or ""
+        # One design, or every finished design in a project. Everything below
+        # reads this rather than run["documentId"], which is null on a project
+        # run. See designs.py.
+        scope = designs.for_run(conn, run)
+        # What the submitted work is, read once per run. The same string for
+        # every clause, so fetching it inside the loop would be a hundred round
+        # trips for one column.
+        document_context = _context(conn, scope)
         done = {
             r["clauseId"]
             for r in db.query(
@@ -275,16 +326,35 @@ def handle(job: Job, heartbeat) -> None:
         _fail(run_id, "The framework contains no clauses. Ingest a reference document first.")
         raise RuntimeError("framework has no clauses")
 
+    if not scope.designs:
+        _fail(
+            run_id,
+            "There is no finished design to assess. A project is assessed once at least one "
+            "of its designs has been processed."
+            if run.get("projectId")
+            else "The design this assessment was opened for no longer exists.",
+        )
+        raise RuntimeError(f"run {run_id} has no designs in scope")
+
     # Before any retrieval. A document embedded under an earlier embedding model
     # has no vectors that search can see, and a clause judged on an empty
     # search reads as absent. See `embed.embed_missing`.
     progress.step("Checking the search index")
-    healed = embed_stage.embed_missing(run["documentId"], heartbeat)
+    healed = sum(
+        embed_stage.embed_missing(design.document_id, heartbeat) for design in scope.designs
+    )
     if healed:
-        logs.info(log, "embedded missing chunks before assessing", runId=run_id, chunks=healed)
+        logs.info(
+            log,
+            "embedded missing chunks before assessing",
+            runId=run_id,
+            chunks=healed,
+            designs=len(scope.designs),
+        )
 
     progress.step("Preparing the assessment")
-    mode, note, whole = _resolve_mode(run)
+    mode, note, whole = _resolve_mode(run, scope)
+    note = _with_unready(note, scope)
 
     pending = [c for c in clauses if c["id"] not in done]
     _start(
@@ -300,6 +370,7 @@ def handle(job: Job, heartbeat) -> None:
         "assessment started",
         runId=run_id,
         mode=mode,
+        designs=designs.describe(scope),
         clauses=len(clauses),
         resuming=len(done),
         pending=len(pending),
@@ -322,9 +393,9 @@ def handle(job: Job, heartbeat) -> None:
     for index, clause in enumerate(pending, start=1):
         progress.step(step_label, done=len(done) + index - 1, total=len(clauses))
         if whole is not None:
-            _assess_document_one(run, clause, whole, document_context)
+            _assess_document_one(run, clause, whole, scope, document_context)
         else:
-            _assess_one(run, clause, document_context)
+            _assess_one(run, clause, scope, document_context)
         heartbeat()
         # Every clause, not every fifth. A clause takes around fifteen seconds,
         # so batching the write held the progress bar still for over a minute at
@@ -352,28 +423,28 @@ def handle(job: Job, heartbeat) -> None:
     if whole is None:
         progress.step("Re-reading what looked absent")
         heartbeat()
-        _confirm_absents(run, clauses)
+        _confirm_absents(run, clauses, scope)
 
     # The reverse question: what the design does that no clause governs, and the
     # standards that would. After the clauses, so a passage a clause has already
     # judged is never reported as ungoverned. Never fails the run; see coverage.py.
     progress.step("Finding parts of the design no standard covers")
     heartbeat()
-    coverage.record(run, clauses)
+    coverage.record(run, clauses, scope.designs)
 
     # What an experienced reviewer would still ask of the design, beyond the
     # standards. Last, and in its own call, so it can draw on every finding above
     # and can never soften one. Never fails the run; see advice.py.
     progress.step("Suggesting improvements to the design")
     heartbeat()
-    advice.record(run, fresh=bool(job.payload.get("freshAdvice")))
+    advice.record(run, scope.designs, fresh=bool(job.payload.get("freshAdvice")))
 
     # Whether the products the design builds on are still supported, from public
     # lifecycle data — facts beside the findings, never a verdict. Only product
     # ids are looked up. Never fails the run; see lifecycle.py.
     progress.step("Checking the technologies' support dates")
     heartbeat()
-    lifecycle.record(run)
+    lifecycle.record(run, scope.designs)
 
     # "Compare both": this run is done, and the other mode's run is opened in
     # the same transaction and carried on by this same job. See
@@ -402,12 +473,13 @@ def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
     progress.step("Suggesting improvements to the design")
     with db.connection() as conn:
         run = db.one(conn, 'SELECT * FROM "assessment_run" WHERE "id" = %s', (run_id,))
-    if run is None:
-        raise RuntimeError(f"assessment run {run_id} no longer exists")
+        if run is None:
+            raise RuntimeError(f"assessment run {run_id} no longer exists")
+        scope = designs.for_run(conn, run)
 
     heartbeat()
     fresh = bool(job.payload.get("freshAdvice"))
-    result = advice.record(run, fresh=fresh)
+    result = advice.record(run, scope.designs, fresh=fresh)
     with db.transaction() as conn:
         queue.complete(conn, job)
     logs.info(
@@ -457,7 +529,7 @@ class _Judged:
     best: float
 
 
-def _assess_one(run: dict, clause: dict, document: str = "") -> None:
+def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "") -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
@@ -469,7 +541,13 @@ def _assess_one(run: dict, clause: dict, document: str = "") -> None:
     vector = retrieval.embed_query(query)
     precedents = _precedents(run, clause, query, vector)
     judged = _judge_by_search(
-        run, clause, query=query, vector=vector, precedents=precedents, document=document
+        run,
+        clause,
+        scope=scope,
+        query=query,
+        vector=vector,
+        precedents=precedents,
+        document=document,
     )
     _write(
         run["id"],
@@ -516,6 +594,7 @@ def _judge_by_search(
     run: dict,
     clause: dict,
     *,
+    scope: designs.Scope,
     query: str,
     vector: str,
     precedents: list,
@@ -528,10 +607,11 @@ def _judge_by_search(
     """
     reference = f"{clause['documentTitle']} — {clause['headingPath']}"
     with db.connection() as conn:
-        candidates = retrieval.search_document(
+        candidates = retrieval.search(
             conn,
             organisation_id=run["organisationId"],
-            document_id=run["documentId"],
+            document_ids=scope.document_ids,
+            titles=scope.titles,
             query=query,
             limit=CANDIDATES,
             vector=vector,
@@ -543,15 +623,24 @@ def _judge_by_search(
         # Nothing in the submitted document at all. Only reachable when it has
         # no chunks, which the caller should have prevented.
         return _Judged(
-            "needs_review", 0.0, "No content was retrieved from the submitted document.",
-            [], [], 0.0,
+            "needs_review",
+            0.0,
+            "No content was retrieved from the submitted design."
+            if len(scope.designs) == 1
+            else "No content was retrieved from any of the project's designs.",
+            [],
+            [],
+            0.0,
         )
 
     try:
         raw = llm.judge(
             reference=reference,
             clause=_render_clause(clause),
-            extracts=_render_extracts(candidates),
+            extracts=_render_extracts(candidates, named=len(scope.designs) > 1),
+            # How the clause is to be read: one design, or several that describe
+            # one solution between them. See llm._SCOPE_RULE.
+            designs=len(scope.designs),
             precedents=decisions.render(precedents),
             document=document,
         )
@@ -560,7 +649,8 @@ def _judge_by_search(
         return _Judged(
             "needs_review",
             0.0,
-            f"The model could not be reached for this clause: {str(exc)[:160]}",
+            "This clause was not judged: the model's answer could not be read. Run the "
+            f"assessment again. ({str(exc)[:120]})",
             [],
             [],
             best,
@@ -580,6 +670,11 @@ def _judge_by_search(
             # quotation from the page does not need one.
             "sourceKind": c.source_kind,
             "figureId": c.source_id if c.is_generated else None,
+            # Which design it came from. On a project run "page 12" is not an
+            # address on its own, and the reviewer has to know which file to
+            # open. Empty on findings from before projects existed.
+            "documentId": c.document_id,
+            "documentTitle": c.document_title,
         }
         for cid in cited
         if (c := by_id.get(cid))
@@ -612,18 +707,41 @@ MODES = ("retrieval", "document")
 MAX_QUOTES = 8
 
 
-def _resolve_mode(run: dict) -> tuple[str, str | None, whole_document.WholeDocument | None]:
+def _resolve_mode(
+    run: dict, scope: designs.Scope
+) -> tuple[str, str | None, whole_document.WholeDocument | None]:
     """(mode this run can use, why it is not the one asked for, the document).
 
     A whole-document run that cannot read the whole document says so and falls
     back to search rather than failing — a report by the older method is worth
     more than none, as long as nobody mistakes which method produced it.
+
+    A project run always searches. Concatenating several designs into one text
+    would put three "page 4"s in front of a judge whose every quote is checked
+    by page, and on any real project the whole would pass the token budget — at
+    which point this would fall back to search anyway, silently. Search across
+    the designs reaches the same verdicts with every quote still checked against
+    the design it came from, and the absent re-read still reads each design
+    whole, one at a time.
     """
+    if len(scope.designs) != 1:
+        asked = (run.get("mode") or "retrieval") == "document"
+        return (
+            "retrieval",
+            (
+                "Assessed by search across the project's designs. Reading several designs as "
+                "one text would make every page number ambiguous; each design is still read "
+                "whole for anything the search reported absent."
+            )
+            if asked
+            else None,
+            None,
+        )
     if (run.get("mode") or "retrieval") != "document":
         return "retrieval", None, None
+    only = scope.designs[0]
     with db.connection() as conn:
-        row = db.one(conn, 'SELECT "title" FROM "document" WHERE "id" = %s', (run["documentId"],))
-        whole = whole_document.load(conn, run["documentId"], (row or {}).get("title") or "")
+        whole = whole_document.load(conn, only.document_id, only.title)
     if whole is None:
         return (
             "retrieval",
@@ -648,6 +766,7 @@ def _assess_document_one(
     run: dict,
     clause: dict,
     whole: whole_document.WholeDocument,
+    scope: designs.Scope,
     document_context: str = "",
 ) -> None:
     """Read the whole document, judge, check every quote, commit — one clause.
@@ -679,7 +798,10 @@ def _assess_document_one(
             clause,
             verdict="needs_review",
             confidence=0.0,
-            rationale=f"The model could not be reached for this clause: {str(exc)[:160]}",
+            rationale=(
+                "This clause was not judged: the model's answer could not be read. Run the "
+                f"assessment again. ({str(exc)[:120]})"
+            ),
             evidence=[],
             retrieval_score=0.0,
             applied=[],
@@ -705,6 +827,7 @@ def _assess_document_one(
         second = _judge_by_search(
             run,
             clause,
+            scope=scope,
             query=query,
             vector=vector,
             precedents=precedents,
@@ -733,8 +856,8 @@ def _assess_document_one(
     )
 
 
-def _confirm_absents(run: dict, clauses: list[dict]) -> None:
-    """Re-read the whole document for every clause the search found nothing for.
+def _confirm_absents(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
+    """Re-read each design whole for every clause the search found nothing for.
 
     Never raises: a run's verdicts have to reach the report even when the re-read
     cannot run. But they do not reach it unchanged. Turning a wrong "absent" into
@@ -748,7 +871,7 @@ def _confirm_absents(run: dict, clauses: list[dict]) -> None:
     left in between is exactly what the second opinion existed to catch.
     """
     try:
-        _confirm(run, clauses)
+        _confirm(run, clauses, scope)
     except Exception as exc:  # noqa: BLE001 — the clause verdicts stand without it
         logs.warn(
             log, "absent clauses could not be re-read", runId=run["id"], error=str(exc)[:300]
@@ -814,53 +937,77 @@ def _demote_unconfirmed(run: dict, clauses: list[dict], why: str) -> int:
     return demoted
 
 
-def _confirm(run: dict, clauses: list[dict]) -> None:
+def _confirm(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
+    """Read each design in scope whole, and overturn what any of them answers.
+
+    One design at a time, never concatenated: every quote the reply gives is
+    checked word for word against the design it was read from, and a quote
+    checked against another design's text is how an invented one gets through.
+
+    A clause leaves the list the moment one design answers it, so each design
+    after that is only asked about what is still outstanding — on a project of
+    five designs that is the difference between five full passes and one.
+    """
     with db.connection() as conn:
         absent_ids = db.query(
             conn,
             'SELECT "clauseId" FROM "finding" WHERE "runId" = %s AND "verdict" = %s',
             (run["id"], "absent"),
         )
-        if not absent_ids:
-            return
-        row = db.one(
-            conn, 'SELECT "title" FROM "document" WHERE "id" = %s', (run["documentId"],)
-        )
-        whole = whole_document.load(conn, run["documentId"], (row or {}).get("title") or "")
-
-    # Both of these leave the search's verdicts exactly as they are, which is the
-    # behaviour this stage had before the pass existed.
-    if whole is None:
-        logs.info(
-            log,
-            "no stored pages: absent verdicts stand as the search left them",
-            runId=run["id"],
-        )
-        return
-    limit = get_config().whole_document_max_tokens
-    if whole.tokens > limit:
-        logs.info(
-            log,
-            "document too large to re-read for absent clauses",
-            runId=run["id"],
-            tokens=whole.tokens,
-            limit=limit,
-        )
+    if not absent_ids:
         return
 
     by_id = {clause["id"]: clause for clause in clauses}
-    absent = [by_id[row["clauseId"]] for row in absent_ids if row["clauseId"] in by_id]
+    outstanding = [by_id[row["clauseId"]] for row in absent_ids if row["clauseId"] in by_id]
+    absent_count = len(outstanding)
+    limit = get_config().whole_document_max_tokens
     changed = 0
-    for start in range(0, len(absent), CONFIRM_BATCH):
-        batch = absent[start : start + CONFIRM_BATCH]
-        raw = llm.confirm_absent(document=whole.text, clauses=_render_absent(batch))
-        changed += _adopt_confirmations(run, batch, raw, whole)
+    read = 0
+
+    for design in scope.designs:
+        if not outstanding:
+            break
+        with db.connection() as conn:
+            whole = whole_document.load(conn, design.document_id, design.title)
+
+        # Both of these leave the search's verdicts exactly as they are, which is
+        # the behaviour this stage had before the pass existed. On a project run
+        # one unreadable design does not stop the others being read.
+        if whole is None:
+            logs.info(
+                log,
+                "no stored pages: absent verdicts stand as the search left them",
+                runId=run["id"],
+                documentId=design.document_id,
+            )
+            continue
+        if whole.tokens > limit:
+            logs.info(
+                log,
+                "design too large to re-read for absent clauses",
+                runId=run["id"],
+                documentId=design.document_id,
+                tokens=whole.tokens,
+                limit=limit,
+            )
+            continue
+
+        read += 1
+        answered: set[str] = set()
+        for start_at in range(0, len(outstanding), CONFIRM_BATCH):
+            batch = outstanding[start_at : start_at + CONFIRM_BATCH]
+            raw = llm.confirm_absent(document=whole.text, clauses=_render_absent(batch))
+            answered |= _adopt_confirmations(run, batch, raw, whole, design, scope)
+        changed += len(answered)
+        outstanding = [clause for clause in outstanding if clause["id"] not in answered]
 
     logs.info(
         log,
-        "absent clauses re-read against the whole document",
+        "absent clauses re-read against each design whole",
         runId=run["id"],
-        clauses=len(absent),
+        clauses=absent_count,
+        designsRead=read,
+        of=len(scope.designs),
         changed=changed,
     )
 
@@ -874,17 +1021,25 @@ def _render_absent(clauses: list[dict]) -> str:
 
 
 def _adopt_confirmations(
-    run: dict, batch: list[dict], raw: dict, whole: whole_document.WholeDocument
-) -> int:
-    """Rewrite the findings the re-read overturned, and only those.
+    run: dict,
+    batch: list[dict],
+    raw: dict,
+    whole: whole_document.WholeDocument,
+    design: designs.Design,
+    scope: designs.Scope,
+) -> set[str]:
+    """Rewrite the findings this design's re-read overturned, and only those.
 
-    A verdict moves off "absent" on one condition: the reply quotes the document,
-    and the quote is in the document word for word. Anything else — a clause
+    Returns the clause ids that moved, so the caller can stop asking the
+    remaining designs about them.
+
+    A verdict moves off "absent" on one condition: the reply quotes the design,
+    and the quote is in that design word for word. Anything else — a clause
     number that is not in this batch, a verdict that is not one of ours, a quote
     nowhere in the text — leaves the finding as the search left it.
     """
     items = raw.get("clauses") if isinstance(raw.get("clauses"), list) else []
-    changed = 0
+    answered: set[str] = set()
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -900,7 +1055,8 @@ def _adopt_confirmations(
         if not check.verified:
             logs.warn(
                 log,
-                "absent stands: the quoted words are not in the document",
+                "absent stands: the quoted words are not in the design",
+                documentId=design.document_id,
                 reason=check.reason,
                 quote=quote[:300],
             )
@@ -914,8 +1070,15 @@ def _adopt_confirmations(
             verdict=verdict,
             confidence=CONFIRM_CONFIDENCE,
             rationale=(
-                "A search of this design found nothing for this clause, so the whole "
-                f"document was read again — and it does address it. {rationale}"
+                (
+                    "A search found nothing for this clause, so each design was read in "
+                    f'full — and "{design.title}" does address it. {rationale}'
+                )
+                if len(scope.designs) > 1
+                else (
+                    "A search of this design found nothing for this clause, so the whole "
+                    f"document was read again — and it does address it. {rationale}"
+                )
             ),
             evidence=[
                 {
@@ -925,13 +1088,15 @@ def _adopt_confirmations(
                     "excerpt": quote[:1500],
                     "sourceKind": "quote",
                     "figureId": None,
+                    "documentId": design.document_id,
+                    "documentTitle": design.title,
                 }
             ],
             retrieval_score=0.0,
             applied=[],
         )
-        changed += 1
-    return changed
+        answered.add(clause["id"])
+    return answered
 
 
 def _page_number(value) -> int | None:
@@ -1259,20 +1424,25 @@ def _render_clause(clause: dict) -> str:
     return "\n".join(parts)
 
 
-def _render_extracts(candidates: list[retrieval.Candidate]) -> str:
+def _render_extracts(candidates: list[retrieval.Candidate], *, named: bool = False) -> str:
     """Extracts, with generated ones labelled as such.
 
     A figure extract is a vision model's reading of a diagram, not a quotation
     from the document. Unlabelled it is indistinguishable from one — which is
     precisely how a hallucinated system name becomes cited evidence in a
     compliance finding.
+
+    `named` adds the design each extract is from, for a project run. Without it
+    two designs' page 4 are the same location to the reader of this block, and
+    the judge's rationale cannot say which design answers the clause.
     """
     out = []
     for c in candidates:
         page = f" page={c.page_start}" if c.page_start else ""
         origin = ' origin="model-description-of-a-diagram"' if c.is_generated else ""
+        design = f' design="{c.document_title}"' if named and c.document_title else ""
         out.append(
-            f'<extract id="{c.chunk_id}" location="{c.heading_path}"{page}{origin}>\n'
+            f'<extract id="{c.chunk_id}"{design} location="{c.heading_path}"{page}{origin}>\n'
             f"{c.excerpt}\n</extract>"
         )
     return "\n\n".join(out)

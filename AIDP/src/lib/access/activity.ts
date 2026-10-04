@@ -174,6 +174,8 @@ export async function organisationActivity(
               uploadedBy: { select: { name: true, email: true } },
             },
           },
+          // A project run has no document; it is the project that was assessed.
+          project: { select: { name: true } },
         },
       }),
       prisma.decision.findMany({
@@ -264,14 +266,22 @@ export async function organisationActivity(
         run.state === "running" && run.totalClauses > 0
           ? `${run.completedClauses} of ${run.totalClauses} clauses`
           : "";
+      // A project run is nobody's upload: it covers every design in the
+      // project, so it is attributed to the project rather than to whoever
+      // happened to add the first file.
+      const project = run.project;
+      const whole = project !== null;
       return {
         id: `run:${run.id}`,
         kind: "run" as const,
         at: run.startedAt,
-        userId: run.document.uploadedById,
-        personName: run.document.uploadedBy?.name || run.document.uploadedBy?.email || UNATTRIBUTED,
-        title: run.document.title,
-        detail: progress ? `Assessment · ${progress}` : "Assessment",
+        userId: whole ? null : run.document?.uploadedById ?? null,
+        personName: whole
+          ? UNATTRIBUTED
+          : run.document?.uploadedBy?.name || run.document?.uploadedBy?.email || UNATTRIBUTED,
+        title: project ? project.name : run.document?.title ?? "",
+        detail:
+          (whole ? "Project assessment" : "Assessment") + (progress ? ` · ${progress}` : ""),
         state: meta.label,
         tone: meta.tone,
       };

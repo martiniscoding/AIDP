@@ -2,8 +2,9 @@
 
 The model's reply is scripted, so what this proves is what the code does with a
 reply: a section number that is not a section is dropped, a change to the design
-that does not quote it is dropped, a quote that is not in the design — or not in
-the section it is claimed for — is refused, a clause reference is kept only when
+that does not quote it is dropped, a quote that is not in the design is refused
+whatever the suggestion's kind, a quote that is really in one other section moves
+the suggestion to that section, a clause reference is kept only when
 this run failed that clause, labels the model invented are replaced, and the list
 is ordered and capped. Then the run end to end with the database and the model
 stubbed: what is stored when it works, when it is switched off, when there is no
@@ -147,8 +148,8 @@ def suggestion(**fields) -> dict:
         "component": "PostgreSQL",
         "quote": "",
         "page": None,
-        "recommendation": "Do the thing.",
-        "why": "Because.",
+        "recommendation": "Name the owning team and record the change in the design.",
+        "why": "The design leaves this for the reader to assume.",
         "clauses": [],
     }
     base.update(fields)
@@ -200,7 +201,7 @@ REPLY = {
             clauses=["[IAM §2.1] Named accounts"],
         ),
         suggestion(
-            title="An addition keeps going without its unchecked quote",
+            title="An addition quoting words the design does not have",
             kind="add",
             section=3,
             component="carrier API",
@@ -245,7 +246,7 @@ REPLY = {
             component="PostgreSQL 11",
             quote="Orders are stored in a single PostgreSQL 11 instance in the Toronto region.",
             page=2,
-            recommendation="Confirm the support status of PostgreSQL 11 and plan an upgrade path.",
+            recommendation="Move the order database to PostgreSQL 15 before November 2026.",
         ),
         suggestion(title="Several names", kind="add", component="PostgreSQL and Redis"),
         suggestion(
@@ -277,7 +278,7 @@ ok(
         "Keep backups off the database's storage",
         "Add a standby database",
         "Bound the carrier retries",
-        "An addition keeps going without its unchecked quote",
+        "Right words, wrong section",
         "Plan the PostgreSQL upgrade",
         "Several names",
         "Placed by its quote",
@@ -294,13 +295,19 @@ ok(
 ok("a number that is not a section is dropped", checked.dropped["unknownSection"] == 1)
 ok(
     "a change quoting invented words is refused",
-    checked.dropped["unverified"] == 1 and "Invented words" not in titles,
+    "Invented words" not in titles and checked.dropped["unverified"] == 2,
     checked.dropped,
 )
 ok(
-    "a change quoting real words from another section is refused",
-    checked.dropped["outsideSection"] == 1,
-    checked.dropped,
+    "an addition is refused with it, no longer kept minus its quote",
+    "An addition quoting words the design does not have" not in titles,
+    titles,
+)
+ok(
+    "a change quoting real words from another section is moved to it, not refused",
+    by_title.get("Right words, wrong section", {}).get("section") == 3
+    and checked.dropped["outsideSection"] == 0,
+    (by_title.get("Right words, wrong section"), checked.dropped),
 )
 ok("no title or no recommendation is dropped", checked.dropped["empty"] == 2, checked.dropped)
 ok("a repeated title, in any case, is kept once", checked.dropped["duplicate"] == 1)
@@ -345,11 +352,13 @@ ok(
     standby["kind"] == "add" and standby["quote"] is None and standby["page"] is None,
     standby,
 )
-unchecked = by_title["An addition keeps going without its unchecked quote"]
+rehomed = by_title["Right words, wrong section"]
 ok(
-    "an addition's quote that does not check out is left off, never shown",
-    unchecked["quote"] is None and unchecked["page"] is None and unchecked["section"] == 3,
-    unchecked,
+    "a rehomed suggestion carries the quote and the page of its real section",
+    rehomed["quote"] == "Failed calls to the carrier API are retried until they succeed."
+    and rehomed["page"] == 4
+    and rehomed["section"] == 3,
+    rehomed,
 )
 odd = by_title["Plan the PostgreSQL upgrade"]
 ok(

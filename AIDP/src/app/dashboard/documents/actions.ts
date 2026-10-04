@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { canManageStandards } from "@/lib/access/roles";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { resolveFramework } from "@/lib/ingest/assessment";
+import { resolveFramework, runJobWhere } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
 import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
 import { isOutcome } from "@/lib/ingest/outcomes-vocabulary";
@@ -25,6 +25,18 @@ export type ActionResult = { ok: boolean; message: string; runId?: string };
  */
 async function requireUser() {
   return (await requireAccess()).user;
+}
+
+/**
+ * Where a run's report is read.
+ *
+ * A design run's report is on the design's page; a project run's is on the
+ * project's, because there is no one design it belongs to.
+ */
+function reportPath(run: { documentId: string | null; projectId: string | null }) {
+  return run.projectId
+    ? `/dashboard/projects/${run.projectId}/assessment`
+    : `/dashboard/documents/${run.documentId}`;
 }
 
 const STANDARDS_REFUSED =
@@ -358,6 +370,7 @@ export async function cancelAssessment(runId: string): Promise<ActionResult> {
       select: {
         id: true,
         documentId: true,
+        projectId: true,
         organisationId: true,
         state: true,
         completedClauses: true,
@@ -386,17 +399,13 @@ export async function cancelAssessment(runId: string): Promise<ActionResult> {
       });
       if (changed.count === 0) return false;
       await tx.job.deleteMany({
-        where: {
-          documentId: run.documentId,
-          stage: "analyse",
-          state: { in: ["queued", "leased"] },
-        },
+        where: { ...runJobWhere(run), state: { in: ["queued", "leased"] } },
       });
       return true;
     });
     if (!stopped) return { ok: false, message: "That assessment had already finished." };
 
-    revalidatePath(`/dashboard/documents/${run.documentId}`);
+    revalidatePath(reportPath(run));
     return { ok: true, message: "Assessment stopped. Its findings so far are kept." };
   } catch (error) {
     if (error instanceof NotAMember || error instanceof NoAccess) {
@@ -415,7 +424,14 @@ export async function refreshSuggestions(runId: string): Promise<ActionResult> {
 
     const run = await prisma.assessmentRun.findUnique({
       where: { id: runId },
-      select: { id: true, documentId: true, organisationId: true, state: true, advice: true },
+      select: {
+        id: true,
+        documentId: true,
+        projectId: true,
+        organisationId: true,
+        state: true,
+        advice: true,
+      },
     });
     if (!run) return { ok: false, message: "That assessment no longer exists." };
     await requireMembership(user.id, run.organisationId);
@@ -429,7 +445,7 @@ export async function refreshSuggestions(runId: string): Promise<ActionResult> {
     // Only the report on screen: advice for an older run would be advice nobody
     // is looking at, next to findings that have since been superseded.
     const latest = await prisma.assessmentRun.findFirst({
-      where: { documentId: run.documentId },
+      where: run.projectId ? { projectId: run.projectId } : { documentId: run.documentId },
       orderBy: { startedAt: "desc" },
       select: { id: true },
     });
@@ -448,7 +464,7 @@ export async function refreshSuggestions(runId: string): Promise<ActionResult> {
     // whose job was lost would otherwise block every later request for good.
     if (previous?.refreshing === true) {
       const live = await prisma.job.count({
-        where: { documentId: run.documentId, stage: "analyse", state: { in: ["queued", "leased"] } },
+        where: { ...runJobWhere(run), state: { in: ["queued", "leased"] } },
       });
       if (live > 0) {
         return { ok: false, message: "A new set of suggestions is already being worked out." };
@@ -477,7 +493,7 @@ export async function refreshSuggestions(runId: string): Promise<ActionResult> {
       });
     });
 
-    revalidatePath(`/dashboard/documents/${run.documentId}`);
+    revalidatePath(reportPath(run));
     return { ok: true, message: "Working out a new set of suggestions. It takes about a minute." };
   } catch (error) {
     if (error instanceof NotAMember || error instanceof NoAccess) {

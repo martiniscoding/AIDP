@@ -87,6 +87,9 @@ export async function listDocuments(userId: string, organisationId: string) {
 
   const jobsByDocument = new Map<string, JobRow[]>();
   for (const { documentId, ...job } of jobs) {
+    // The query asked for these documents, so every row has one. A project
+    // run's analyse job, which has none, cannot appear here.
+    if (!documentId) continue;
     const list = jobsByDocument.get(documentId) ?? [];
     list.push(job);
     jobsByDocument.set(documentId, list);
