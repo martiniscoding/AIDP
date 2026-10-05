@@ -16,7 +16,6 @@ import { requireWorkspace } from "@/lib/access/gate";
 import { assessableDesigns, getProject, latestProjectRun } from "@/lib/ingest/projects";
 import { Assessment, type FindingView, type RunView } from "../../../documents/[id]/Assessment";
 import { Decide, type OutcomeView } from "../../../documents/[id]/Decide";
-import { PipelineWatcher } from "../../../documents/PipelineWatcher";
 
 export const dynamic = "force-dynamic";
 
@@ -118,14 +117,8 @@ export default async function ProjectAssessmentPage({
   const unreviewed = findings.filter((f) => f.reviewerState === "pending").length;
   const openFindings = findings.filter((f) => f.verdict === "contradicts").length;
 
-  const live = run?.state === "queued" || run?.state === "running";
-
   return (
     <>
-      {/* Keeps the page current while a worker is on it; without it the progress
-          bar sat where it was until somebody reloaded. */}
-      <PipelineWatcher active={live === true && !run?.orphaned} />
-
       <Link
         href={`/dashboard/projects/${project.id}`}
         className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink/58 transition-colors hover:text-ink"

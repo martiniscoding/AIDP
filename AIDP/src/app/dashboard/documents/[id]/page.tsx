@@ -151,12 +151,16 @@ export default async function DocumentPage({
 
   return (
     <>
+      {/* A live assessment is not in here any more: its banner polls the run
+          itself (see useLiveProgress) and refreshes the page once, when there is
+          a report to show. Re-rendering the whole page every four seconds to
+          move one number was what held the clause count still — the render took
+          longer than the interval, so the refreshes were coalesced. */}
       <PipelineWatcher
         active={
           !isTerminal(document.status) ||
           // A ready document can be working again: a corrected figure re-embeds.
           (document.pipeline.state !== "ready" && document.pipeline.state !== "failed") ||
-          (!run?.orphaned && (run?.state === "queued" || run?.state === "running")) ||
           // A new set of suggestions asked for on a finished report.
           runView?.advice?.refreshing === true
         }

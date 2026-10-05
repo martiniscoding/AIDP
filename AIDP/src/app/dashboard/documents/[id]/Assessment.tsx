@@ -31,6 +31,7 @@ import { SLOW_PICKUP_MS, type JobView } from "@/lib/ingest/pipeline";
 import { cancelAssessment, reviewFinding, startAssessment } from "../actions";
 import { startProjectAssessment } from "../../projects/actions";
 import { Ticker } from "../Ticker";
+import { useLiveProgress } from "../useLiveProgress";
 import { CoverageGaps } from "./CoverageGaps";
 import { Improvements } from "./Improvements";
 import { Lifecycle } from "./Lifecycle";
@@ -99,12 +100,25 @@ const TONE: Record<string, string> = {
  * reached the first clause, and stays "running" through a retry or a worker
  * that died — so on its own it cannot tell a run nobody has touched from one a
  * worker is preparing, one waiting to try again after a provider refused, or one
- * nobody is working on any more. The job can. The page refreshes every few
- * seconds, so this moves on its own as the worker does.
+ * nobody is working on any more. The job can.
+ *
+ * The numbers come from `useLiveProgress`, which polls the run on its own every
+ * couple of seconds. They used to come from the page re-rendering on a timer,
+ * and that could not keep up with itself: the whole report was re-queried to
+ * carry one number, so the count stuck on its first clause until somebody
+ * reloaded.
  */
 function RunProgress({ run }: { run: NonNullable<RunView> }) {
-  const job = run.job;
-  const started = run.state === "running";
+  const live = useLiveProgress({
+    id: run.id,
+    state: run.state,
+    totalClauses: run.totalClauses,
+    completedClauses: run.completedClauses,
+    orphaned: run.orphaned,
+    job: run.job,
+  });
+  const job = live.job;
+  const started = live.state === "running";
   const slow = job?.state === "queued" && (job.sinceMs ?? 0) >= SLOW_PICKUP_MS;
   const troubled = slow || job?.state === "retrying" || job?.state === "stalled";
   const clock =
@@ -175,7 +189,7 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
           {headline}
         </span>
         <span className="text-ink/62 tabular-nums">
-          {started && `${run.completedClauses} / ${run.totalClauses} clauses`}
+          {started && `${live.completedClauses} / ${live.totalClauses} clauses`}
           {started && clock !== null && " · "}
           {clock !== null && <Ticker ms={clock} />}
         </span>
@@ -190,8 +204,8 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
           role="progressbar"
           aria-label="Clauses assessed"
           aria-valuemin={0}
-          aria-valuemax={run.totalClauses}
-          aria-valuenow={run.completedClauses}
+          aria-valuemax={live.totalClauses}
+          aria-valuenow={live.completedClauses}
           className="mt-2 h-1.5 overflow-hidden rounded-full bg-canvas-sunk"
         >
           <div
@@ -200,7 +214,7 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
               troubled ? "bg-warn/60" : "bg-royal-mid",
             )}
             style={{
-              width: `${Math.max(2, run.totalClauses ? Math.min(100, (run.completedClauses / run.totalClauses) * 100) : 0)}%`,
+              width: `${Math.max(2, live.totalClauses ? Math.min(100, (live.completedClauses / live.totalClauses) * 100) : 0)}%`,
             }}
           />
         </div>
