@@ -6,8 +6,104 @@ import { AlertTriangle, ArrowLeftRight, Check, Info, KeyRound, Trash2 } from "lu
 import { cn } from "@/lib/cn";
 import { PROVIDERS, type ProviderName } from "@/lib/access/credential-providers";
 import type { CredentialView } from "@/lib/access/credentials";
+import type { ModelGroup } from "@/lib/access/model-catalogue";
 import { ProviderMark, type MarkName } from "./ProviderMark";
 import { removeModelKey, saveModelKey, setModelKeyEnabled } from "./actions";
+
+/**
+ * Choose a model, or type one.
+ *
+ * A model id typed from memory is how a key ends up pointed at something that
+ * cannot do the work — and the requirement that matters, a strict JSON reply,
+ * is invisible in a name. The list is OpenRouter's own catalogue filtered to
+ * the models that declare it, so everything offered here can at least be
+ * judged against; see src/lib/access/model-catalogue.ts.
+ *
+ * The text box is kept rather than replaced. A catalogue that cannot be
+ * reached, a model published this morning, a private deployment — all of them
+ * end with somebody needing to type, and a picker that forbids it would be a
+ * worse form than the one it replaced.
+ */
+function ModelField({
+  name,
+  groups,
+  initial,
+  fallback,
+  children,
+}: {
+  name: string;
+  groups: ModelGroup[];
+  /** What this key already uses, or "" when it has none. */
+  initial: string;
+  /** The product's default, used when the field is left empty. */
+  fallback: string;
+  /** The hint under the control. */
+  children: React.ReactNode;
+}) {
+  const listed = groups.some((group) => group.models.some((model) => model.id === initial));
+  // A model that is set but not in the catalogue is already a typed one, so the
+  // form opens where its value can be seen rather than silently dropping it.
+  const [typing, setTyping] = useState(initial !== "" && !listed);
+
+  if (groups.length === 0 || typing) {
+    return (
+      <label className="block">
+        <Label>{name === "model" ? "Model" : "Cheaper model"}</Label>
+        <input
+          name={name}
+          defaultValue={initial}
+          placeholder={fallback}
+          spellCheck={false}
+          className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+        />
+        {groups.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setTyping(false)}
+            className="mt-1 text-[11.5px] text-royal underline decoration-royal/35 underline-offset-2 hover:decoration-royal"
+          >
+            choose from the list instead
+          </button>
+        )}
+        <Hint>{children}</Hint>
+      </label>
+    );
+  }
+
+  return (
+    <label className="block">
+      <Label>{name === "model" ? "Model" : "Cheaper model"}</Label>
+      <select
+        name={name}
+        defaultValue={initial}
+        onChange={(event) => {
+          if (event.target.value === TYPE_IT) setTyping(true);
+        }}
+        className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+      >
+        <option value="">Use the default — {fallback}</option>
+        {groups.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.models.map((model) => (
+              <option key={`${group.label}:${model.id}`} value={model.id}>
+                {model.id}
+                {model.inPerM > 0
+                  ? ` · $${model.inPerM.toFixed(2)}/$${model.outPerM.toFixed(2)} per M`
+                  : " · free"}
+                {model.vision ? " · reads images" : ""}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={TYPE_IT}>Something else — type the id…</option>
+      </select>
+      <Hint>{children}</Hint>
+    </label>
+  );
+}
+
+/** Not a model id: the catalogue has no bare names, every one carries a slash. */
+const TYPE_IT = "__type_it__";
 
 /**
  * The company's own model key.
@@ -33,10 +129,16 @@ import { removeModelKey, saveModelKey, setModelKeyEnabled } from "./actions";
 export function ModelKey({
   credential,
   storageReady,
+  openrouterModels,
 }: {
   credential: CredentialView | null;
   /** False when CREDENTIAL_ENCRYPTION_KEY is unset: nothing can be stored. */
   storageReady: boolean;
+  /**
+   * OpenRouter's catalogue, filtered to models that can do the work. Empty when
+   * it could not be read, and the form falls back to a text box.
+   */
+  openrouterModels: ModelGroup[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -179,36 +281,31 @@ export function ModelKey({
               <Hint>From {defaults.where}. Stored encrypted, and never shown again.</Hint>
             </label>
 
-            <label className="block">
-              <Label>Model</Label>
-              <input
-                name="model"
-                defaultValue={credential?.provider === provider ? credential.model : ""}
-                placeholder={defaults.model}
-                spellCheck={false}
-                className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
-              />
-              <Hint>
-                Judges every clause and reads every standard. Leave blank for {defaults.model},
-                which is what the product is tested against.
-              </Hint>
-            </label>
+            {/* Keyed on the provider so switching between them resets the
+                control rather than leaving one provider's model in another's
+                field — they share no namespace. */}
+            <ModelField
+              key={`model-${provider}`}
+              name="model"
+              groups={provider === "openrouter" ? openrouterModels : []}
+              initial={credential?.provider === provider ? credential.model : ""}
+              fallback={defaults.model}
+            >
+              Judges every clause and reads every standard. Leave it on the default for{" "}
+              {defaults.model}, which is what the product is tested against.
+            </ModelField>
 
             {defaults.twoModels && (
-              <label className="block">
-                <Label>Cheaper model</Label>
-                <input
-                  name="fastModel"
-                  defaultValue={credential?.provider === provider ? credential.fastModel : ""}
-                  placeholder={defaults.fastModel}
-                  spellCheck={false}
-                  className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
-                />
-                <Hint>
-                  One call per chunk of every document — the largest single line on the bill, and a
-                  summarising job, so it gets the cheap model.
-                </Hint>
-              </label>
+              <ModelField
+                key={`fastModel-${provider}`}
+                name="fastModel"
+                groups={provider === "openrouter" ? openrouterModels : []}
+                initial={credential?.provider === provider ? credential.fastModel : ""}
+                fallback={defaults.fastModel}
+              >
+                One call per chunk of every document — the largest single line on the bill, and a
+                summarising job, so it gets the cheap model.
+              </ModelField>
             )}
 
             {provider === "openrouter" && (

@@ -3,6 +3,7 @@ import { requireOwnerWorkspace } from "@/lib/access/gate";
 import { load } from "@/lib/access/profile";
 import { load as loadCredential } from "@/lib/access/credentials";
 import { secretsConfigured } from "@/lib/access/secrets";
+import { openrouterModels } from "@/lib/access/model-catalogue";
 import { ProfileForm } from "./ProfileForm";
 import { ModelKey } from "./ModelKey";
 
@@ -20,9 +21,13 @@ export const metadata: Metadata = {
  */
 export default async function ProfilePage() {
   const access = await requireOwnerWorkspace();
-  const [profile, credential] = await Promise.all([
+  // Alongside the two database reads rather than after them: the catalogue is a
+  // third-party fetch, cached for an hour, and it never rejects — see
+  // model-catalogue.ts. An empty list leaves the form with a text box.
+  const [profile, credential, models] = await Promise.all([
     load(access.organisation.id),
     loadCredential(access.organisation.id),
+    openrouterModels(),
   ]);
 
   return (
@@ -39,7 +44,11 @@ export default async function ProfilePage() {
 
       <ProfileForm profile={profile} />
 
-      <ModelKey credential={credential} storageReady={secretsConfigured()} />
+      <ModelKey
+        credential={credential}
+        storageReady={secretsConfigured()}
+        openrouterModels={models}
+      />
 
       <p className="mt-4 text-[12px] text-ink/62">
         Workspace created{" "}
