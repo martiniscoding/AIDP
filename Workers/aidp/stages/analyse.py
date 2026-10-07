@@ -37,6 +37,7 @@ from .. import (
     progress,
     queue,
     retrieval,
+    standards,
     usage,
     whole_document,
 )
@@ -275,14 +276,24 @@ def _with_unready(note: str | None, scope: designs.Scope) -> str | None:
 
 
 def handle(job: Job, heartbeat) -> None:
-    run_id = job.payload.get("runId")
-    if not run_id:
-        raise RuntimeError("analyse job has no runId in its payload")
-
     if not llm.available():
         raise RuntimeError(
             "no model API key configured — assessment needs one to reach a verdict"
         )
+
+    # Sharpening one clause from one confirmed `partial`. Not an assessment at
+    # all: no run advances, no finding changes, and the only row written is the
+    # draft a reviewer is waiting on. Handled here rather than in a stage of its
+    # own because it is one model call that wants the analyse worker's key and
+    # its lease, and a fifth container for it would idle.
+    draft_id = job.payload.get("draftId")
+    if draft_id:
+        _draft_standard(job, draft_id)
+        return
+
+    run_id = job.payload.get("runId")
+    if not run_id:
+        raise RuntimeError("analyse job has no runId in its payload")
 
     # "Fresh suggestions" on a finished report: the last step again, and nothing
     # else. The verdicts stand and the run keeps its state; see `_suggest_again`.
@@ -492,6 +503,27 @@ def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
     )
 
 
+def _draft_standard(job: Job, draft_id: str) -> None:
+    """Write the requirement lines one clause was missing, and nothing else.
+
+    Queued from a report by a reviewer who has confirmed a `partial`. The
+    verdicts, the run and the findings are untouched: this proposes an addition
+    to the standards library, which a person then approves or throws away. See
+    Workers/aidp/standards.py for the checks every line passes first.
+    """
+    progress.step("Writing the requirement lines this clause was missing")
+    result = standards.record(draft_id)
+    with db.transaction() as conn:
+        queue.complete(conn, job)
+    logs.info(
+        log,
+        "clause sharpening finished",
+        draftId=draft_id,
+        state=result.get("state"),
+        requirements=len(result.get("requirements") or []),
+    )
+
+
 def _framework_clauses(conn, framework_id: str) -> list[dict]:
     """Every clause in the framework, in document then reading order.
 
@@ -511,6 +543,11 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
           JOIN "document_section" s ON s."documentId" = d."id"
           JOIN "clause" cl    ON cl."sectionId" = s."id"
          WHERE fd."frameworkId" = %s
+           -- The live version only. A sharpened clause keeps its ordinal and
+           -- its retired version keeps the text it was judged against, so
+           -- without this every sharpened clause would be judged twice and the
+           -- report would show two of it.
+           AND cl."supersededById" IS NULL
          ORDER BY fd."sortOrder", d."title", s."ordinal", cl."ordinal"
         """,
         (framework_id,),
@@ -539,7 +576,7 @@ def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "
     # different tables with the same question, and paying for it twice would
     # double the embedding bill of every run.
     vector = retrieval.embed_query(query)
-    precedents = _precedents(run, clause, query, vector)
+    precedents = _precedents(run, clause, query, vector, scope)
     judged = _judge_by_search(
         run,
         clause,
@@ -561,8 +598,15 @@ def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "
     )
 
 
-def _precedents(run: dict, clause: dict, query: str, vector: str) -> list:
-    """What this organisation has already settled about this clause."""
+def _precedents(
+    run: dict, clause: dict, query: str, vector: str, scope: designs.Scope
+) -> list:
+    """What this organisation has already settled about this clause.
+
+    Scoped as well as retrieved: a ruling the board granted to one project is
+    weighed on that project's assessments and on no others, so the scope is
+    passed rather than looked up again. See Workers/aidp/decisions.py.
+    """
     with db.connection() as conn:
         return decisions.for_clause(
             conn,
@@ -571,6 +615,7 @@ def _precedents(run: dict, clause: dict, query: str, vector: str) -> list:
             query=query,
             limit=PRECEDENTS,
             vector=vector,
+            project_id=scope.project_id,
         )
 
 
@@ -782,7 +827,7 @@ def _assess_document_one(
     )
     reference = f"{clause['documentTitle']} — {clause['headingPath']}"
     vector = retrieval.embed_query(query)
-    precedents = _precedents(run, clause, query, vector)
+    precedents = _precedents(run, clause, query, vector, scope)
 
     try:
         raw = llm.judge_document(

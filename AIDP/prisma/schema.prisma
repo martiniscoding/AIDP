@@ -54,6 +54,7 @@ model User {
   memberships Membership[]
 
   // Standing decisions this person has ruled on.
+  clauseDrafts ClauseDraft[]
   decisions Decision[]
 
   // Submissions this person has approved, sent back, or escalated.
@@ -73,6 +74,11 @@ model User {
   // Pieces of work they opened. Attribution only — a project belongs to the
   // organisation, and outlives whoever started it.
   projects Project[]
+
+  // Model keys they set for their organisation. Attribution only: the key
+  // belongs to the company, and keeps working after the administrator who
+  // pasted it has left.
+  providerCredentials ProviderCredential[]
 
   @@map("user")
 }
@@ -161,12 +167,17 @@ model Organisation {
   jobs        Job[]
   frameworks  Framework[]
   runs        AssessmentRun[]
+  clauseDrafts ClauseDraft[]
   decisions   Decision[]
   outcomes    SubmissionOutcome[]
   roster      RosterEntry[]
   projects    Project[]
   usage       TokenUsage[]
   aiCache     AiCache[]
+
+  /// The company's own model key, when they have brought one. Absent is the
+  /// normal state and means the deployment's own key does their work.
+  credential ProviderCredential?
 
   @@map("organisation")
 }
@@ -320,6 +331,17 @@ model TokenUsage {
   /// than blended in, so a spend figure can say how much of itself is a guess.
   estimated Boolean @default(false)
 
+  /// Which key the provider billed: "platform" for the deployment's own, and
+  /// "organisation" when the customer brought their own and paid directly.
+  ///
+  /// Without this the operator console counts a customer's own provider bill as
+  /// the platform's spend, which is wrong in both directions at once — it
+  /// overstates what the product costs to run and invites billing a customer
+  /// for tokens they already paid for. Tokens are still recorded either way:
+  /// an administrator wants to know what their assessments consumed regardless
+  /// of which card the provider charged.
+  payer String @default("platform")
+
   createdAt DateTime @default(now())
 
   @@index([organisationId, createdAt])
@@ -367,6 +389,9 @@ model Project {
   /// Assessments of the project as a whole. A design's own runs hang off the
   /// document, not here.
   runs      AssessmentRun[]
+  /// Rulings that apply to this project alone — a breach the board allowed for
+  /// this piece of work and nowhere else. See Decision.scope.
+  decisions Decision[]
 
   /// One name per organisation. Two projects called "Portal" in the same
   /// workspace is a support ticket waiting to happen, and the constraint gives
@@ -549,18 +574,145 @@ model Clause {
   // "parser" when the rule-based parser found it by its shape; "model" when a
   // model pointed at the lines and code sliced the text (see
   // Workers/aidp/parsing/rules.py); "restored" when a reviewer promoted lines
-  // the model had set aside.
+  // the model had set aside; "authored" when a reviewer sharpened an earlier
+  // version of this clause from what an assessment found (see ClauseDraft).
   origin     String @default("parser")
   // For a model-read or restored clause, the source line refs each part came
   // from: { span, heading, statement, rationale,
   // requirements: [{ refs, strength }], guidance, references }.
   sourceRefs Json?
 
-  tables TableBlock[]
+  /// Replaced by a sharper version of itself, and no longer judged.
+  ///
+  /// A clause is never edited in place, for the reason the register gives: a
+  /// `Finding` denormalises the clause's ref, title and statement but *not* its
+  /// requirements — and requirements are exactly what sharpening adds. Rewrite
+  /// one in place and the report from six months ago says "covered" against a
+  /// clause whose requirements no longer exist anywhere, which is the one thing
+  /// an assessment has to be able to answer for.
+  ///
+  /// So the old row stays exactly as it was, keeps its ordinal, and stops being
+  /// judged, while the sharper version is appended at the end of its section's
+  /// reading order exactly as a restored rule is. The clause reference does not
+  /// move with it: that comes from the *section's* number, which is why a
+  /// decision anchored to §9.3 still finds the sharpened clause.
+  ///
+  /// `@@unique([sectionId, ordinal])` is therefore a *partial* unique index in
+  /// the migration — one live clause per ordinal, any number of superseded ones
+  /// behind it, and an ordinal a superseded row vacated is free again. Prisma
+  /// cannot express that, which is why it is not declared here; see
+  /// `isUniqueViolation` in the documents actions for the 23505 that surfaces
+  /// instead of Prisma's P2002.
+  supersededById String? @unique
+  supersededBy   Clause? @relation("ClauseSupersedes", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     Clause? @relation("ClauseSupersedes")
 
-  @@unique([sectionId, ordinal])
+  /// Where an `authored` clause came from: the reviewed finding that showed the
+  /// earlier wording was not specific enough to judge against, and its run.
+  /// Not foreign keys, and for the same reason `Finding.clauseId` is not one —
+  /// a clause has to outlive the report that prompted it.
+  sourceFindingId String?
+  sourceRunId     String?
+  /// Kept beside the relation-free ids so the library still attributes the
+  /// wording after the person who approved it has left — the same reasoning as
+  /// `Decision.decidedByName`.
+  authoredByName  String    @default("")
+  authoredAt      DateTime?
+
+  tables TableBlock[]
+  drafts ClauseDraft[]
+
+  /// Reading order within a section, and the only index the clause lookups
+  /// need: every one of them starts from a section and filters the superseded
+  /// out. The uniqueness of a live ordinal is enforced by the partial index in
+  /// the migration, not here.
+  @@index([sectionId, supersededById])
   @@index([sectionId])
   @@map("clause")
+}
+
+/// A sharper version of one clause, proposed from one assessment, not yet live.
+///
+/// The gap this fills: a customer's standards library is not only small, it is
+/// vague. "Ensure resilience" cannot be judged, so a design that retries
+/// without a dead-letter path comes back `partial` for ever and nobody writes
+/// down what the clause actually meant. A reviewer who has just confirmed that
+/// verdict knows what it meant, and this is the shortest path from knowing it
+/// to the library saying it.
+///
+/// Deliberately a staging table rather than a direct edit:
+///
+///  1. **A model drafts, a person decides.** The requirements are written by a
+///     model from the clause and the finding, then checked (see
+///     Workers/aidp/standards.py) and shown for approval. Nothing reaches the
+///     library that a person has not read.
+///  2. **One place to see what is pending.** A library that gained a
+///     requirement every time somebody confirmed a verdict would be a library
+///     nobody could review.
+model ClauseDraft {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// The clause this sharpens. Cascades: a draft against a clause that a
+  /// re-parse has removed is proposing an addition to something that no longer
+  /// exists, and keeping it would offer the reviewer a dead end.
+  clauseId String
+  clause   Clause @relation(fields: [clauseId], references: [id], onDelete: Cascade)
+
+  /// Denormalised so the queue still reads correctly beside a clause that has
+  /// since been superseded by somebody else's draft.
+  clauseRef   String @default("")
+  clauseTitle String @default("")
+
+  /// The reviewed finding that prompted it, and its run. Relation-free for the
+  /// same reason as Clause.sourceFindingId.
+  sourceFindingId String
+  sourceRunId     String
+
+  /// "drafting" — queued, or a worker is on it
+  /// "ready"    — requirements written and checked, waiting for a person
+  /// "failed"   — the model could not be reached, or wrote nothing usable
+  /// "applied"  — a new clause carries these requirements
+  /// "discarded" — a person read it and said no
+  state String @default("drafting")
+
+  /// The requirement lines proposed, in the words a standard would use. Only
+  /// ever additions: the statement and rationale of the clause are left alone,
+  /// because a model allowed to rewrite the rule would quietly change what the
+  /// customer requires. See the prompt in Workers/aidp/ai/llm.py.
+  requirements String[] @default([])
+
+  /// The model's one line on what the earlier wording left unsaid. Shown to the
+  /// reviewer as the case for the change, never stored on the clause.
+  note String @default("")
+
+  model String?
+  error String?
+
+  /// Lines the model proposed that the checks refused, each with the reason —
+  /// not normative, already in the clause, or lifted from the design rather
+  /// than written as a rule. Kept so a reviewer can see what was thrown away
+  /// instead of wondering why one requirement came back.
+  setAside Json @default("[]")
+
+  /// The clause the approval created. Null until then.
+  appliedClauseId String?
+
+  requestedById   String?
+  requestedBy     User?   @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  requestedByName String  @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One live draft per finding. A reviewer pressing twice must not queue two
+  /// model calls against the same clause, and two drafts of one finding would
+  /// read as two independent proposals agreeing.
+  @@index([organisationId, state])
+  @@index([clauseId])
+  @@map("clause_draft")
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +1039,18 @@ model Framework {
   /// "below industry baseline" are different conversations in a review.
   isBaseline Boolean @default(false)
 
+  /// When this version stopped being the one to assess against, because a
+  /// standard in it was removed from the library.
+  ///
+  /// Needed because the membership rows cascade away with the document, so the
+  /// set comparison in `resolveFramework` cannot see that anything changed —
+  /// the evidence went with the deletion. Without this the same framework id
+  /// quietly came to mean a smaller set of standards than the runs pinned to it
+  /// were measured against, which is the one thing versioning them exists to
+  /// prevent. A superseded version is never reused; it stays readable, and the
+  /// runs that used it keep their own clause counts.
+  supersededAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1066,6 +1230,32 @@ model Decision {
   ///   context   neither — background the model should weigh
   effect String @default("context")
 
+  /// How far this ruling reaches:
+  ///   organisation   every assessment this customer ever runs
+  ///   project        only assessments of `projectId`
+  ///
+  /// A review board routinely allows a breach *for one piece of work* — a
+  /// migration that keeps a legacy protocol until it is retired, a pilot
+  /// exempted while it is a pilot. Recorded organisation-wide, that exemption
+  /// silently becomes policy and every later design inherits it.
+  ///
+  /// Stored as its own column rather than inferred from `projectId IS NULL`,
+  /// because the two disagree in the case that matters: if the project row ever
+  /// goes, a project-only exemption with a nulled `projectId` would read as
+  /// organisation-wide and start applying everywhere. With the scope recorded,
+  /// it matches nothing instead, and the register can say the project is gone.
+  scope String @default("organisation")
+
+  /// The project a `project`-scoped ruling applies to. Null when it applies
+  /// organisation-wide, which is every decision recorded before scopes existed.
+  ///
+  /// `SetNull` for the same reason as Document.projectId: a project is
+  /// archived, not deleted, and a ruling an audit may ask about must outlive
+  /// one if it ever is removed. See the note on `scope` for what the pair means
+  /// once that has happened.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
   /// The clause this answers, when it answers one. Not a foreign key, and
   /// denormalised, for the same reason as Finding: reference documents get
   /// re-parsed and re-numbered, and a cascade would erase the review board's
@@ -1115,6 +1305,9 @@ model Decision {
 
   @@index([organisationId, status])
   @@index([organisationId, clauseRef])
+  /// Every clause lookup in a run filters on the scope pair; see
+  /// `for_clause` in Workers/aidp/decisions.py.
+  @@index([organisationId, scope, projectId])
   @@map("decision")
 }
 
@@ -1199,6 +1392,104 @@ model SubmissionOutcome {
 /// and only embeddings are risk-free — a verdict depends on the submitted
 /// design as well as the standard, and reusing one has to be recorded on the
 /// finding or the audit trail starts lying.
+/// One company's own model key.
+///
+/// Per organisation, and generation only — judging clauses, reading a
+/// standard's rules, describing a figure, writing a chunk preamble, suggesting
+/// improvements. Embeddings are deliberately *not* covered: a vector is only
+/// comparable with vectors from the same model, the corpus is indexed by model
+/// name, and a company that switched embedding model would silently lose dense
+/// retrieval over everything they had already ingested. See the note in
+/// src/lib/ingest/retrieval.ts.
+///
+/// Absent is the normal state. An organisation with no row here is served by
+/// the deployment's own key from the environment, which is what every
+/// organisation did before this table existed.
+///
+/// The key itself is never stored in the clear and never leaves the server: the
+/// UI is shown `keyLast4` and nothing else, and the Python workers read it
+/// through /api/internal/credentials rather than holding a copy — the same
+/// arrangement, and the same reasoning, as the UploadThing token in
+/// src/lib/ingest/storage.ts.
+model ProviderCredential {
+  id String @id @default(cuid())
+
+  /// Unique: one live key per company. A second row would mean two answers to
+  /// "which model judged this", decided by whichever the query happened to
+  /// return first.
+  organisationId String       @unique
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// "openrouter" | "anthropic" | "gemini" — the three clients
+  /// Workers/aidp/ai/llm.py implements. Not free text: a provider nothing can
+  /// talk to would be accepted here and fail on every job afterwards.
+  provider String
+
+  /// AES-256-GCM, base64, with the organisation id as additional authenticated
+  /// data — so a ciphertext copied to another company's row fails to decrypt
+  /// rather than quietly working. See src/lib/access/secrets.ts.
+  ciphertext String
+
+  /// The last four characters, which is all any screen ever shows. Enough to
+  /// confirm which key is installed without being enough to use it.
+  keyLast4 String
+
+  /// Everything a verdict rests on. Strict JSON replies and vision.
+  model String
+  /// The high-volume call — one contextual preamble per chunk.
+  fastModel String
+
+  /// OpenRouter only: upstreams a request may be served by. Empty means
+  /// OpenRouter's own routing. Pinning is what keeps client documents off a
+  /// host the customer has not agreed to.
+  openrouterProviders String[] @default([])
+  /// OpenRouter only: demand zero-data-retention endpoints. Off by default
+  /// because not every model has one.
+  zdr Boolean @default(false)
+
+  /// False when the handshake below found the key unable to do the work. The
+  /// row is kept rather than discarded so the administrator can see what was
+  /// wrong with what they pasted, and the workers skip an inactive key exactly
+  /// as if it were absent.
+  ///
+  /// The probe's verdict, never the administrator's choice — that is `enabled`.
+  /// Two fields rather than one because the screen has to tell "your key is
+  /// broken" from "you asked for the platform's", and a single flag would make
+  /// a deliberately parked key look like a failed one.
+  active Boolean @default(true)
+
+  /// The administrator's own switch: off means use the deployment's key, and
+  /// keep this one.
+  ///
+  /// Trying a key and going back used to mean deleting it, so going back again
+  /// meant finding and pasting the key a second time. The row survives being
+  /// switched off — ciphertext, model, pinned hosts and all — so the two states
+  /// are one click apart in both directions.
+  ///
+  /// To a worker this is indistinguishable from having no key at all, which is
+  /// the behaviour every organisation had before any of this existed. See
+  /// `resolve` in src/lib/access/credentials.ts.
+  enabled Boolean @default(true)
+
+  /// What the key could do when it was last tested: authentication, strict JSON
+  /// replies, vision. Stored because a key that authenticates but cannot return
+  /// a JSON object breaks assessments one clause at a time — caught by the
+  /// per-clause guard, which is to say silently. Far better to find out while
+  /// somebody is looking at the screen that saved it.
+  probe    Json?
+  probedAt DateTime?
+
+  /// Who installed it. Null once that account is deleted; the key is the
+  /// company's, not theirs, and must not leave with them.
+  setById String?
+  setBy   User?  @relation(fields: [setById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("provider_credential")
+}
+
 model AiCache {
   id String @id @default(cuid())
 

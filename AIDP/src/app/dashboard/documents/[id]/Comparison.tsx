@@ -1,6 +1,7 @@
 import { ChevronRight, Quote } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { VERDICTS, VERDICT_META, type Verdict } from "@/lib/ingest/verdicts";
+import { VERDICTS, VERDICT_META, severityOf, type Verdict } from "@/lib/ingest/verdicts";
+import { SeverityTag } from "./SeverityTag";
 import type { ComparedFinding, ComparisonRow, ComparisonView } from "@/lib/ingest/comparison";
 
 const TONE: Record<string, string> = {
@@ -137,6 +138,7 @@ function Side({
   finding: ComparedFinding | null;
   bordered?: boolean;
 }) {
+  const severity = finding ? severityOf(finding.verdict, finding.confidence) : null;
   return (
     <div className={cn("min-w-0 px-4 py-3", bordered && "border-t border-line md:border-l md:border-t-0")}>
       <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -144,7 +146,10 @@ function Side({
         {finding ? (
           <>
             <Chip verdict={finding.verdict} />
-            <span className="text-[11.5px] text-ink/58">{Math.round(finding.confidence * 100)}%</span>
+            {/* The same tag the report rows carry. On this panel it also says
+                which of the two readings is claiming the serious problem,
+                which is the question the panel is read for. */}
+            {severity && <SeverityTag severity={severity} />}
           </>
         ) : (
           <span className="text-[12px] text-ink/58">Not assessed</span>

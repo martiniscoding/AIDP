@@ -51,6 +51,15 @@ class Scope:
     # Titles of designs in the project that are not finished processing. Named
     # in the run's note so nobody reads the report as covering them.
     unready: list[str]
+    # The project this run is about, however it was started: named by a project
+    # run, and taken from the design's own row by a single-design one. Resolved
+    # here because this is already the module that knows the difference, and
+    # because a standing decision granted to one project is only weighed on
+    # that project's assessments — see Workers/aidp/decisions.py.
+    #
+    # None when the design belongs to no project, which is true of designs
+    # uploaded before projects existed.
+    project_id: str | None = None
 
     @property
     def document_ids(self) -> list[str]:
@@ -76,12 +85,16 @@ def for_run(conn, run: dict) -> Scope:
     if not project_id:
         row = db.one(
             conn,
-            'SELECT "id", "title" FROM "document" WHERE "id" = %s',
+            'SELECT "id", "title", "projectId" FROM "document" WHERE "id" = %s',
             (run["documentId"],),
         )
         if row is None:
             return Scope([], [])
-        return Scope([Design(row["id"], row["title"] or "")], [])
+        return Scope(
+            [Design(row["id"], row["title"] or "")],
+            [],
+            project_id=row["projectId"],
+        )
 
     rows = db.query(
         conn,
@@ -90,7 +103,7 @@ def for_run(conn, run: dict) -> Scope:
     )
     designs = [Design(r["id"], r["title"] or "") for r in rows if r["status"] == _READY]
     unready = [r["title"] or r["id"] for r in rows if r["status"] != _READY]
-    return Scope(designs, unready)
+    return Scope(designs, unready, project_id=project_id)
 
 
 def describe(scope: Scope) -> str:

@@ -71,7 +71,13 @@ export async function listDocuments(userId: string, organisationId: string) {
 
   // One grouped query rather than N per document — the library lists every
   // document an organisation has, and issue counts are shown on each row.
-  const [issues, jobs] = await Promise.all([
+  // How many clauses each standard contributes. The number is what removing one
+  // actually costs — a standard is its clauses, and "delete this document" says
+  // nothing about the twelve rules every future assessment would stop checking.
+  // Clause hangs off DocumentSection, so there is no direct count to ask for.
+  const standards = documents.filter((doc) => doc.role !== "assessed").map((doc) => doc.id);
+
+  const [issues, jobs, sections] = await Promise.all([
     prisma.ingestIssue.groupBy({
       by: ["documentId", "severity"],
       where: { document: { organisationId }, kind: { notIn: UNANNOUNCED } },
@@ -83,7 +89,21 @@ export async function listDocuments(userId: string, organisationId: string) {
           select: { documentId: true, ...JOB_SELECT },
         })
       : Promise.resolve([]),
+    standards.length
+      ? prisma.documentSection.findMany({
+          where: { documentId: { in: standards } },
+          select: { documentId: true, _count: { select: { clauses: true } } },
+        })
+      : Promise.resolve([]),
   ]);
+
+  const clausesByDocument = new Map<string, number>();
+  for (const section of sections) {
+    clausesByDocument.set(
+      section.documentId,
+      (clausesByDocument.get(section.documentId) ?? 0) + section._count.clauses,
+    );
+  }
 
   const jobsByDocument = new Map<string, JobRow[]>();
   for (const { documentId, ...job } of jobs) {
@@ -107,6 +127,8 @@ export async function listDocuments(userId: string, organisationId: string) {
 
   return documents.map((doc) => ({
     ...doc,
+    /** Clauses this document contributes to the framework. Zero for a design. */
+    clauses: clausesByDocument.get(doc.id) ?? 0,
     issues: bySeverity.get(doc.id) ?? { high: 0, medium: 0, low: 0 },
     pipeline:
       doc.status === "ready" ? null : describePipeline(doc, jobsByDocument.get(doc.id) ?? [], now),
@@ -124,13 +146,22 @@ export async function getDocument(userId: string, documentId: string) {
       sections: {
         orderBy: { ordinal: "asc" },
         include: {
-          clauses: { orderBy: { ordinal: "asc" } },
+          // The live library, not its history. A clause sharpened from an
+          // assessment leaves its earlier version on the record (see
+          // Clause.supersededById), and counting both would tell the page this
+          // standard has more clauses than the worker will ever judge.
+          clauses: { where: { supersededById: null }, orderBy: { ordinal: "asc" } },
           tables: { orderBy: { ordinal: "asc" } },
           figures: { orderBy: { ordinal: "asc" } },
         },
       },
       _count: { select: { chunks: true } },
       jobs: { where: { stage: { in: [...STAGES] } }, select: JOB_SELECT },
+      // Named, not just referenced: the report offers to limit a ruling to the
+      // design's project, and an offer that cannot say which project is one
+      // nobody should accept. Null for a standard, and for a design that
+      // predates projects.
+      project: { select: { id: true, name: true } },
     },
   });
   if (!document) return null;

@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import {
   DECISION_EFFECTS,
   EFFECT_META,
+  SCOPE_META,
   STATUS_META,
   type DecisionEffect,
   type DecisionStatus,
@@ -209,6 +210,19 @@ function DecisionCard({
             </p>
           )}
         </div>
+
+        {/* Said on the row, not buried in the detail: a register where a
+            one-project dispensation is indistinguishable from policy is how an
+            exemption quietly becomes the rule. `projectName` is null once the
+            project has gone, and the scope is what still makes it inert. */}
+        {decision.scope === "project" && (
+          <span
+            className="shrink-0 rounded-md border border-royal-mid/40 bg-royal/8 px-2 py-1 text-[11px] text-royal"
+            title={SCOPE_META.project.blurb}
+          >
+            {decision.projectName ?? "Project removed"}
+          </span>
+        )}
 
         {!inForce && (
           <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink/64">

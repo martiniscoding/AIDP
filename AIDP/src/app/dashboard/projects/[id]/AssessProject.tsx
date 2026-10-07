@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Layers, RotateCw } from "lucide-react";
@@ -16,7 +16,55 @@ export type ProjectRunSummary = {
   reported: number;
   open: number;
   failureReason: string | null;
+  /** When it was opened, and when it finished. Null until it has. */
+  startedAt: Date;
+  completedAt: Date | null;
 };
+
+/**
+ * When the last run was, on the clock of the person reading.
+ *
+ * Rendered after mount, and nothing before it, because the timezone is the
+ * browser's and the server does not have it: a server renders in the
+ * container's, which is UTC in deployment, so "14:32" would be somebody else's
+ * 14:32. Printing the server's value and marking the element
+ * `suppressHydrationWarning` looks like the fix and is the opposite of one —
+ * React then keeps what is already in the DOM and throws the client's render
+ * away, so the wrong time would stay on screen with the warning silenced. (See
+ * node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md,
+ * which offers an inline script for the no-flash version; a muted sub-line that
+ * fills in a tick later does not need one.)
+ *
+ * Day and month short, matching the assessment date on each design's result
+ * further down the page.
+ */
+/** Never changes, so there is nothing to subscribe to. */
+const NO_CHANGES = () => () => {};
+const IN_BROWSER = () => true;
+const ON_SERVER = () => false;
+
+function LastRun({ at, live }: { at: Date; live: boolean }) {
+  // `useSyncExternalStore` rather than state set from an effect: it is the hook
+  // that has a server snapshot, so the first client render matches the server's
+  // (nothing) and the second has the browser's clock. Hydration never sees a
+  // mismatch, and the repo's lint rule against setting state in an effect is
+  // pointing at exactly this.
+  const mounted = useSyncExternalStore(NO_CHANGES, IN_BROWSER, ON_SERVER);
+  if (!mounted) return null;
+
+  return (
+    <span className="text-ink/58">
+      {live ? " · started " : " · "}
+      {new Date(at).toLocaleString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}
+    </span>
+  );
+}
 
 /**
  * Assessing the project as a whole.
@@ -95,6 +143,11 @@ export function AssessProject({
               : run.orphaned
                 ? "The last run never started — its job was lost. Start another."
                 : `Last run failed. ${run.failureReason ?? ""}`.trim()}
+          {/* A finished run is dated by when it finished; one still going, or
+              one that failed before it could, by when it was opened — which is
+              the only time it has. A project never assessed has no run at all,
+              and this whole line is absent. */}
+          <LastRun at={run.completedAt ?? run.startedAt} live={live} />
         </p>
       )}
 

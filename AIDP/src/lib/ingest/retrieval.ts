@@ -50,6 +50,25 @@ export type SearchOptions = {
 const RRF_K = 60;
 
 /**
+ * Which embedding model this deployment uses, in one place.
+ *
+ * It was read in three, with two different fallbacks — `gemini-embedding-001`
+ * where a query is embedded and `voyage-3` where the rows are selected. With
+ * EMBEDDING_MODEL unset those disagree, and the disagreement is silent in the
+ * worst way available: the query is embedded by one model, the dense CTE joins
+ * `embedding."model" = 'voyage-3'` and matches nothing, and hybrid search
+ * quietly runs on its lexical half alone. No error, no empty result — just
+ * half the recall, on a product whose job is to tell "this requirement is
+ * unaddressed" from "retrieval missed it".
+ *
+ * One function, so the two can no longer differ. It must also agree with
+ * Workers/aidp/config.py, which stamps the model name onto every row it writes.
+ */
+export function embeddingModel(): string {
+  return process.env.EMBEDDING_MODEL ?? "gemini-embedding-001";
+}
+
+/**
  * Embed text.
  *
  * Asymmetric on providers that support it: a question and a passage are
@@ -65,7 +84,7 @@ export async function embedText(
   kind: "query" | "passage" = "query",
 ): Promise<number[]> {
   const provider = (process.env.EMBEDDING_PROVIDER ?? "gemini").toLowerCase();
-  const model = process.env.EMBEDDING_MODEL ?? "gemini-embedding-001";
+  const model = embeddingModel();
   const dims = Number(process.env.EMBEDDING_DIMS ?? 1024);
 
   if (provider === "gemini") {
@@ -166,7 +185,9 @@ export async function search(options: SearchOptions): Promise<Hit[]> {
   if (!query.trim()) return [];
 
   const vector = toVectorLiteral(await embedText(query, "query"));
-  const model = process.env.EMBEDDING_MODEL ?? "voyage-3";
+  // Must be the model the query was just embedded with: the dense CTE joins on
+  // it, and a mismatch matches no rows at all. See `embeddingModel`.
+  const model = embeddingModel();
   // Fuse from a wider candidate pool than we return, or the two rankings barely
   // overlap and fusion has nothing to work with.
   const pool = Math.max(limit * 4, 40);

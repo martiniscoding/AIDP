@@ -93,10 +93,23 @@ def parse_key() -> list[tuple[str, str, str, str, bool]]:
     design: str | None = None
     must = False
     for line in (SAMPLES / "ANSWER_KEY.md").read_text(encoding="utf-8").splitlines():
-        if line.startswith("##") and "Customer Portal Modernisation" in line:
-            design = "portal"
-        elif line.startswith("##") and "Field Telemetry Ingestion" in line:
-            design = "telem"
+        # Reset on every section, not only on the two that name a design. The
+        # key also carries a table of project-level verdicts — the two designs
+        # assessed together, three verdict columns per row — and leaving
+        # `design` set from the section above silently read 21 of those rows as
+        # this design's own, each with another design's verdict. They passed,
+        # because a verdict surviving the guards says nothing about whether it
+        # is the right verdict. Those rows have their own audit:
+        # tests/test_project_answer_key.py.
+        # "## ", not "##": the "### Must get these right" sub-headings inside
+        # each section would otherwise reset it on their way past.
+        if line.startswith("## "):
+            if "Customer Portal Modernisation" in line:
+                design = "portal"
+            elif "Field Telemetry Ingestion" in line:
+                design = "telem"
+            else:
+                design = None
         if line.startswith("### "):
             must = "Must get" in line
         match = re.match(

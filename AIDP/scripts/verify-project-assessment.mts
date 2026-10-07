@@ -351,6 +351,97 @@ try {
       html.length,
     );
 
+    // A run stopped after its last clause still has its coverage, suggestions
+    // and technology dates: those three passes run after the clause loop and
+    // write whatever they worked out. The report used to gate both sections on
+    // the run's own state, so a reviewer who pressed Stop at "14 of 14" lost
+    // finished suggestions they had already paid for.
+    const stopped = await prisma.assessmentRun.create({
+      data: {
+        organisationId: org.id,
+        projectId: project.id,
+        frameworkId: framework.id,
+        state: "failed",
+        failureReason: "Stopped by a reviewer after 1 of 1 clauses.",
+        totalClauses: 1,
+        completedClauses: 1,
+        model: "openai/gpt-4.1-mini",
+        completedAt: new Date(),
+        advice: {
+          version: 1,
+          state: "complete",
+          note: null,
+          suggestions: [
+            {
+              title: "Externalise the session store",
+              kind: "improve",
+              category: "resilience",
+              priority: "high",
+              section: 1,
+              headingPath: "2 Architecture",
+              sectionTitle: "2 Architecture",
+              pageStart: 2,
+              pageEnd: 2,
+              quote: "Session state is held in process.",
+              page: 2,
+              recommendation: "Move session state to a shared cache outside the process.",
+              why: "One instance restarting signs every user out.",
+              clauses: [],
+            },
+          ],
+          dropped: {},
+          source: "model",
+          generatedAt: new Date().toISOString(),
+          refreshing: false,
+        },
+        lifecycle: {
+          version: 1,
+          state: "complete",
+          note: null,
+          source: "endoflife.date",
+          soonDays: 180,
+          technologies: [
+            {
+              name: "PostgreSQL",
+              product: "postgresql",
+              label: "PostgreSQL",
+              version: "11",
+              status: "ended",
+              section: 1,
+              sectionTitle: "3 Data",
+              headingPath: "3 Data",
+              pageStart: 3,
+              quote: "Orders are stored in a single PostgreSQL 11 instance.",
+              documentTitle: "Proposal",
+            },
+          ],
+          dropped: {},
+          corrected: {},
+        },
+      },
+      select: { id: true },
+    });
+    const afterStop = await fetch(`${BASE}/dashboard/projects/${project.id}/assessment`, {
+      headers: { cookie },
+      redirect: "manual",
+    });
+    const stoppedHtml = afterStop.ok ? await afterStop.text() : "";
+    ok("a stopped run's report renders", afterStop.status === 200, afterStop.status);
+    ok(
+      "its finished suggestions are still shown",
+      stoppedHtml.includes("Suggested improvements")
+        && stoppedHtml.includes("Externalise the session store"),
+    );
+    ok(
+      "and so are its technology dates",
+      stoppedHtml.includes("Technology support") && stoppedHtml.includes("PostgreSQL"),
+    );
+    ok(
+      "while the run still reads as stopped, not complete",
+      stoppedHtml.includes("Stopped by a reviewer"),
+    );
+    await prisma.assessmentRun.delete({ where: { id: stopped.id } });
+
     const projectPage = await fetch(`${BASE}/dashboard/projects/${project.id}`, {
       headers: { cookie },
       redirect: "manual",

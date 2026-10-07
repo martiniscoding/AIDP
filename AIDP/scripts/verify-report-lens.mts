@@ -13,7 +13,7 @@
  * Run with:  npx tsx --env-file=.env.local scripts/verify-report-lens.mts
  */
 import { prisma } from "../src/lib/prisma";
-import { applyLens } from "../src/lib/ingest/verdicts";
+import { applyLens, severityOf, SETTLED_CONFIDENCE } from "../src/lib/ingest/verdicts";
 import { requireEnv } from "./require-env.mts";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
@@ -85,7 +85,43 @@ ok(
   applyLens(run.findings, "contradicts").every((f) => f.verdict === "contradicts"),
 );
 
-console.log("\n5. Nothing was deleted");
+console.log("\n5. How serious a finding is");
+// The row shows this where the model's confidence percentage used to be, so
+// what matters is that the rule never overstates. A verdict this has not been
+// taught must land on "check", never on "critical" — a tag that cries wolf is
+// worse than no tag, because the column stops being worth scanning.
+ok("a contradiction is critical", severityOf("contradicts", 0.9) === "critical");
+ok(
+  "and stays critical however unsure the model was, because the guard already refused the weak ones",
+  severityOf("contradicts", 0.1) === "critical",
+);
+ok(
+  "an absent the engine treats as settled is critical",
+  severityOf("absent", SETTLED_CONFIDENCE) === "critical",
+);
+ok(
+  "and one below that line is only worth a look",
+  severityOf("absent", SETTLED_CONFIDENCE - 0.01) === "check",
+);
+ok("a partial is moderate", severityOf("partial", 0.95) === "moderate");
+ok("an undecided finding is a check, not a severity", severityOf("needs_review", 0.95) === "check");
+ok("a covered finding carries no tag at all", severityOf("covered", 0.99) === null);
+ok("and a verdict this has never seen is never critical", severityOf("reconsidered", 1) === "check");
+
+const tagged = run.findings.filter((f) => severityOf(f.verdict, 0.9) !== null);
+ok("every finding needing attention is tagged", tagged.length === attention.length, `${tagged.length}`);
+
+console.log("\n6. And the page says so");
+const expected = new Set(
+  attention.map((f) => severityOf(f.verdict, 0.9)!).map((s) => s[0]!.toUpperCase() + s.slice(1)),
+);
+for (const label of expected) ok(`the report renders "${label}"`, body.includes(label));
+ok(
+  "the confidence is kept, inside the finding",
+  /sure of this verdict/.test(body),
+);
+
+console.log("\n7. Nothing was deleted");
 const storedCovered = await prisma.finding.count({ where: { verdict: "covered" } });
 ok("covered findings are still on record", storedCovered > 0, String(storedCovered));
 

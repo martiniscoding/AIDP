@@ -8,6 +8,7 @@ import {
   CircleHelp,
   Loader2,
   Play,
+  Scale,
   ShieldAlert,
   Square,
   Sparkles,
@@ -16,23 +17,39 @@ import {
 import { cn } from "@/lib/cn";
 import {
   VERDICTS,
+  SEVERITY_META,
   VERDICT_META,
   applyLens,
+  severityOf,
   type EvidenceItem,
   type Lens,
   type Verdict,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
-import { EFFECT_META, type AppliedDecision } from "@/lib/ingest/decision-effects";
+import {
+  EFFECT_META,
+  SCOPE_META,
+  type AppliedDecision,
+  type DecisionScope,
+} from "@/lib/ingest/decision-effects";
 import type { CoverageView } from "@/lib/ingest/coverage";
 import type { AdviceView } from "@/lib/ingest/advice";
 import type { LifecycleView } from "@/lib/ingest/lifecycle";
 import { SLOW_PICKUP_MS, type JobView } from "@/lib/ingest/pipeline";
-import { cancelAssessment, reviewFinding, startAssessment } from "../actions";
+import {
+  applyStandard,
+  cancelAssessment,
+  discardStandard,
+  makeStandard,
+  reviewFinding,
+  startAssessment,
+} from "../actions";
+import { PipelineWatcher } from "../PipelineWatcher";
 import { startProjectAssessment } from "../../projects/actions";
 import { Ticker } from "../Ticker";
 import { useLiveProgress } from "../useLiveProgress";
 import { CoverageGaps } from "./CoverageGaps";
+import { SeverityTag } from "./SeverityTag";
 import { Improvements } from "./Improvements";
 import { Lifecycle } from "./Lifecycle";
 
@@ -52,7 +69,44 @@ export type FindingView = {
   appliedDecisions: AppliedDecision[];
   /** Set once this finding's review has been kept as a decision. */
   promotedDecisionId: string | null;
+  /** How far that decision reaches. Null until one has been kept. */
+  promotedScope: DecisionScope | null;
+  /**
+   * The live proposal to sharpen this finding's clause, if one has been asked
+   * for. Only a `partial` ever has one — see SHARPENABLE in
+   * src/lib/ingest/standards.ts.
+   */
+  draft: StandardDraft | null;
 };
+
+/**
+ * A proposed sharpening, as the report shows it.
+ *
+ * Flattened from `DraftView` for the client: dates and Prisma JSON do not
+ * cross the boundary, and the panel needs none of the rest.
+ */
+export type StandardDraft = {
+  id: string;
+  state: "drafting" | "ready" | "failed" | "applied" | "discarded";
+  /** The lines proposed, in the words a standard would use. */
+  requirements: string[];
+  /** The model's one line on what the clause left unsaid. */
+  note: string;
+  error: string | null;
+  /** Lines the checks threw away, with the reason. */
+  setAside: { text: string; reason: string }[];
+  /** What the clause requires today, to read the proposal against. */
+  existing: string[];
+  /**
+   * Active "accepts" rulings anchored to this clause's reference. They carry
+   * over to the sharpened clause, so one recorded against the vaguer wording
+   * would excuse the new requirement — see DraftView.decisionsInTheWay.
+   */
+  decisionsInTheWay: { id: string; title: string; effect: string }[];
+};
+
+/** The project a report's findings belong to, when they belong to one. */
+export type ProjectRef = { id: string; name: string };
 
 export type RunView = {
   id: string;
@@ -93,6 +147,7 @@ const TONE: Record<string, string> = {
   good: "border-royal-mid/30 bg-royal/8 text-royal",
 };
 
+
 /**
  * Where a live run has got to, told from its job as well as the run.
  *
@@ -119,6 +174,10 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
   });
   const job = live.job;
   const started = live.state === "running";
+  // Every clause judged, and the run still working: what is left is coverage,
+  // the suggestions and the technology dates.
+  const pastClauses =
+    live.totalClauses > 0 && live.completedClauses >= live.totalClauses;
   const slow = job?.state === "queued" && (job.sinceMs ?? 0) >= SLOW_PICKUP_MS;
   const troubled = slow || job?.state === "retrying" || job?.state === "stalled";
   const clock =
@@ -159,12 +218,19 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
         "It goes back in the queue automatically, and carries on from the last clause it finished.";
       break;
     case "running":
-      headline = started
-        ? "Assessing clause by clause"
-        : "Picked up by an analysis worker — getting ready";
-      // Before the first clause the step is the only sign of life; after it, the
-      // clause count says more than "Assessing clauses" would.
-      if (!started && job.step) {
+      headline = !started
+        ? "Picked up by an analysis worker — getting ready"
+        : pastClauses
+          ? "Finishing the report"
+          : "Assessing clause by clause";
+      // Before the first clause the step is the only sign of life, and after the
+      // last one it is again: three more passes follow — the parts no standard
+      // covers, the suggested improvements, the technology dates — and on a
+      // large design with a slow model they take minutes. Without this the
+      // panel sat on "Assessing clause by clause" with the bar pinned at "14 of
+      // 14", which reads as a finished run that hung, and reviewers stopped
+      // runs that were nearly done. In between, the clause count says more.
+      if ((!started || pastClauses) && job.step) {
         detail =
           job.total !== null && job.done !== null
             ? `${job.step} · ${job.done} of ${job.total}`
@@ -270,17 +336,28 @@ export type Scope =
 
 export function Assessment({
   scope,
+  project,
   run,
   counts,
   findings,
   decisionsInForce,
+  mayCurate,
 }: {
   scope: Scope;
+  /**
+   * The project this report's findings belong to. A project run always has one;
+   * a single design has its own, or none if it sits outside every project.
+   * Null means a breach cannot be allowed "for this project", and the offer is
+   * not made rather than made and refused on save.
+   */
+  project: ProjectRef | null;
   run: RunView;
   counts: VerdictCounts;
   findings: FindingView[];
   /** Standing decisions this run will be judged with. */
   decisionsInForce: number;
+  /** Whether this person may change the standards. See canManageStandards. */
+  mayCurate: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -308,6 +385,12 @@ export function Assessment({
   const reviewed = findings.filter((finding) => finding.reviewerState !== "pending").length;
   // Only worth mentioning the fold when it is actually hiding something.
   const folded = lens === "attention" ? counts.covered : 0;
+  /**
+   * A clause proposal is written by the analyse worker, so the page has to come
+   * back for it the way it comes back for a running pipeline. Nothing is
+   * scheduled once every proposal has landed — see PipelineWatcher.
+   */
+  const drafting = findings.some((finding) => finding.draft?.state === "drafting");
 
 
   // One way to assess a design, so no mode to choose: every clause is judged on
@@ -552,8 +635,14 @@ export function Assessment({
             </p>
           ) : (
             <ul className="space-y-2">
+              <PipelineWatcher active={drafting} />
               {shown.map((finding) => (
-                <FindingRow key={finding.id} finding={finding} />
+                <FindingRow
+                  key={finding.id}
+                  finding={finding}
+                  project={project}
+                  mayCurate={mayCurate}
+                />
               ))}
             </ul>
           )}
@@ -570,8 +659,14 @@ export function Assessment({
 
       {/* After the findings, never among them: advice on the design, not a verdict
           on a clause. Only for a finished run — a live one has nothing to show yet. */}
-      {run && run.state === "complete" && <Lifecycle lifecycle={run.lifecycle} />}
-      {run && run.state === "complete" && <Improvements advice={run.advice} runId={run.id} />}
+      {/* Shown once the run is no longer live, not only when it completed.
+          These three passes run after the last clause, so a run stopped at
+          "14 of 14" has them worked out and stored — and gating on the run's
+          own state hid finished, complete suggestions and technology dates
+          behind a verdict about the clause loop. Each section reads its own
+          payload's state and says so itself, including when it failed. */}
+      {run && !inFlight && <Lifecycle lifecycle={run.lifecycle} />}
+      {run && !inFlight && <Improvements advice={run.advice} runId={run.id} />}
     </section>
   );
 }
@@ -648,7 +743,210 @@ function Excerpt({ item }: { item: EvidenceItem }) {
   );
 }
 
-function FindingRow({ finding }: { finding: FindingView }) {
+/**
+ * A proposed sharpening of one clause, and the decision to take it or not.
+ *
+ * Shown beside the finding that prompted it rather than in a queue of its own,
+ * because the case for the change *is* the finding: the clause could not be
+ * judged, and here is what it was missing. Read anywhere else it would be three
+ * sentences with nothing behind them.
+ *
+ * The lines are editable. What the approver settles on is what binds, and a
+ * model's wording that is nearly right is faster to fix here than to reject and
+ * ask for again.
+ */
+function StandardProposal({
+  draft,
+  clauseRef,
+}: {
+  draft: StandardDraft;
+  clauseRef: string;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [lines, setLines] = useState<string[]>(draft.requirements);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const keep = lines.filter((line) => line.trim().length > 0);
+
+  const approve = () =>
+    startTransition(async () => {
+      const result = await applyStandard(draft.id, keep);
+      setMessage(result.message);
+      if (result.ok) router.refresh();
+    });
+
+  const discard = () =>
+    startTransition(async () => {
+      const result = await discardStandard(draft.id);
+      setMessage(result.message);
+      if (result.ok) router.refresh();
+    });
+
+  if (draft.state === "drafting") {
+    return (
+      <div className="mb-3 flex items-center gap-2 rounded-lg border border-line bg-canvas-sunk px-3 py-2.5 text-[12.5px] text-ink/68">
+        <Loader2 size={12} className="animate-spin text-ink/45" />
+        Working out the requirement lines {clauseRef} was missing…
+      </div>
+    );
+  }
+
+  if (draft.state === "failed") {
+    return (
+      <div className="mb-3 rounded-lg border border-warn-line bg-warn-tint px-3 py-2.5">
+        <p className="text-[12.5px] text-warn">
+          The requirement lines could not be worked out. {draft.error}
+        </p>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={discard}
+          className="mt-2 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 hover:text-ink/78 disabled:opacity-50"
+        >
+          dismiss
+        </button>
+        {message && <p className="mt-1.5 text-[11.5px] text-ink/68">{message}</p>}
+      </div>
+    );
+  }
+
+  if (draft.state !== "ready") return null;
+
+  return (
+    <div className="mb-3 rounded-lg border border-royal-mid/30 bg-royal/[0.06] px-3 py-3">
+      <p className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-royal">
+        <Scale size={11} />
+        Proposed for {clauseRef || "this clause"}
+      </p>
+
+      {draft.note && (
+        <p className="mb-2.5 text-[12.5px] leading-relaxed text-ink/78">{draft.note}</p>
+      )}
+
+      {/* What the clause requires today, so the proposal is read against it
+          rather than in isolation — the commonest reason to reject a line is
+          that something above already says it. */}
+      {draft.existing.length > 0 && (
+        <div className="mb-2.5">
+          <p className="mb-1 text-[11.5px] text-ink/62">It already requires:</p>
+          <ul className="space-y-0.5">
+            {draft.existing.map((line, index) => (
+              <li key={index} className="text-[12px] leading-relaxed text-ink/62">
+                · {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {lines.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-[11.5px] text-ink/62">
+            Add{lines.length === 1 ? "" : " these"}, editing the wording if you want to:
+          </p>
+          {lines.map((line, index) => (
+            <textarea
+              key={index}
+              value={line}
+              disabled={pending}
+              onChange={(event) =>
+                setLines((current) =>
+                  current.map((old, at) => (at === index ? event.target.value : old)),
+                )
+              }
+              rows={2}
+              className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[12.5px] leading-relaxed text-ink/88 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid disabled:opacity-60"
+            />
+          ))}
+        </div>
+      ) : (
+        /* The honest answer, and a real one: a clause that was already specific
+           enough needs nothing added. Said rather than shown as an empty box. */
+        <p className="text-[12.5px] leading-relaxed text-ink/72">
+          Nothing to add — this clause is already specific enough to judge against. The
+          partial is about the design, not the wording.
+        </p>
+      )}
+
+      {/* The hole this closes: the worker matches decisions on the clause
+          reference, so a ruling made against the vaguer wording carries over
+          and would excuse the line being added. */}
+      {draft.decisionsInTheWay.length > 0 && (
+        <div className="mt-2.5 rounded-lg border border-warn-line bg-warn-tint px-2.5 py-2">
+          <p className="text-[12px] leading-relaxed text-warn">
+            {draft.decisionsInTheWay.length === 1
+              ? "One standing decision on this clause accepts an arrangement that satisfies it"
+              : `${draft.decisionsInTheWay.length} standing decisions on this clause accept arrangements that satisfy it`}
+            , and they will carry over to the sharper wording — so they may excuse the
+            line you are adding. Review{" "}
+            <a
+              href="/dashboard/decisions"
+              className="underline decoration-warn/40 underline-offset-2"
+            >
+              the register
+            </a>{" "}
+            after this:{" "}
+            {draft.decisionsInTheWay.map((decision) => decision.title).join("; ")}.
+          </p>
+        </div>
+      )}
+
+      {draft.setAside.length > 0 && (
+        <details className="mt-2.5">
+          <summary className="cursor-pointer text-[11.5px] text-ink/58 hover:text-ink/72">
+            {draft.setAside.length} line{draft.setAside.length === 1 ? "" : "s"} refused by the
+            checks
+          </summary>
+          <ul className="mt-1.5 space-y-1.5">
+            {draft.setAside.map((line, index) => (
+              <li key={index} className="text-[12px] leading-relaxed text-ink/62">
+                “{line.text}” — {line.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={pending || keep.length === 0}
+          onClick={approve}
+          className="rounded-full bg-royal px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
+        >
+          {keep.length === 1 ? "Add this requirement" : `Add ${keep.length} requirements`}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={discard}
+          className="text-[12px] text-ink/62 hover:text-ink/78 disabled:opacity-50"
+        >
+          discard
+        </button>
+        {/* Said before the press, not after: a reader deciding whether to click
+            needs to know the old wording survives. */}
+        <span className="text-[11px] text-ink/54">
+          Kept as a new version. The earlier wording stays on the record.
+        </span>
+      </div>
+
+      {message && <p className="mt-2 text-[11.5px] text-ink/72">{message}</p>}
+    </div>
+  );
+}
+
+function FindingRow({
+  finding,
+  project,
+  mayCurate,
+}: {
+  finding: FindingView;
+  project: ProjectRef | null;
+  /** Whether this person may change the standards. See canManageStandards. */
+  mayCurate: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -665,14 +963,51 @@ function FindingRow({ finding }: { finding: FindingView }) {
    * Confirming a `partial` and writing down the scope everyone agreed to is a
    * ruling worth carrying into the next assessment, and it was unreachable.
    */
-  const [mode, setMode] = useState<"confirm" | "override" | null>(null);
+  /**
+   * "allow" is the third intent, and it is an override with its answers
+   * already filled in: the design stands, the clause is satisfied for this
+   * piece of work, and nothing else inherits that. A board allows a breach for
+   * one migration far more often than it rewrites the standard, and before
+   * this the only way to record it was a decision that bound every future
+   * assessment the customer ever ran.
+   */
+  const [mode, setMode] = useState<"confirm" | "override" | "allow" | null>(null);
 
   const [chosen, setChosen] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [remember, setRemember] = useState(false);
+  const [scope, setScope] = useState<DecisionScope>("organisation");
 
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
+  const severity = severityOf(finding.verdict, finding.confidence);
   const decided = finding.reviewerState !== "pending";
+
+  /**
+   * Offered on a breach, and only with a project to confine it to.
+   *
+   * Not on "partial" or "needs_review": those are arguments about what the
+   * design says, and the answer to them is a verdict, not a dispensation.
+   * Allowing is for the case everyone already agrees on — the clause is broken,
+   * and broken here is acceptable.
+   */
+  const allowable = finding.verdict === "contradicts" && project !== null && !decided;
+
+  /**
+   * Offered on a confirmed `partial`, and nothing else.
+   *
+   * A partial that somebody has agreed with is the system saying it could not
+   * judge the clause as written — the one verdict whose cause may be the
+   * wording rather than the design. An override says the verdict was wrong, and
+   * sharpening from one would write the model's mistake into the library; the
+   * server refuses that too.
+   */
+  const sharpenable =
+    mayCurate &&
+    finding.verdict === "partial" &&
+    finding.reviewerState === "confirmed" &&
+    finding.draft === null;
+
+  const draft = finding.draft;
 
   const decide = (confirm: boolean, verdict?: string) =>
     startTransition(async () => {
@@ -681,18 +1016,29 @@ function FindingRow({ finding }: { finding: FindingView }) {
         verdict,
         note: note.trim() || undefined,
         remember,
+        scope,
       });
       setMode(null);
       setChosen(null);
       setNote("");
       setRemember(false);
+      setScope("organisation");
       router.refresh();
     });
+
+  /** Pre-arm the whole override: covered, remembered, and confined. */
+  const beginAllow = () => {
+    setMode("allow");
+    setChosen("covered");
+    setRemember(true);
+    setScope("project");
+  };
 
   const close = () => {
     setMode(null);
     setChosen(null);
     setRemember(false);
+    setScope("organisation");
     // Also the note: leaving it behind would attach an abandoned reason to
     // whatever the reviewer does next.
     setNote("");
@@ -751,7 +1097,30 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 : "confirmed"}
             </span>
           )}
-          <span>{Math.round(finding.confidence * 100)}%</span>
+          {/* A kept ruling and a kept ruling that only reaches this project are
+              different things, and a row that said neither left the reviewer to
+              remember which they had chosen. */}
+          {finding.promotedScope === "project" && (
+            <span className="rounded bg-royal/10 px-1.5 py-0.5 text-royal">this project</span>
+          )}
+          {/* The row has to say a proposal is waiting inside it. A reviewer
+              working a queue of eighty findings does not open the ones that
+              look settled. */}
+          {draft?.state === "ready" && (
+            <span className="rounded bg-royal/10 px-1.5 py-0.5 text-royal">
+              {draft.requirements.length > 0 ? "clause proposal" : "clause checked"}
+            </span>
+          )}
+          {draft?.state === "drafting" && (
+            <Loader2 size={11} className="animate-spin text-ink/45" />
+          )}
+          {/* Where the model's confidence percentage used to be. That number
+              was the model's opinion of itself, and sitting beside
+              "Contradicts" it invited a reader to treat a breach as 13% fine.
+              This answers the question a reviewer actually has, which is which
+              rows to open first. The confidence is inside, for anyone doubting
+              a verdict rather than triaging one. */}
+          {severity && <SeverityTag severity={severity} />}
           <ChevronDown
             size={14}
             className={cn("transition-transform duration-200", open && "rotate-180")}
@@ -772,6 +1141,15 @@ function FindingRow({ finding }: { finding: FindingView }) {
               {finding.clauseStatement}
             </p>
           )}
+
+          {/* Kept, and kept here. Somebody who thinks a verdict is wrong wants
+              to know how sure the engine was; somebody working down the list
+              does not, and it was taking up the one place on the row where the
+              priority belongs. */}
+          <p className="mb-3 text-[12px] text-ink/58">
+            {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
+            The model was {Math.round(finding.confidence * 100)}% sure of this verdict.
+          </p>
 
           {finding.evidence.length > 0 ? (
             <ul className="mb-3 space-y-2">
@@ -880,6 +1258,8 @@ function FindingRow({ finding }: { finding: FindingView }) {
             </p>
           )}
 
+          {draft && <StandardProposal draft={draft} clauseRef={finding.clauseRef} />}
+
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -931,15 +1311,34 @@ function FindingRow({ finding }: { finding: FindingView }) {
                   </p>
                 )}
 
+                {/* The breach is not being denied, and the wording says so: the
+                    clause is still broken, and this is the dispensation for it.
+                    "Looks fine to me" is the Override path and means something
+                    else. */}
+                {mode === "allow" && project && (
+                  <p className="text-[11.5px] leading-relaxed text-ink/64">
+                    Allowing this breach for{" "}
+                    <span className="text-ink/82">{project.name}</span>. The clause stays
+                    broken on the record; later assessments of this project will be judged
+                    with the allowance in front of them, and no other project inherits it.
+                  </p>
+                )}
+
                 <label className="block">
                   <span className="mb-1 block text-[11.5px] text-ink/64">
-                    Why? This becomes the decision if you keep it.
+                    {mode === "allow"
+                      ? "Why is it allowed here? This is the exception's stated basis."
+                      : "Why? This becomes the decision if you keep it."}
                   </span>
                   <textarea
                     value={note}
                     onChange={(event) => setNote(event.target.value)}
                     rows={2}
-                    placeholder="e.g. KMS-managed keys in eu-west-1 satisfy this clause."
+                    placeholder={
+                      mode === "allow"
+                        ? "e.g. the legacy protocol stays until the gateway migration completes in Q3."
+                        : "e.g. KMS-managed keys in eu-west-1 satisfy this clause."
+                    }
                     className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[12.5px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
                   />
                 </label>
@@ -965,25 +1364,64 @@ function FindingRow({ finding }: { finding: FindingView }) {
                     </span>
                     <span className="block text-[11.5px] leading-relaxed text-ink/64">
                       {note.trim()
-                        ? "Every later assessment of this clause will be judged with this decision in front of it."
+                        ? SCOPE_META[project ? scope : "organisation"].blurb
                         : "Add a reason first — a decision with no stated basis is not one worth keeping."}
                     </span>
+
+                    {/* Only once there is something to remember, and only with a
+                        project to confine it to. A choice between one option is
+                        not a choice, and showing it on a design that belongs to
+                        no project would offer a reach that cannot be granted. */}
+                    {remember && project && (
+                      <span className="mt-2 flex flex-wrap gap-1.5">
+                        {(["project", "organisation"] as const).map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            disabled={pending}
+                            aria-pressed={scope === option}
+                            // Inside a <label>: without this, clicking either
+                            // pill toggles the checkbox it sits in.
+                            onClick={(event) => {
+                              event.preventDefault();
+                              setScope(option);
+                            }}
+                            className={cn(
+                              "rounded-full border px-2.5 py-1 text-[11.5px] transition-colors disabled:opacity-50",
+                              scope === option
+                                ? "border-royal-mid/50 bg-royal/10 text-royal"
+                                : "border-line text-ink/68 hover:border-line-strong hover:text-ink",
+                            )}
+                          >
+                            {option === "project"
+                              ? `Only ${project.name}`
+                              : SCOPE_META.organisation.label}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                   </span>
                 </label>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={pending || (mode === "override" && !chosen)}
+                    disabled={
+                      pending ||
+                      (mode !== "confirm" && !chosen) ||
+                      // Reachable only in "allow" mode, which arrives with the
+                      // box already ticked and nothing written in it yet.
+                      (remember && !note.trim())
+                    }
                     onClick={() =>
-                      mode === "override"
-                        ? decide(false, chosen ?? undefined)
-                        : decide(true)
+                      mode === "confirm" ? decide(true) : decide(false, chosen ?? undefined)
                     }
                     className="rounded-full bg-royal px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
                   >
                     {remember
-                      ? "Save and remember"
+                      ? scope === "project"
+                        ? "Save and allow here"
+                        : "Save and remember"
                       : mode === "override"
                         ? "Save override"
                         : "Save"}
@@ -1019,6 +1457,40 @@ function FindingRow({ finding }: { finding: FindingView }) {
                 >
                   Override
                 </button>
+                {/* Last, and deliberately not dressed as the easy way out: it
+                    is the one action here that lets a design ship against a
+                    standard, and it should take a moment longer to reach than
+                    agreeing with the verdict does. */}
+                {allowable && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={beginAllow}
+                    className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
+                  >
+                    Allow for this project…
+                  </button>
+                )}
+                {/* The other direction entirely: not a dispensation for this
+                    design but a sharper rule for every design after it. Shown
+                    only once the verdict is agreed, because that agreement is
+                    the whole evidence that the wording was the problem. */}
+                {sharpenable && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        await makeStandard(finding.id);
+                        router.refresh();
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
+                  >
+                    <Scale size={12} />
+                    Make a standard…
+                  </button>
+                )}
               </>
             )}
           </div>

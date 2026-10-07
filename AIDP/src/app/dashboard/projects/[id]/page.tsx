@@ -70,6 +70,8 @@ export default async function ProjectPage({
         reported: reported(projectCounts),
         open: projectCounts.contradicts,
         failureReason: projectRun.failureReason,
+        startedAt: projectRun.startedAt,
+        completedAt: projectRun.completedAt,
       }
     : null;
   // Keep the page current while a design is being read or assessed; without

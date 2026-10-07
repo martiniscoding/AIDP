@@ -66,11 +66,25 @@ DOC_RUN = {"id": "run-1", "organisationId": "org-1", "documentId": "doc-a", "pro
 PROJ_RUN = {"id": "run-2", "organisationId": "org-1", "documentId": None, "projectId": "proj-1"}
 
 with mock.patch.object(
-    designs.db, "one", lambda conn, sql, args: {"id": "doc-a", "title": "Customer Portal Proposal"}
+    designs.db,
+    "one",
+    lambda conn, sql, args: {
+        "id": "doc-a",
+        "title": "Customer Portal Proposal",
+        "projectId": "proj-1",
+    },
 ):
     scope = designs.for_run(_Conn(), DOC_RUN)
 ok("a run on one design covers that design", scope.designs == [A], scope.designs)
 ok("and is not a project run", not scope.is_project and not scope.unready)
+# The run row names no project; the design's own row does. Without this a
+# ruling the board granted to this project would not be weighed on the design
+# it was granted for — see aidp/decisions.py.
+ok(
+    "but it still knows the project the design is in",
+    scope.project_id == "proj-1",
+    scope.project_id,
+)
 
 with mock.patch.object(designs.db, "one", lambda conn, sql, args: None):
     gone = designs.for_run(_Conn(), DOC_RUN)
@@ -89,6 +103,7 @@ with mock.patch.object(
 ):
     project = designs.for_run(_Conn(), PROJ_RUN)
 ok("a project run covers every finished design", project.designs == [A, B], project.designs)
+ok("and names the project it is about", project.project_id == "proj-1", project.project_id)
 ok(
     "a design still processing is left out and named",
     project.unready == ["Data Model"],

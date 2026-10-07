@@ -1,0 +1,13 @@
+-- Going back to the platform's key without losing your own.
+--
+-- Until now the only way to stop using a company key was to delete it, so
+-- trying one and reverting meant finding and pasting the key again to try
+-- twice. This is the administrator's switch: off means "use the deployment's
+-- key", and the row stays — ciphertext, model, pinned hosts and all.
+--
+-- Deliberately not the existing "active" column. That one is the probe's
+-- verdict on whether the key can do the work, and reusing it would make a
+-- deliberately parked key indistinguishable on screen from a broken one.
+--
+-- Every key on record was in use, which is what true says.
+ALTER TABLE "provider_credential" ADD COLUMN "enabled" BOOLEAN NOT NULL DEFAULT true;

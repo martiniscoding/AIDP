@@ -11,6 +11,7 @@ import { listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
+import { draftView, draftsForRun } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { requireWorkspace } from "@/lib/access/gate";
 import { assessableDesigns, getProject, latestProjectRun } from "@/lib/ingest/projects";
@@ -65,6 +66,7 @@ export default async function ProjectAssessmentPage({
     access.organisation.id,
     findings.map((f) => f.id),
   );
+  const drafts = run ? await draftsForRun(run.id) : new Map();
 
   const runView: RunView = run
     ? {
@@ -99,10 +101,14 @@ export default async function ProjectAssessmentPage({
     reviewerVerdict: f.reviewerVerdict,
     reviewerNote: f.reviewerNote,
     appliedDecisions: readAppliedDecisions(f.appliedDecisions),
-    promotedDecisionId: promoted.get(f.id) ?? null,
+    promotedDecisionId: promoted.get(f.id)?.id ?? null,
+    promotedScope: promoted.get(f.id)?.scope ?? null,
+    draft: draftView(drafts.get(f.id)),
   }));
 
-  const decisionsInForce = await countActive(access.organisation.id);
+  // The organisation's rulings plus this project's own, which is what a run
+  // from this page is actually judged with.
+  const decisionsInForce = await countActive(access.organisation.id, project.id);
   const outcomes: OutcomeView[] =
     run && run.state === "complete"
       ? (await historyForRun(run.id)).map((o) => ({
@@ -164,10 +170,12 @@ export default async function ProjectAssessmentPage({
 
       <Assessment
         scope={{ kind: "project", projectId: project.id }}
+        project={{ id: project.id, name: project.name }}
         run={runView}
         counts={counts}
         findings={findingViews}
         decisionsInForce={decisionsInForce}
+        mayCurate={access.isOwner}
       />
 
       {/* After the findings: the decision is the conclusion drawn from them, and

@@ -285,7 +285,7 @@ except RuntimeError as exc:
 
 # ---------------------------------------------------------------------------
 print("\n4. Configuration")
-llm_module._client = None
+llm_module.forget_clients()
 ok("openrouter is available with its key", llm_module.available())
 ok("and is the client", isinstance(llm_module.client(), llm_module.OpenRouterLLM))
 ok("the model recorded against a run is the configured one",

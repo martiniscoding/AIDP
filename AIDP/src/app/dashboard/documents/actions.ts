@@ -6,10 +6,18 @@ import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { canManageStandards } from "@/lib/access/roles";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { resolveFramework, runJobWhere } from "@/lib/ingest/assessment";
+import { resolveFramework, runJobWhere, supersedeFrameworksFor } from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
+import type { DecisionScope } from "@/lib/ingest/decision-effects";
 import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
 import { isOutcome } from "@/lib/ingest/outcomes-vocabulary";
+import {
+  NotApplicable,
+  NotSharpenable,
+  applyDraft,
+  discardDraft,
+  requestDraft,
+} from "@/lib/ingest/standards";
 import { remove } from "@/lib/ingest/storage";
 import type { Prisma } from "../../../../generated/prisma/client";
 
@@ -87,7 +95,12 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
         role: true,
         storageKey: true,
         title: true,
-        sections: { select: { figures: { select: { storageKey: true } } } },
+        sections: {
+          select: {
+            _count: { select: { clauses: true } },
+            figures: { select: { storageKey: true } },
+          },
+        },
       },
     });
     if (!document) return { ok: false, message: "That document no longer exists." };
@@ -101,10 +114,29 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
       ...document.sections.flatMap((s) => s.figures.map((f) => f.storageKey)),
     ].filter(Boolean);
 
+    const clauses = document.sections.reduce((n, s) => n + s._count.clauses, 0);
+
+    // Before the delete, while the membership rows still exist to be read: they
+    // cascade away with the document, and a framework version that loses a
+    // standard silently has to stop being the one assessed against.
+    if (document.role !== "assessed") await supersedeFrameworksFor(documentId);
+
     await prisma.document.delete({ where: { id: documentId } });
     const removed = await remove(keys);
 
     revalidatePath("/dashboard/documents");
+    // A standard is its clauses, so say what stopped being checked rather than
+    // how many blobs went. `resolveFramework` cuts a new framework version on
+    // the next assessment, because the set of indexed standards has changed —
+    // runs already on record keep the version they measured against.
+    if (document.role !== "assessed") {
+      return {
+        ok: true,
+        message:
+          `Removed "${document.title}". Assessments no longer check its ${clauses} ` +
+          `clause${clauses === 1 ? "" : "s"}; reports already written keep theirs.`,
+      };
+    }
     return {
       ok: true,
       message: `Deleted "${document.title}" and ${removed} stored file${removed === 1 ? "" : "s"}.`,
@@ -805,11 +837,18 @@ export async function reviewFinding(
     verdict?: string;
     note?: string;
     /**
-     * Carry this ruling into every future assessment. The reviewer has already
+     * Carry this ruling into future assessments. The reviewer has already
      * made the call and said why; promoting it is a checkbox rather than a
      * second act of authoring.
      */
     remember?: boolean;
+    /**
+     * How far the remembered ruling reaches. "project" keeps it inside the
+     * work it came from, which is what a board granting an exemption for one
+     * migration or one pilot actually decided. Defaults to the whole
+     * organisation, which is how every decision behaved before this existed.
+     */
+    scope?: DecisionScope;
   },
 ): Promise<ActionResult> {
   try {
@@ -817,7 +856,16 @@ export async function reviewFinding(
 
     const finding = await prisma.finding.findUnique({
       where: { id: findingId },
-      select: { run: { select: { organisationId: true, documentId: true } } },
+      select: {
+        run: {
+          select: {
+            organisationId: true,
+            documentId: true,
+            projectId: true,
+            document: { select: { projectId: true } },
+          },
+        },
+      },
     });
     if (!finding) return { ok: false, message: "That finding no longer exists." };
     await requireMembership(user.id, finding.run.organisationId);
@@ -839,7 +887,12 @@ export async function reviewFinding(
     let promotionError: string | null = null;
     if (decision.remember) {
       try {
-        await promoteFinding(user.id, findingId, {}, user.name || user.email);
+        await promoteFinding(
+          user.id,
+          findingId,
+          { scope: decision.scope ?? "organisation" },
+          user.name || user.email,
+        );
         remembered = true;
       } catch (error) {
         // Swallowed silently once, and it cost a debugging session: the register
@@ -858,13 +911,21 @@ export async function reviewFinding(
 
     revalidatePath(`/dashboard/documents/${finding.run.documentId}`);
     revalidatePath("/dashboard/decisions");
+    // A project run's report lives on the project, so reviewing from there has
+    // to invalidate that page as well or the row keeps saying "pending".
+    const project = finding.run.projectId ?? finding.run.document?.projectId ?? null;
+    if (project) revalidatePath(`/dashboard/projects/${project}/assessment`);
 
     const verb = decision.confirm ? "Confirmed" : "Override recorded";
     if (!decision.remember) return { ok: true, message: `${verb}.` };
+    const where =
+      decision.scope === "project"
+        ? "and allowed for this project"
+        : "and added to your decisions";
     return {
       ok: true,
       message: remembered
-        ? `${verb}, and added to your decisions.`
+        ? `${verb}, ${where}.`
         : `${verb}. It could not be added to your decisions: ${
             promotionError ?? "unknown error"
           }. The reason is recorded either way — add it from the register.`,
@@ -874,6 +935,133 @@ export async function reviewFinding(
       return { ok: false, message: "You do not have access to that finding." };
     }
     return { ok: false, message: "Could not record that decision." };
+  }
+}
+
+/**
+ * Ask for the requirement lines a clause was missing.
+ *
+ * The reviewer has just confirmed a `partial`, which is the system saying it
+ * could not judge the clause as written. This queues one model call to draft
+ * the lines that would have made it judgeable; nothing reaches the library
+ * until somebody approves them. See src/lib/ingest/standards.ts.
+ */
+export async function makeStandard(findingId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (typeof findingId !== "string" || !findingId) {
+      return { ok: false, message: "That finding no longer exists." };
+    }
+
+    const { state } = await requestDraft(user.id, findingId, user.name || user.email);
+
+    const finding = await prisma.finding.findUnique({
+      where: { id: findingId },
+      select: { run: { select: { documentId: true, projectId: true } } },
+    });
+    if (finding) revalidatePath(reportPath(finding.run));
+
+    return {
+      ok: true,
+      message:
+        state === "ready"
+          ? "A proposal for this clause is already waiting below."
+          : "Working out the requirement lines this clause was missing. This takes a few seconds.",
+    };
+  } catch (error) {
+    if (error instanceof NotSharpenable) return { ok: false, message: error.message };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that finding." };
+    }
+    return { ok: false, message: "Could not start a proposal for that clause." };
+  }
+}
+
+/**
+ * Approve a proposal: the clause gains the lines, as a new version of itself.
+ *
+ * `requirements` is what the approver settled on rather than what the model
+ * wrote — they may have reworded a line or dropped one, and what they approved
+ * is what binds.
+ */
+export async function applyStandard(
+  draftId: string,
+  requirements: string[],
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (typeof draftId !== "string" || !draftId) {
+      return { ok: false, message: "That proposal no longer exists." };
+    }
+    if (!Array.isArray(requirements) || requirements.some((line) => typeof line !== "string")) {
+      return { ok: false, message: "Could not read the requirements to add." };
+    }
+
+    const draft = await prisma.clauseDraft.findUnique({
+      where: { id: draftId },
+      select: { sourceRunId: true, clauseRef: true },
+    });
+    const { added } = await applyDraft(user.id, draftId, requirements, user.name || user.email);
+
+    const run = draft
+      ? await prisma.assessmentRun.findUnique({
+          where: { id: draft.sourceRunId },
+          select: { documentId: true, projectId: true },
+        })
+      : null;
+    if (run) revalidatePath(reportPath(run));
+    // The standard itself changed, so the library pages are stale too.
+    revalidatePath("/dashboard/documents");
+
+    return {
+      ok: true,
+      message:
+        `Added ${added} requirement${added === 1 ? "" : "s"} to ${draft?.clauseRef || "the clause"}. ` +
+        "The earlier wording is kept, and assessments from now on use the new one.",
+    };
+  } catch (error) {
+    if (error instanceof NotApplicable) return { ok: false, message: error.message };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that proposal." };
+    }
+    // The partial unique index on a live clause ordinal is invisible to Prisma,
+    // so a race surfaces as Postgres's own code rather than P2002.
+    if (isUniqueViolation(error)) {
+      return { ok: false, message: "Somebody has just changed that clause. Reload the report." };
+    }
+    return { ok: false, message: "Could not add those requirements." };
+  }
+}
+
+/** Say no to a proposal. Kept rather than deleted — a refusal is worth knowing. */
+export async function discardStandard(draftId: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    if (typeof draftId !== "string" || !draftId) {
+      return { ok: false, message: "That proposal no longer exists." };
+    }
+
+    const draft = await prisma.clauseDraft.findUnique({
+      where: { id: draftId },
+      select: { sourceRunId: true },
+    });
+    await discardDraft(user.id, draftId);
+
+    const run = draft
+      ? await prisma.assessmentRun.findUnique({
+          where: { id: draft.sourceRunId },
+          select: { documentId: true, projectId: true },
+        })
+      : null;
+    if (run) revalidatePath(reportPath(run));
+
+    return { ok: true, message: "Proposal discarded. The clause is unchanged." };
+  } catch (error) {
+    if (error instanceof NotApplicable) return { ok: false, message: error.message };
+    if (error instanceof NotAMember || error instanceof NoAccess) {
+      return { ok: false, message: "You do not have access to that proposal." };
+    }
+    return { ok: false, message: "Could not discard that proposal." };
   }
 }
 

@@ -6,6 +6,7 @@ import { requireWorkspace } from "@/lib/access/gate";
 import { PipelineBadge } from "./PipelineStatus";
 import { PipelineWatcher } from "./PipelineWatcher";
 import { ReadyTick, UploadZone } from "./UploadZone";
+import { RemoveStandard } from "./RemoveStandard";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
@@ -144,7 +145,7 @@ function Group({
         <ul className="relative mb-3 space-y-1.5">
           {documents.map((doc) => (
             <li key={doc.id}>
-              <Row doc={doc} />
+              <Row doc={doc} removable={role === "reference" && canUpload} />
             </li>
           ))}
         </ul>
@@ -171,23 +172,39 @@ function Group({
   );
 }
 
-function Row({ doc }: { doc: Doc }) {
+/**
+ * One document in the library.
+ *
+ * A div wrapping a link rather than one link, when the row carries a remove
+ * control: a button cannot sit inside an anchor, and the whole row being
+ * clickable is worth less than being able to take a stale standard out from
+ * here. The link still covers everything a reader would aim at.
+ */
+function Row({ doc, removable = false }: { doc: Doc; removable?: boolean }) {
   const meta = [
     doc.pageCount != null ? `${doc.pageCount}pp` : null,
     doc._count.chunks > 0 ? `${doc._count.chunks} chunks` : null,
+    // What this standard contributes to every assessment. Shown beside the
+    // remove control, because it is what removing it takes away.
+    doc.clauses > 0 ? `${doc.clauses} clause${doc.clauses === 1 ? "" : "s"}` : null,
     doc.sensitivity,
   ].filter(Boolean);
 
   return (
-    <Link
-      href={`/dashboard/documents/${doc.id}`}
+    <div
       className={cn(
-        "group flex items-center gap-3 rounded-lg border border-line bg-card px-3 py-2.5",
+        "group flex items-center gap-3 rounded-lg border border-line bg-card pr-2",
         "transition-[border-color,background-color] duration-200",
-        "hover:border-line hover:bg-card",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+        "focus-within:border-line-strong",
       )}
     >
+      <Link
+        href={`/dashboard/documents/${doc.id}`}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5",
+          "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-royal-mid",
+        )}
+      >
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13.5px] font-medium text-ink/92">
           {doc.title}
@@ -211,7 +228,12 @@ function Row({ doc }: { doc: Doc }) {
         size={14}
         className="shrink-0 text-ink/38 transition-[color,transform] duration-200 group-hover:translate-x-0.5 group-hover:text-ink/68"
       />
-    </Link>
+      </Link>
+
+      {removable && (
+        <RemoveStandard documentId={doc.id} title={doc.title} clauses={doc.clauses} />
+      )}
+    </div>
   );
 }
 

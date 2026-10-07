@@ -42,6 +42,16 @@ export const DOCX_MIME =
  *  rule of this product. */
 export const MAX_BYTES = 64 * 1024 * 1024;
 
+/** The most files one upload may carry.
+ *
+ *  A standards library arrives as a folder, not a file at a time, so the door
+ *  takes a batch. Capped because the whole batch is one request body held in
+ *  memory while each file is identified and hashed — and because a thousand
+ *  files attached by accident should be refused with a sentence rather than by
+ *  running out of memory. Twenty is well past any real standards library and
+ *  well short of trouble. */
+export const MAX_FILES = 20;
+
 /**
  * What these bytes actually are, or a reason they can't be ingested.
  *

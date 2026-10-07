@@ -16,6 +16,12 @@ Retrieval is a union of two things, not a ranking of one:
   * the nearest remaining decisions by meaning, so a ruling recorded against
     §3.2 still surfaces on §7.1 when both are about key management
 
+Both halves are filtered by reach. A decision is organisation-wide, or granted
+to one project — a board allowing a breach for one migration or one pilot — and
+a project's own rulings must never be weighed on another's design. A run with no
+project behind it sees the organisation-wide ones only, which is every decision
+recorded before scopes existed.
+
 Expiry is checked here as well as swept on read by the app. The sweep only
 happens when someone opens the register, and a run that starts before that would
 otherwise be handed a decision whose term has ended.
@@ -57,6 +63,11 @@ class Decision:
     effect: str
     clause_ref: str
     decided_by: str
+    # "organisation" or "project". Said in the prompt, because a ruling granted
+    # to this piece of work and one that binds the whole customer are not the
+    # same kind of precedent, and a judge told only "accepted" would read a
+    # local exemption as policy.
+    scope: str = "organisation"
     # True when this came back from the clause-reference half of the union. An
     # explicit ruling on this clause carries more weight than a near neighbour,
     # and the prompt says so.
@@ -67,21 +78,38 @@ class Decision:
         return _DIRECTIVE.get(self.effect, _DIRECTIVE["context"])
 
 
-_ANCHORED = """
-SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedByName"
+# `scope` is checked rather than `projectId IS NULL`, and the difference is the
+# case that matters: a project-scoped ruling whose project row has gone keeps
+# its scope and a null project, so it matches nothing here. Read the other way
+# round it would have widened into organisation-wide policy the moment the
+# project was removed. `%(project)s` is NULL on a run with no project, and
+# `"projectId" = NULL` is never true, so those runs see the wide ones only.
+_SCOPE = """
+   AND ("scope" = 'organisation' OR "projectId" = %(project)s)
+"""
+
+_ANCHORED = (
+    """
+SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedByName",
+       "scope"
   FROM "decision"
  WHERE "organisationId" = %(org)s
    AND "status" = 'active'
    AND ("expiresAt" IS NULL OR "expiresAt" > now())
    AND "clauseRef" <> ''
    AND "clauseRef" = %(clause_ref)s
+"""
+    + _SCOPE
+    + """
  ORDER BY "createdAt" DESC
  LIMIT %(limit)s
 """
+)
 
-_NEAREST = """
+_NEAREST = (
+    """
 SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedByName",
-       "vector" <=> %(vector)s::vector AS distance
+       "scope", "vector" <=> %(vector)s::vector AS distance
   FROM "decision"
  WHERE "organisationId" = %(org)s
    AND "status" = 'active'
@@ -92,9 +120,13 @@ SELECT "id", "title", "statement", "rationale", "effect", "clauseRef", "decidedB
    -- scripts/reembed.py rather than matching at random.
    AND "embeddingModel" = %(model)s
    AND NOT ("id" = ANY(%(exclude)s))
+"""
+    + _SCOPE
+    + """
  ORDER BY distance
  LIMIT %(limit)s
 """
+)
 
 # Cosine distance above which a decision is not really about this clause. The
 # register is small, and unfiltered neighbours would mean every clause dragging
@@ -132,6 +164,7 @@ def _row_to_decision(row: dict, *, anchored: bool) -> Decision:
         effect=row["effect"],
         clause_ref=row["clauseRef"] or "",
         decided_by=row["decidedByName"] or "",
+        scope=row.get("scope") or "organisation",
         anchored=anchored,
     )
 
@@ -144,17 +177,29 @@ def for_clause(
     query: str,
     limit: int = 3,
     vector: str | None = None,
+    project_id: str | None = None,
 ) -> list[Decision]:
     """The decisions that should be in front of the model for one clause.
 
     Capped hard. This runs once per clause across a hundred-odd clauses, so the
     prompt cost of an unbounded register would land on every run.
+
+    `project_id` is the project the run is about, from `designs.Scope`. Passing
+    None is not "any project" but "no project": only organisation-wide rulings
+    come back, which is the right answer for a design that belongs to none.
     """
     found: list[Decision] = []
 
     if clause_ref:
         rows = db.query(
-            conn, _ANCHORED, {"org": organisation_id, "clause_ref": clause_ref, "limit": limit}
+            conn,
+            _ANCHORED,
+            {
+                "org": organisation_id,
+                "clause_ref": clause_ref,
+                "project": project_id,
+                "limit": limit,
+            },
         )
         found.extend(_row_to_decision(r, anchored=True) for r in rows)
 
@@ -176,6 +221,7 @@ def for_clause(
             "org": organisation_id,
             "vector": vector,
             "model": model,
+            "project": project_id,
             "exclude": [d.id for d in found],
             "limit": limit - len(found),
         },
@@ -195,12 +241,19 @@ def render(decisions: list[Decision]) -> str:
 
     blocks = []
     for d in decisions:
-        scope = "on this clause" if d.anchored else "on a related clause"
+        anchor = "on this clause" if d.anchored else "on a related clause"
         lines = [
-            f"[decision:{d.id}] {d.title} ({scope})",
+            f"[decision:{d.id}] {d.title} ({anchor})",
             f"  Ruling: {d.statement}",
             f"  Effect: {d.directive}",
         ]
+        # Only said when it narrows the ruling. Labelling the ordinary case
+        # "organisation-wide" on every block would spend prompt on the default
+        # and leave the exception looking no different from it.
+        if d.scope == "project":
+            lines.append(
+                "  Reach: granted to this project alone, not to the organisation."
+            )
         if d.rationale and d.rationale != d.statement:
             lines.append(f"  Reason given: {d.rationale}")
         if d.decided_by:

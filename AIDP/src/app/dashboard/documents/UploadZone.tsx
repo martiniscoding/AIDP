@@ -17,6 +17,9 @@ type Receipt = {
 };
 
 const MAX_BYTES = 64 * 1024 * 1024;
+// Mirrors MAX_FILES in lib/ingest/intake. Said here only to refuse a hopeless
+// batch before any of it is uploaded; the door is what enforces it.
+const MAX_FILES = 20;
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -87,6 +90,23 @@ export function UploadZone({
     async (files: File[]) => {
       const accepted: File[] = [];
       const rejected: Receipt[] = [];
+
+      // Said before anything is uploaded. Selecting a whole folder by mistake
+      // is easy, and finding out after the twentieth file is not a refusal, it
+      // is a surprise.
+      if (files.length > MAX_FILES) {
+        setReceipts((prev) => [
+          ...prev,
+          {
+            id: `batch-${Date.now()}`,
+            name: `${files.length} files selected`,
+            size: 0,
+            state: "error",
+            message: `Up to ${MAX_FILES} at once`,
+          },
+        ]);
+        return;
+      }
 
       for (const file of files) {
         const id = `${file.name}-${file.size}-${Math.random()}`;
@@ -272,7 +292,7 @@ export function UploadZone({
             <span className="text-[11.5px] text-ink/62">
               {busy
                 ? "Queued in order"
-                : `or drop them here — PDF, PPTX or XLSX · up to ${formatSize(MAX_BYTES)}`}
+                : `Pick or drop several at once — PDF, DOCX, PPTX or XLSX · up to ${formatSize(MAX_BYTES)} each`}
             </span>
           </span>
         </span>

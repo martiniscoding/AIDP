@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { requireOwnerWorkspace } from "@/lib/access/gate";
 import { load } from "@/lib/access/profile";
+import { load as loadCredential } from "@/lib/access/credentials";
+import { secretsConfigured } from "@/lib/access/secrets";
 import { ProfileForm } from "./ProfileForm";
+import { ModelKey } from "./ModelKey";
 
 export const metadata: Metadata = {
   title: "Profile",
@@ -17,7 +20,10 @@ export const metadata: Metadata = {
  */
 export default async function ProfilePage() {
   const access = await requireOwnerWorkspace();
-  const profile = await load(access.organisation.id);
+  const [profile, credential] = await Promise.all([
+    load(access.organisation.id),
+    loadCredential(access.organisation.id),
+  ]);
 
   return (
     <>
@@ -26,11 +32,14 @@ export default async function ProfilePage() {
           Profile
         </h1>
         <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
-          Your company&rsquo;s details. Only administrators can change these.
+          Your company&rsquo;s details and the model key your assessments run on. Only
+          administrators can change these.
         </p>
       </header>
 
       <ProfileForm profile={profile} />
+
+      <ModelKey credential={credential} storageReady={secretsConfigured()} />
 
       <p className="mt-4 text-[12px] text-ink/62">
         Workspace created{" "}

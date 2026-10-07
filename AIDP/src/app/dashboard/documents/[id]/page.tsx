@@ -12,6 +12,7 @@ import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment"
 import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
+import { draftView, draftsForRun } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
@@ -111,7 +112,9 @@ export default async function DocumentPage({
 
   // Which of these reviews were already kept as decisions, so the report can
   // say so rather than inviting the same ruling to be recorded twice.
-  const decisionsInForce = await countActive(document.organisationId);
+  // What *this* report would be judged with: the organisation's rulings plus
+  // the ones granted to this design's project, and none granted to another's.
+  const decisionsInForce = await countActive(document.organisationId, document.projectId);
 
   // A decision can only be taken on a finished run, so the history is only
   // fetched for one.
@@ -132,6 +135,9 @@ export default async function DocumentPage({
     document.organisationId,
     findings.map((f) => f.id),
   );
+  // Proposals to sharpen a clause, by the finding each came from. Empty until
+  // somebody asks for one, so this costs a keyed lookup on most reports.
+  const drafts = run ? await draftsForRun(run.id) : new Map();
 
   const findingViews: FindingView[] = findings.map((f) => ({
     id: f.id,
@@ -146,7 +152,9 @@ export default async function DocumentPage({
     reviewerVerdict: f.reviewerVerdict,
     reviewerNote: f.reviewerNote,
     appliedDecisions: readAppliedDecisions(f.appliedDecisions),
-    promotedDecisionId: promoted.get(f.id) ?? null,
+    promotedDecisionId: promoted.get(f.id)?.id ?? null,
+    promotedScope: promoted.get(f.id)?.scope ?? null,
+    draft: draftView(drafts.get(f.id)),
   }));
 
   return (
@@ -254,10 +262,12 @@ export default async function DocumentPage({
       {assessed && (
         <Assessment
           scope={{ kind: "document", documentId: document.id }}
+          project={document.project}
           run={runView}
           counts={counts}
           findings={findingViews}
           decisionsInForce={decisionsInForce}
+          mayCurate={canManageStandards(membership.role)}
         />
       )}
 

@@ -27,14 +27,14 @@ that trade is the first thing to revisit.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from typing import Protocol
 
 import httpx
 
-from .. import logs, usage
-from ..config import get_config
+from .. import credentials, logs, usage
 
 log = logs.get(__name__)
 
@@ -264,12 +264,21 @@ def _post(url: str, headers: dict, payload: dict, attempts: int = 4) -> dict:
                 # OpenRouter's answer when the account's credit has run out.
                 # Like a spent daily quota, repeating the request cannot help.
                 raise QuotaExhausted(
-                    "the model provider account is out of credits; add credits and re-run"
+                    f"{credentials.whose()} is out of credits; add credits and re-run"
+                )
+            if res.status_code in (401, 403):
+                # The commonest failure once customers bring their own keys, and
+                # the one where naming the key is the whole message: a person
+                # told "401" goes looking in the wrong place, and the two places
+                # belong to different companies.
+                raise _Refused(
+                    f"{credentials.whose()} was rejected by the provider "
+                    f"({res.status_code}): {res.text[:200]}"
                 )
             if 400 <= res.status_code < 500 and res.status_code not in (408, 409, 429):
-                # Refused outright — a bad key, a schema the model will not
-                # accept, a model that does not exist. Sending it again returns
-                # the same refusal three more times, with a backoff between each.
+                # Refused outright — a schema the model will not accept, a model
+                # that does not exist. Sending it again returns the same refusal
+                # three more times, with a backoff between each.
                 raise _Refused(f"{res.status_code}: {res.text[:300]}")
 
             if res.status_code == 429:
@@ -280,8 +289,9 @@ def _post(url: str, headers: dict, payload: dict, attempts: int = 4) -> dict:
                 daily, retry_after = _quota_detail(body)
                 if daily:
                     raise QuotaExhausted(
-                        "the model's per-day free-tier quota is exhausted; enable billing "
-                        "on the Google Cloud project or wait for the daily reset"
+                        f"the per-day free-tier quota on {credentials.whose()} is "
+                        "exhausted; enable billing on the Google Cloud project or wait "
+                        "for the daily reset"
                     )
                 # Google tells us how long to wait. Guessing is worse.
                 wait = retry_after if retry_after is not None else delay
@@ -333,6 +343,7 @@ class LLM(Protocol):
     ) -> dict: ...
     def find_uncovered(self, *, design: str, standards: str, title: str) -> dict: ...
     def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict: ...
+    def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict: ...
     def find_technologies(self, *, design: str, products: str, title: str) -> dict: ...
     def confirm_absent(self, *, document: str, clauses: str) -> dict: ...
 
@@ -1124,6 +1135,112 @@ def _advice_system(*, design: str, findings: str, title: str) -> str:
     return _ADVICE_SYSTEM.format(design=design, findings=findings, title=title.replace('"', "'"))
 
 
+# ---------------------------------------------------------------------------
+# Sharpening a clause
+#
+# The one call in this system that writes into the standards library rather
+# than reporting on a design, so it is the most tightly bounded. The model may
+# add requirement lines to a clause and may do nothing else: not rewrite the
+# statement, not touch the rationale, not decide anything. A model allowed to
+# reword the rule would quietly change what the customer requires, and the
+# reviewer approving it would have no way to see that it had.
+#
+# Everything it returns is checked in Workers/aidp/standards.py before a person
+# is shown it — normative, not already required, not lifted from the design,
+# and built on a passage it was actually given.
+# ---------------------------------------------------------------------------
+
+_SHARPEN_SYSTEM = """\
+You maintain an enterprise architecture standards library. One clause in it has \
+just been found too vague to judge a design against, and your task is to write the \
+requirement lines it was missing.
+
+The clause, as it stands today:
+
+<clause>
+{clause}
+</clause>
+
+A design was assessed against it and came back PARTIAL — it does some of what the \
+clause asks and not the rest. A reviewer has confirmed that verdict. Here is what \
+the assessment found:
+
+<finding>
+{finding}
+</finding>
+
+These are the passages from the design that the assessment cited, numbered. Refer \
+to one only by its number:
+
+<evidence>
+{evidence}
+</evidence>
+
+The clause was judged "partial" because it does not say what the missing part is. \
+Write the requirement lines that would have made that judgeable, so that the next \
+design either satisfies them or plainly does not.
+
+Rules that matter more than writing many lines:
+
+1. Write requirements, not observations. Each line states what any design must do, \
+in the present tense, with "must" or "must not". Not "the design lacks a \
+dead-letter queue" but "Every queue consumer must define a dead-letter destination \
+for messages that exhaust their retries."
+2. Never mention this design, this project, or any product, vendor or version name. \
+A standard binds work that has not been written yet, and a line naming "Keycloak" \
+or "the Portal" is a note about one system, not a rule. Describe the capability, \
+never the brand.
+3. Never restate what the clause already requires, even in other words. The lines \
+already in the clause are listed above; read them first. If every missing part is \
+already covered by one of them, return no requirements at all.
+4. Change nothing else. You are not rewriting the statement, the rationale or the \
+existing requirements, and you are not judging the design. Added lines only.
+5. Each line is one sentence, at most 240 characters, and names something a \
+reviewer could check: a mechanism, a parameter, an interval, a protocol, a \
+destination, a state. Words that make a requirement unjudgeable are banned \
+outright: "appropriate", "adequate", "as necessary", "where possible", "best \
+practices", "consider", "proper", "robust", "sufficient".
+6. "basis" is the number of the evidence passage that shows this requirement was \
+missing. Every line must have one. A number that is not in the list above throws \
+the line out.
+7. At most 3 requirements. One precise line is worth more than three vague ones, \
+and a clause that was nearly specific enough needs only one. Returning none is the \
+honest answer when the clause is already specific.
+8. "note" is a single sentence, at most 200 characters, saying what the clause left \
+unsaid. It is the case for the change, shown to the person who approves it. Not a \
+restatement of the requirements.
+"""
+
+_SHARPEN_USER = "Write the requirement lines this clause was missing."
+
+_SHARPEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "requirements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "basis": {"type": "integer"},
+                },
+                "required": ["text", "basis"],
+                "propertyOrdering": ["text", "basis"],
+            },
+        },
+        "note": {"type": "string"},
+    },
+    "required": ["requirements", "note"],
+    "propertyOrdering": ["requirements", "note"],
+}
+
+_SHARPEN_MAX_TOKENS = 4096
+
+
+def _sharpen_system(*, clause: str, finding: str, evidence: str) -> str:
+    return _SHARPEN_SYSTEM.format(clause=clause, finding=finding, evidence=evidence)
+
+
 def advice_prompt_identity() -> str:
     """Everything about the suggestions request that is not the design itself.
 
@@ -1557,6 +1674,17 @@ class GeminiLLM:
             raise RuntimeError("gemini returned no suggestions")
         return _parse_json(text)
 
+    def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict:
+        text = self._generate(
+            [{"text": _SHARPEN_USER}],
+            system=_sharpen_system(clause=clause, finding=finding, evidence=evidence),
+            max_tokens=_SHARPEN_MAX_TOKENS,
+            schema=_SHARPEN_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned no requirements")
+        return _parse_json(text)
+
     def find_technologies(self, *, design: str, products: str, title: str) -> dict:
         text = self._generate(
             [{"text": _LIFECYCLE_USER}],
@@ -1827,6 +1955,21 @@ class AnthropicLLM:
                 "system": _advice_system(design=design, findings=findings, title=title),
                 "messages": [
                     {"role": "user", "content": _ADVICE_USER},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _SHARPEN_MAX_TOKENS,
+                "temperature": 0,
+                "system": _sharpen_system(clause=clause, finding=finding, evidence=evidence),
+                "messages": [
+                    {"role": "user", "content": _SHARPEN_USER},
                     {"role": "assistant", "content": "{"},
                 ],
             },
@@ -2222,6 +2365,23 @@ class OpenRouterLLM:
             raise RuntimeError("openrouter returned no suggestions")
         return _parse_json(text)
 
+    def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict:
+        text = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": _sharpen_system(clause=clause, finding=finding, evidence=evidence),
+                },
+                {"role": "user", "content": _SHARPEN_USER},
+            ],
+            max_tokens=_SHARPEN_MAX_TOKENS,
+            schema=_SHARPEN_SCHEMA,
+            name="requirements",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no requirements")
+        return _parse_json(text)
+
     def find_technologies(self, *, design: str, products: str, title: str) -> dict:
         text = self._chat(
             [
@@ -2271,7 +2431,23 @@ class OpenRouterLLM:
         return _parse_json(text)
 
 
-_client: LLM | None = None
+# Clients, keyed by the credential that built them rather than held as one
+# global.
+#
+# This was `_client: LLM | None`, built once per process. That was correct while
+# every job used the environment's key and is a cross-tenant leak now that a
+# customer may bring their own: one analyse container serves every organisation
+# in turn, so the first job through would warm the global and every company
+# after it would be served with the first one's key, its model and its bill.
+#
+# Keyed by provider, model and a fingerprint of the key — never the key itself,
+# so nothing that might be logged or dumped carries one.
+_clients: dict[str, LLM] = {}
+
+# A container sees a handful of organisations in its life, and an HTTP client is
+# cheap to rebuild. Bounded so a long-lived worker cannot accumulate one per
+# customer for ever.
+_CLIENT_CACHE_MAX = 8
 
 
 def _parse_json(raw: str) -> dict:
@@ -2298,43 +2474,70 @@ def _parse_json(raw: str) -> dict:
 
 
 def available() -> bool:
-    cfg = get_config()
-    provider = cfg.llm_provider.lower()
-    if provider == "openrouter":
-        return bool(cfg.openrouter_api_key)
-    if provider == "anthropic":
-        return bool(cfg.anthropic_api_key)
-    return bool(cfg.gemini_api_key)
+    """Whether there is a model to call for the work in hand.
+
+    Reads the credential bound to this job — the organisation's own key if they
+    brought one, otherwise the environment's. Callers use it to degrade rather
+    than fail: the parse stage still extracts figures with no model, and says in
+    an issue that they went undescribed.
+    """
+    chosen = credentials.active()
+    return bool(chosen.api_key) and chosen.provider in ("openrouter", "anthropic", "gemini")
+
+
+def _build(chosen: credentials.Credential) -> LLM:
+    """One client for one credential. No caching, no bound state — see `client`."""
+    if chosen.provider == "openrouter":
+        if not chosen.api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is not set")
+        return OpenRouterLLM(
+            chosen.api_key,
+            chosen.model,
+            chosen.fast_model,
+            providers=chosen.openrouter_providers,
+            zdr=chosen.zdr,
+        )
+    if chosen.provider == "anthropic":
+        if not chosen.api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set")
+        return AnthropicLLM(chosen.api_key, chosen.model, chosen.fast_model)
+    if chosen.provider == "gemini":
+        if not chosen.api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        return GeminiLLM(chosen.api_key, chosen.model, chosen.thinking_budget)
+    raise SystemExit(f"unknown LLM_PROVIDER {chosen.provider!r}")
 
 
 def client() -> LLM:
-    global _client
-    if _client is None:
-        cfg = get_config()
-        provider = cfg.llm_provider.lower()
-        if provider == "openrouter":
-            if not cfg.openrouter_api_key:
-                raise RuntimeError("OPENROUTER_API_KEY is not set")
-            _client = OpenRouterLLM(
-                cfg.openrouter_api_key,
-                cfg.openrouter_model,
-                cfg.openrouter_fast_model,
-                providers=cfg.openrouter_providers,
-                zdr=cfg.openrouter_zdr,
-            )
-        elif provider == "anthropic":
-            if not cfg.anthropic_api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY is not set")
-            _client = AnthropicLLM(cfg.anthropic_api_key, cfg.claude_model, cfg.claude_fast_model)
-        elif provider == "gemini":
-            if not cfg.gemini_api_key:
-                raise RuntimeError("GEMINI_API_KEY is not set")
-            _client = GeminiLLM(
-                cfg.gemini_api_key, cfg.gemini_model, cfg.gemini_thinking_budget
-            )
-        else:
-            raise SystemExit(f"unknown LLM_PROVIDER {cfg.llm_provider!r}")
-    return _client
+    """The client for the credential bound to this job.
+
+    The cache key is what matters here. Two jobs for the same organisation reuse
+    one client; a job for a different organisation gets its own, because the
+    alternative — the module global this replaced — would hand one customer's
+    key to the next customer's documents.
+    """
+    chosen = credentials.active()
+    # The key is hashed, not held: a cache key ends up in tracebacks and
+    # debugging output, and an API key must not.
+    fingerprint = hashlib.sha256((chosen.api_key or "").encode()).hexdigest()[:16]
+    cache_key = f"{chosen.provider}:{chosen.model}:{chosen.fast_model}:{fingerprint}"
+
+    existing = _clients.get(cache_key)
+    if existing is not None:
+        return existing
+
+    built = _build(chosen)
+    if len(_clients) >= _CLIENT_CACHE_MAX:
+        # Oldest first: dicts keep insertion order, and nothing here is worth a
+        # real LRU.
+        _clients.pop(next(iter(_clients)))
+    _clients[cache_key] = built
+    return built
+
+
+def forget_clients() -> None:
+    """Drop every cached client. For tests, and for a key that has been rotated."""
+    _clients.clear()
 
 
 def describe_figure(image_png: bytes, *, heading_path: str, caption: str | None) -> str:
@@ -2366,14 +2569,16 @@ def parse_json(raw: str) -> dict:
 
 
 def model_name() -> tuple[str, str]:
-    """(provider, model) as configured — recorded against a run and a reading."""
-    cfg = get_config()
-    provider = cfg.llm_provider.lower()
-    if provider == "openrouter":
-        return "openrouter", cfg.openrouter_model
-    if provider == "anthropic":
-        return "anthropic", cfg.claude_model
-    return "gemini", cfg.gemini_model
+    """(provider, model) for this job — recorded against a run and a reading.
+
+    Reads the bound credential rather than the configuration, so that a run
+    carried out on a customer's own key is stamped with the model that actually
+    judged it. Getting this from config instead would record the deployment's
+    default against every run and quietly make `AiCache` fingerprints and
+    `RuleExtraction` rows claim a model that never saw the document.
+    """
+    chosen = credentials.active()
+    return chosen.provider, chosen.model
 
 
 def judge(
@@ -2419,6 +2624,16 @@ def suggest_improvements(*, design: str, findings: str, title: str) -> dict:
     against the design before any suggestion is kept.
     """
     return client().suggest_improvements(design=design, findings=findings, title=title)
+
+
+def sharpen_clause(*, clause: str, finding: str, evidence: str) -> dict:
+    """The requirement lines a clause was missing, from a confirmed partial.
+
+    The only call that writes towards the standards library rather than about a
+    design. It may add requirement lines and nothing else; `standards.py`
+    checks every one before a person is shown it.
+    """
+    return client().sharpen_clause(clause=clause, finding=finding, evidence=evidence)
 
 
 def find_technologies(*, design: str, products: str, title: str) -> dict:

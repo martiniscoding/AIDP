@@ -67,3 +67,21 @@ export const ROLE_BLURB: Record<OrgRole, string> = {
 export function canManageStandards(stored: string | null | undefined): boolean {
   return isOwner(stored);
 }
+
+/**
+ * May this role install the organisation's own model key?
+ *
+ * Owner only, and a separate question from the two above even though it has the
+ * same answer today. A model key is the company's money and the company's
+ * contract with a provider: whoever sets it decides what every assessment costs
+ * and which vendor sees the documents. An employee submitting a design must not
+ * be able to point the engine at a model of their choosing — or at their
+ * personal account — on the way to being judged by it.
+ *
+ * Named after the policy for the same reason `canManageStandards` is: a future
+ * "billing contact" who may set the key but not curate the standards would
+ * change this line and nothing else.
+ */
+export function canManageCredentials(stored: string | null | undefined): boolean {
+  return isOwner(stored);
+}

@@ -34,6 +34,25 @@ export const EFFECT_META: Record<
   },
 };
 
+export const DECISION_SCOPES = ["organisation", "project"] as const;
+
+export type DecisionScope = (typeof DECISION_SCOPES)[number];
+
+export const SCOPE_META: Record<DecisionScope, { label: string; blurb: string }> = {
+  organisation: {
+    label: "Everywhere",
+    blurb: "Weighed in every assessment this organisation runs.",
+  },
+  project: {
+    label: "This project only",
+    blurb: "Weighed only when this project is assessed. No other work inherits it.",
+  },
+};
+
+export function readScope(value: unknown): DecisionScope {
+  return value === "project" ? "project" : "organisation";
+}
+
 export const DECISION_STATUSES = ["active", "superseded", "expired"] as const;
 
 export type DecisionStatus = (typeof DECISION_STATUSES)[number];

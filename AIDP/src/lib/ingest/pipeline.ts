@@ -157,6 +157,25 @@ export function readProgress(value: unknown): Progress | null {
  * is kept alongside for whoever has to fix it.
  */
 const KNOWN: [RegExp, string][] = [
+  // The organisation's own key first, and before the generic quota and
+  // credential patterns below: `explain` takes the first match, and a company
+  // that has brought its own key needs to be sent to its own settings page
+  // rather than told "the model provider turned the request down".
+  [
+    /your organisation's own model key was rejected/i,
+    "Your company's model key was rejected by the provider. Check it on the Profile page — a " +
+      "revoked or mistyped key does this, and assessments will not run until it is fixed.",
+  ],
+  [
+    /your organisation's own model key is out of credits|per-day free-tier quota on your organisation's/i,
+    "Your company's model key has no credit or quota left. Top up the account with the provider, " +
+      "then re-run — nothing was lost.",
+  ],
+  [
+    /could not read the organisation's model key|model key came back incomplete/i,
+    "Your company's model key could not be read, so this was not run on it. It will be retried " +
+      "automatically; if it keeps happening, re-paste the key on the Profile page.",
+  ],
   [
     /lease expired/i,
     "The worker stopped before it finished — it may have been restarted, redeployed or run out of memory.",

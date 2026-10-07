@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import cache, db, logs, progress, queue, usage
+from . import cache, credentials, db, logs, progress, queue, usage
 from .config import get_config
 from .stages import analyse as analyse_stage
 from .stages import chunk as chunk_stage
@@ -164,6 +164,18 @@ def main() -> int:
 
         try:
             logs.info(log, "job started", jobId=job.id, stage=job.stage, attempt=job.attempts)
+            # Which key this job's model calls are made with: the
+            # organisation's own if they have brought one, otherwise the
+            # environment's. See credentials.py — a container serves every
+            # organisation in turn, so this cannot be decided once at startup.
+            #
+            # Inside the try, deliberately. A lookup that cannot be completed
+            # raises, and that must fail *this job* — which the queue then
+            # retries with backoff — rather than escape the loop and stop the
+            # stage. Cleared first so a failed lookup cannot leave the previous
+            # job's organisation bound.
+            credentials.bind(None)
+            credentials.bind(credentials.for_job(job.organisation_id))
             handler(job, heartbeat)
             logs.info(log, "job done", jobId=job.id, seconds=round(time.monotonic() - started, 2))
         except Exception as exc:  # noqa: BLE001 — one bad document must not stop the stage

@@ -31,7 +31,7 @@ from __future__ import annotations
 import contextvars
 from dataclasses import dataclass
 
-from . import db, logs
+from . import credentials, db, logs
 
 log = logs.get(__name__)
 
@@ -99,13 +99,33 @@ _INSERT = """
 INSERT INTO "token_usage" (
     "id", "organisationId", "userId", "documentId", "runId",
     "stage", "kind", "provider", "model",
-    "inputTokens", "outputTokens", "totalTokens", "estimated", "createdAt"
+    "inputTokens", "outputTokens", "totalTokens", "estimated", "payer", "createdAt"
 ) VALUES (
     %(id)s, %(org)s, %(user)s, %(doc)s, %(run)s,
     %(stage)s, %(kind)s, %(provider)s, %(model)s,
-    %(input)s, %(output)s, %(total)s, %(estimated)s, %(now)s
+    %(input)s, %(output)s, %(total)s, %(estimated)s, %(payer)s, %(now)s
 )
 """
+
+
+def _payer(kind: str) -> str:
+    """Whose account the provider billed for this call.
+
+    Only generation can be on a customer's own key — embeddings deliberately
+    stay on the deployment's, because the corpus is indexed by embedding model
+    and a customer who changed theirs would lose dense retrieval over
+    everything already ingested. So an embedding row is always the platform's
+    spend however this job's LLM credential was resolved, and deriving it from
+    the bound credential regardless of `kind` would misattribute every one.
+
+    Tokens are recorded either way. An administrator wants to know what their
+    assessments consumed whichever card the provider charged; this column only
+    answers who paid.
+    """
+    if kind != "llm":
+        return "platform"
+    chosen = credentials.current()
+    return "organisation" if chosen is not None and chosen.customers_own else "platform"
 
 
 def record(
@@ -147,6 +167,7 @@ def record(
                     "output": max(0, int(output_tokens)),
                     "total": max(0, int(input_tokens)) + max(0, int(output_tokens)),
                     "estimated": estimated,
+                    "payer": _payer(kind),
                     "now": db.now(),
                 },
             )
