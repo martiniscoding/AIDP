@@ -195,3 +195,152 @@ export async function embeddingCoverage(userId: string, documentId: string) {
   const embedded = await prisma.embedding.count({ where: { chunk: { documentId } } });
   return { chunks, embedded };
 }
+
+// ---------------------------------------------------------------------------
+// What one section actually yielded
+// ---------------------------------------------------------------------------
+
+/** A line of the source, as the parse stage read it off the page. */
+export type SourceLineView = {
+  ordinal: number;
+  /** The parser's own handle for it. Clauses cite these in `sourceRefs`. */
+  ref: string;
+  /** "heading" | "text" | "bullet" | "table_row" | … */
+  kind: string;
+  page: number | null;
+  text: string;
+};
+
+/** A clause, with the parts it was sliced into kept apart. */
+export type ClauseView = {
+  id: string;
+  /** Its place in the section's reading order. A clause carries no number of
+   *  its own — the reference comes from the section, which is why a decision
+   *  anchored to §9.3 still finds a clause that was sharpened later. */
+  ordinal: number;
+  title: string | null;
+  statement: string;
+  rationale: string;
+  requirements: string[];
+  guidance: string[];
+  /** "parser" | "model" | "restored" | "authored" — how it was found. */
+  origin: string;
+  pageStart: number | null;
+  /**
+   * Which source lines each part came from, for a clause a model read.
+   * `{ statement: ["L12"], requirements: [{ refs: ["L14"], strength: "must" }] }`
+   * and so on — see Clause.sourceRefs.
+   */
+  sourceRefs: unknown;
+};
+
+export type TableView = {
+  id: string;
+  ordinal: number;
+  caption: string | null;
+  columns: string[];
+  rows: unknown;
+  pageStart: number | null;
+  /** Below 1 the parser was unsure of the shape. Worth seeing. */
+  confidence: number;
+};
+
+export type SectionContent = {
+  section: {
+    id: string;
+    ordinal: number;
+    numberText: string | null;
+    title: string;
+    headingPath: string;
+    pageStart: number | null;
+    pageEnd: number | null;
+    isEmpty: boolean;
+  };
+  /** "reference" or "assessed" — which half of this is the payload. */
+  role: string;
+  lines: SourceLineView[];
+  clauses: ClauseView[];
+  tables: TableView[];
+};
+
+/**
+ * Everything one section yielded, fetched when somebody asks for it.
+ *
+ * The parsed page's outline says how many clauses, tables and figures each
+ * section produced. How many is not what, and a count cannot tell a good parse
+ * from a bad one: "2 clauses" reads the same whether the parser found two rules
+ * or sliced one in half. This is the other half of that page — the text behind
+ * the number.
+ *
+ * One section at a time, rather than the whole document with the outline. A
+ * design in this corpus runs to 6,328 source lines across 85 sections, and
+ * sending all of it to draw an outline nobody has expanded yet would make the
+ * page slow for the one case it is most needed in.
+ *
+ * Lines are matched by `sectionOrdinal` rather than by a foreign key, because
+ * that is how the parse stage records them: a line belongs to the section whose
+ * ordinal it fell under. A document processed before page text was stored has
+ * none, and says so by returning an empty list rather than by failing.
+ */
+export async function sectionContent(
+  userId: string,
+  documentId: string,
+  sectionId: string,
+): Promise<SectionContent | null> {
+  const section = await prisma.documentSection.findFirst({
+    where: { id: sectionId, documentId },
+    select: {
+      id: true,
+      ordinal: true,
+      numberText: true,
+      title: true,
+      headingPath: true,
+      pageStart: true,
+      pageEnd: true,
+      isEmpty: true,
+      document: { select: { organisationId: true, role: true } },
+      clauses: {
+        where: { supersededById: null },
+        orderBy: { ordinal: "asc" },
+        select: {
+          id: true,
+          ordinal: true,
+          title: true,
+          statement: true,
+          rationale: true,
+          requirements: true,
+          guidance: true,
+          origin: true,
+          pageStart: true,
+          sourceRefs: true,
+        },
+      },
+      tables: {
+        orderBy: { ordinal: "asc" },
+        select: {
+          id: true,
+          ordinal: true,
+          caption: true,
+          columns: true,
+          rows: true,
+          pageStart: true,
+          confidence: true,
+        },
+      },
+    },
+  });
+  if (!section) return null;
+
+  // Against the section's own organisation, so a guessed id cannot be used to
+  // confirm that a document exists.
+  await requireMembership(userId, section.document.organisationId);
+
+  const lines = await prisma.sourceLine.findMany({
+    where: { documentId, sectionOrdinal: section.ordinal },
+    orderBy: { ordinal: "asc" },
+    select: { ordinal: true, ref: true, kind: true, page: true, text: true },
+  });
+
+  const { document, clauses, tables, ...rest } = section;
+  return { section: rest, role: document.role, lines, clauses, tables };
+}

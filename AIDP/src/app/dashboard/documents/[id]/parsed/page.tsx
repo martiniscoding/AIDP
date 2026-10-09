@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import { AlertTriangle, ArrowLeft, ImageIcon, Info, Table2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Info } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
@@ -11,6 +11,7 @@ import { canManageStandards } from "@/lib/access/roles";
 import { setAside } from "@/lib/ingest/rules";
 import { Figures, type FigureView } from "../Figures";
 import { SetAside } from "../SetAside";
+import { SectionRow } from "./SectionRow";
 
 export const dynamic = "force-dynamic";
 
@@ -165,9 +166,16 @@ export default async function ParsedPage({
       <Figures figures={figureViews} />
 
       <section>
-        <h2 className="mb-3 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
+        <h2 className="mb-1 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
           Structure
         </h2>
+        {/* The counts were the whole of this list, and a count cannot tell a
+            good parse from a bad one. Say that a row opens: a drop target is
+            discoverable by people who already know, and by nobody else. */}
+        <p className="mb-3 text-[12.5px] text-ink/64">
+          Open a section to see exactly what was taken out of it — the lines as they were
+          read off the page, the clauses, and the tables.
+        </p>
 
         {document.sections.length === 0 ? (
           <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
@@ -184,75 +192,23 @@ export default async function ParsedPage({
             rule, and only the counts that exist are shown.
           */
           <ol className="border-t border-line">
-            {document.sections.map((section) => {
-              const child = section.depth > 1;
-              return (
-                <li key={section.id}>
-                  <div
-                    style={{ paddingLeft: `${Math.min(section.depth - 1, 3) * 22}px` }}
-                    className={cn(
-                      "border-b border-line-soft",
-                      section.isEmpty && "bg-warn-tint",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "flex items-baseline gap-3 py-2",
-                        child && "border-l border-line pl-3",
-                      )}
-                    >
-                      {section.numberText && (
-                        <span
-                          className={cn(
-                            "shrink-0 font-mono text-[11px] tabular-nums",
-                            child ? "text-ink/58" : "text-ink/64",
-                          )}
-                        >
-                          {section.numberText}
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "min-w-0 flex-1 truncate",
-                          child
-                            ? "text-[13px] text-ink/74"
-                            : "text-[13.5px] font-medium text-ink/92",
-                        )}
-                      >
-                        {section.title}
-                      </span>
-
-                      <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-ink/62">
-                        {section.clauses.length > 0 && (
-                          <span className="text-ink/66">
-                            {section.clauses.length}{" "}
-                            {section.clauses.length === 1 ? "clause" : "clauses"}
-                          </span>
-                        )}
-                        {section.tables.length > 0 && (
-                          <span className="inline-flex items-center gap-1">
-                            <Table2 size={11} />
-                            {section.tables.length}
-                          </span>
-                        )}
-                        {section.figures.length > 0 && (
-                          <span className="inline-flex items-center gap-1">
-                            <ImageIcon size={11} />
-                            {section.figures.length}
-                          </span>
-                        )}
-                        {section.isEmpty && <span className="text-warn">empty in source</span>}
-                        {section.pageStart != null && (
-                          <span className="w-7 text-right tabular-nums text-ink/62">
-                            p{section.pageStart}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
+            {document.sections.map((section) => (
+              <SectionRow
+                key={section.id}
+                documentId={document.id}
+                section={{
+                  id: section.id,
+                  depth: section.depth,
+                  numberText: section.numberText,
+                  title: section.title,
+                  pageStart: section.pageStart,
+                  isEmpty: section.isEmpty,
+                  clauses: section.clauses.length,
+                  tables: section.tables.length,
+                  figures: section.figures.length,
+                }}
+              />
+            ))}
           </ol>
         )}
       </section>
