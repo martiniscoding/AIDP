@@ -11,15 +11,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# LibreOffice, headless, for one job: photographing slides whose diagrams are
-# drawn in PowerPoint's own shapes, which no Python library can draw (see
-# aidp/parsing/slide_render.py). Impress alone, no Java, no GUI. The fonts are
+# LibreOffice, headless, for three jobs it is the only thing here that can do:
+# photographing slides whose diagrams are drawn in PowerPoint's own shapes
+# (aidp/parsing/slide_render.py), drawing the EMF and WMF pictures Office pastes
+# into a Word file (aidp/parsing/vectors.py), and laying a .docx out so its real
+# page numbers and generated heading numbers can be read off the result
+# (aidp/parsing/pagination.py). Impress and Writer, no Java, no GUI. The fonts are
 # what decks are written in — Carlito and Caladea match Calibri and Cambria
 # metric for metric — so text in a rendered box wraps where the author put it.
 # Its own layer, above the Python dependencies, so it is built once.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      libreoffice-impress \
+      libreoffice-impress libreoffice-writer \
       fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation2 fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 

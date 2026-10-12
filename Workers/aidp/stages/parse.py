@@ -41,6 +41,7 @@ from ..parsing import (
     ai_structure,
     docs,
     furniture,
+    pagination,
     rules,
     sections,
     sheets,
@@ -469,6 +470,55 @@ def _adopt_structure(out: _Result, read) -> None:
         )
 
 
+def _paginate(read, raw: bytes, out: "_Result") -> None:
+    """Replace the Word parse's page floor with the pages it actually prints on.
+
+    A .docx has no pagination — `docs.read` counts explicit breaks and says so —
+    so a nineteen-page blueprint reports three pages and every citation points
+    at a page that does not exist. LibreOffice lays it out and the pages are
+    read off that; see parsing/pagination.py for why the rendering is measured
+    rather than parsed.
+
+    The same pass recovers the heading numbers. Word generates "3.2" when it
+    renders and stores only "Application and Data Architecture", so until now a
+    finding cited a heading a reviewer had to search for. The number is put back
+    on the line before the outline is built, which is the shape the PDF path
+    hands `sections.from_outline` anyway.
+
+    Silent when LibreOffice is absent or the document will not convert: the
+    parse keeps the floor it had, which is what every Word document had before
+    this existed.
+    """
+    rendered = pagination.render(raw)
+    if rendered is None:
+        return
+    mapping = pagination.map_lines(
+        rendered, [line.text for line in read.lines], set(read.levels)
+    )
+    if mapping is None:
+        return
+
+    for index, line in enumerate(read.lines):
+        line.page = mapping.pages[index]
+        number = mapping.numbers.get(index)
+        # Guarded, because a heading that already carries its number — typed by
+        # hand rather than generated — must not come out as "3.2 3.2 Title".
+        if number and not line.text.lstrip().startswith(number):
+            line.text = f"{number} {line.text}"
+
+    # Anchored by line, like everything else on this path: the walk recorded
+    # which line each table and figure sat under, and that line now knows its
+    # page.
+    for anchor_index, table in read.tables:
+        if 0 <= anchor_index < len(mapping.pages):
+            table.page_start = table.page_end = mapping.pages[anchor_index]
+    for anchor_index, figure in read.figures:
+        if 0 <= anchor_index < len(mapping.pages):
+            figure.page = mapping.pages[anchor_index]
+
+    out.page_count = mapping.page_count
+
+
 def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
     """A .docx, read from the structure it already states.
 
@@ -493,6 +543,8 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
             f"no usable text in this Word document ({text_chars} characters) — "
             "a file of flattened images needs OCR, which is not wired up"
         )
+
+    _paginate(read, raw, out)
 
     out.title = read.title or document["title"]
     out.profile = "prose-clause"
