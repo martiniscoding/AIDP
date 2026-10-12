@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from docx import Document
 from docx.oxml.ns import qn
 
+from . import vectors
 from .figures import Figure
 from .spans import Line
 from .tables import Table
@@ -80,6 +81,8 @@ class Doc:
     page_count: int = 1
     #: Images in a format that could not be read, reported rather than dropped.
     undecodable_images: int = 0
+    #: Vector drawings LibreOffice managed to draw, against MAX_PER_DOCUMENT.
+    vectors_drawn: int = 0
     #: Running header and footer text. Not content — a Word document states its
     #: sensitivity classification there, exactly as the PDF it is exported to
     #: prints it on every page, and that is governance data rather than noise.
@@ -221,29 +224,86 @@ def _table(element, parent, page: int) -> Table | None:
     )
 
 
-def _images(document, doc: Doc, anchor: int, page: int) -> None:
-    """Inline pictures, as figures for the vision pass.
+def _picture_ids(element) -> list[str]:
+    """Relationship ids of the pictures inside one element, in document order.
 
-    Read from the package's relationships rather than by walking drawing XML:
-    the bytes are what the describer needs and the position within a paragraph
-    is not something a section tree cares about.
+    Two spellings, because Word has two. A picture inserted from a file is
+    DrawingML (`a:blip`); one pasted in from Visio or another document is
+    usually VML (`v:imagedata`), which is exactly the case this matters for —
+    every diagram in the blueprint that prompted this is VML.
     """
-    for rel in document.part.rels.values():
-        if "image" not in rel.reltype:
+    found: list[str] = []
+    for node in element.iter():
+        tag = node.tag.split("}")[-1]
+        if tag == "blip":
+            rid = node.get(qn("r:embed"))
+        elif tag == "imagedata":
+            rid = node.get(qn("r:id"))
+        else:
+            continue
+        if rid and rid not in found:
+            found.append(rid)
+    return found
+
+
+def _picture(document, rid: str, doc: Doc, anchor: int, page: int) -> None:
+    """One picture, by relationship id, attached to the line it was found under."""
+    try:
+        rel = document.part.rels[rid]
+        blob = rel.target_part.blob
+    except Exception:  # noqa: BLE001 — a broken relationship is not fatal
+        doc.undecodable_images += 1
+        return
+    if "image" not in rel.reltype:
+        return
+    _attach(doc, blob, anchor, page)
+
+
+def _attach(doc: Doc, blob: bytes, anchor: int, page: int) -> None:
+    """Keep one image's bytes as a figure, drawing it first if it is a drawing."""
+    # EMF and WMF are what Word writes when a drawing is pasted in from Visio
+    # or another document, and on a blueprint they are usually the architecture
+    # itself. LibreOffice draws them; see vectors.py. Still counted when it
+    # cannot, so the parse reports what it lost.
+    if vectors.kind(blob) is not None:
+        if doc.vectors_drawn >= vectors.MAX_PER_DOCUMENT:
+            doc.undecodable_images += 1
+            return
+        png = vectors.rasterise(blob)
+        if png is None:
+            doc.undecodable_images += 1
+            return
+        doc.vectors_drawn += 1
+        # "vector", because that is what it is, and because a figure with no
+        # text layer is the one that most needs describing — see Figure.kind.
+        doc.figures.append(
+            (anchor, Figure(page=page, bbox=(0.0, 0.0, 0.0, 0.0), png=png, kind="vector"))
+        )
+        return
+    doc.figures.append(
+        (anchor, Figure(page=page, bbox=(0.0, 0.0, 0.0, 0.0), png=blob, kind="raster"))
+    )
+
+
+def _images(document, doc: Doc, anchor: int, page: int, seen: set[str]) -> None:
+    """Pictures the body walk never passed, as figures for the vision pass.
+
+    The body walk attaches each picture to the line it sits under, which is how
+    a context diagram ends up in the section headed "C1 Context Diagram" rather
+    than wherever the walk happened to finish. This is the sweep behind it: a
+    picture in a header, a footer, or a shape the walk does not enter still
+    reaches the vision pass, attached to the end of the document because that
+    is the most honest thing left to say about where it was.
+    """
+    for rid, rel in document.part.rels.items():
+        if "image" not in rel.reltype or rid in seen:
             continue
         try:
             blob = rel.target_part.blob
         except Exception:  # noqa: BLE001 — a broken relationship is not fatal
             doc.undecodable_images += 1
             continue
-        # EMF and WMF are vector formats out of Office that nothing here can
-        # rasterise. Counted and reported, as on the deck path.
-        if rel.target_ref.lower().endswith((".emf", ".wmf")):
-            doc.undecodable_images += 1
-            continue
-        doc.figures.append(
-            (anchor, Figure(page=page, bbox=(0.0, 0.0, 0.0, 0.0), png=blob, kind="raster"))
-        )
+        _attach(doc, blob, anchor, page)
 
 
 def _furniture(document) -> list[str]:
@@ -276,6 +336,9 @@ def read(raw: bytes) -> Doc:
     body = document.element.body
     paragraphs = {p._p: p for p in document.paragraphs}  # noqa: SLF001 — identity map
     page = 1
+    # Pictures already placed by the walk, so the sweep at the end only has to
+    # account for the ones it never reached.
+    seen: set[str] = set()
 
     for element in body:
         tag = element.tag.split("}")[-1]
@@ -284,6 +347,12 @@ def read(raw: bytes) -> Doc:
             table = _table(element, document, page)
             if table is not None:
                 doc.tables.append((len(doc.lines) - 1, table))
+            # A picture inside a cell belongs to the section the table is in —
+            # the blueprint's Security Risk Assessments table carries one.
+            for rid in _picture_ids(element):
+                if rid not in seen:
+                    seen.add(rid)
+                    _picture(document, rid, doc, max(len(doc.lines) - 1, 0), page)
             continue
 
         if tag != "p":
@@ -294,6 +363,17 @@ def read(raw: bytes) -> Doc:
             continue
 
         page += _page_breaks(paragraph)
+
+        # Before the empty-text check below, because a diagram usually sits in a
+        # paragraph of its own with no words in it at all — and that paragraph
+        # is skipped. Anchored to the last line written, which for an
+        # image-only paragraph is the heading above it: "3.2.2 C1 Context
+        # Diagram", which is exactly the section the picture belongs to.
+        for rid in _picture_ids(element):
+            if rid not in seen:
+                seen.add(rid)
+                _picture(document, rid, doc, max(len(doc.lines) - 1, 0), page)
+
         text = paragraph.text.strip()
         if not text:
             continue
@@ -330,6 +410,6 @@ def read(raw: bytes) -> Doc:
     # document named after its changelog is worse than one named after its
     # file — which is what the parse stage falls back to.
 
-    _images(document, doc, max(len(doc.lines) - 1, 0), page)
+    _images(document, doc, max(len(doc.lines) - 1, 0), page, seen)
     doc.page_count = page
     return doc

@@ -30,7 +30,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 
 from .. import logs
-from . import slide_render
+from . import slide_render, vectors
 from .figures import Figure
 from .spans import Line
 
@@ -107,6 +107,8 @@ class Deck:
     #: Pictures that could not be converted to PNG, reported rather than dropped
     #: in silence.
     undecodable_images: int = 0
+    #: Vector drawings LibreOffice managed to draw, against MAX_PER_DOCUMENT.
+    vectors_drawn: int = 0
     #: Slides drawn as diagrams whose picture could not be taken, and why — so
     #: the document says its diagrams were read as words alone.
     unrendered_diagrams: list[int] = field(default_factory=list)
@@ -406,8 +408,16 @@ def _read_pictures(prs, deck: Deck) -> None:
             continue
         png = _to_png(blob)
         if png is None:
-            deck.undecodable_images += 1
-            continue
+            # A drawing pasted into the deck from Visio or another Office
+            # document, which Pillow cannot open. LibreOffice can — see
+            # vectors.py — and on a proposal deck these are the architecture
+            # slides' own diagrams.
+            if deck.vectors_drawn < vectors.MAX_PER_DOCUMENT:
+                png = vectors.rasterise(blob)
+            if png is None:
+                deck.undecodable_images += 1
+                continue
+            deck.vectors_drawn += 1
         left = _points(shape.left)
         top = _points(shape.top)
         deck.figures.append(
