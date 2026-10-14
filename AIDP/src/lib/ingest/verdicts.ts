@@ -24,6 +24,29 @@ export type Verdict = (typeof VERDICTS)[number];
 /**
  * Ordered worst-first: the review queue should open on what matters.
  *
+ * ## The five things a reviewer means by "not covered"
+ *
+ * These are not interchangeable, and the engine was using them as though they
+ * were. One real run marked a design `absent` on "Dell + VMware Infrastructure"
+ * because it runs on Google Cloud, and `covered` on "Approved Platform-Specific
+ * Deployments" because it names GKE. Both are category errors, not close calls.
+ *
+ * | What is actually the case | Status |
+ * |---|---|
+ * | The clause requires a component or mechanism and the design never engages it | `absent` |
+ * | The design engages it, but the evidence needed to judge it is not in the document | `not_assessable` |
+ * | The wording is genuinely open to two readings, so no answer is safe | `needs_review` |
+ * | The clause's own stated condition excludes this architecture | `not_applicable` |
+ * | The subject needs a standard the organisation has not supplied | **not a verdict** |
+ *
+ * The last row is the one that has no status, deliberately. A requirement the
+ * company has never written down cannot be a finding against a design — a
+ * finding is always measured against a clause in the indexed framework. Those
+ * belong to `run.coverage`, which reports the parts of a design no clause
+ * governs and names the standards that would cover them, as a proposal to
+ * whoever owns the standards library. See Workers/aidp/coverage.py, whose
+ * contract puts it plainly: never a requirement on a design.
+ *
  * `not_assessable` is the verdict this vocabulary was missing, and its absence
  * was the engine's worst habit. "The design names GKE but includes no approval
  * record" is not a breach of an approval requirement — it is a document that
@@ -46,7 +69,9 @@ export const VERDICT_META: Record<
   absent: {
     label: "Absent",
     tone: "bad",
-    blurb: "The design does not engage this requirement's mechanism at all.",
+    blurb:
+      "The design never engages this requirement's mechanism — the thing it asks for is " +
+      "not in the architecture, not merely undocumented.",
   },
   partial: {
     label: "Partial",
@@ -56,18 +81,24 @@ export const VERDICT_META: Record<
   not_assessable: {
     label: "Not assessable",
     tone: "unknown",
-    blurb: "The design is on the subject, but the evidence needed to judge it is not in it.",
+    blurb:
+      "The architecture engages this requirement, but the record needed to judge it — an " +
+      "approval, a policy, a stated figure — is not in the document. A question for its author.",
   },
   needs_review: {
     label: "Needs review",
     tone: "unknown",
-    blurb: "The evidence was inconclusive. A person has to decide.",
+    blurb:
+      "No answer is safe from what is written: the wording is open to two readings, or the " +
+      "engine refused a conclusion the source did not support.",
   },
   covered: { label: "Covered", tone: "good", blurb: "Every requirement is met." },
   not_applicable: {
     label: "Not applicable",
     tone: "neutral",
-    blurb: "This requirement does not govern the architecture described.",
+    blurb:
+      "A condition the clause itself states excludes this architecture. Never because the " +
+      "document is silent — that is Not assessable.",
   },
 };
 

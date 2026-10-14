@@ -220,6 +220,27 @@ Rules that matter:
    silence. Cite the passage establishing what this architecture is, and say
    which stated condition of the clause excludes it. If the clause states no
    such condition, you may not answer "not_applicable".
+3f. Never state a rule the clause does not. Before answering "contradicts", read
+   the clause's own force: a clause that says one option "shall be assessed as
+   the primary preference", or that provides for "other platforms" under stated
+   conditions, is a decision framework, not a mandate — and a design that chose
+   differently has not breached it. Your rationale may not say the design "must
+   use" something, or may use it "only unless an exception is approved", unless
+   those words' meaning is in the clause. Where the clause asks for a choice to
+   be assessed and the design does not record that assessment, the answer is
+   "not_assessable" and the missing thing is the decision record.
+3g. A technology being named is not a technology being approved. Where the
+   clause governs what is "approved", "certified", "authorised" or "designated",
+   "covered" needs the record — a waiver, a board decision, a certification, an
+   exception reference — quoted from the design. Without it the answer is
+   "not_assessable", however plainly the technology is named.
+3h. A requirement listing several control families is several questions. "must
+   comply with applicable governance, cybersecurity, identity, data protection,
+   connectivity, resiliency and regulatory requirements" is seven, and evidence
+   of firewalls and an identity provider answers two of them. Answer "covered"
+   only when every family the clause names has evidence; otherwise "partial",
+   and name in the rationale the families nothing addresses. Never write that
+   evidence "implies" compliance with a family it does not mention.
 4. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 5. confidence is your own certainty in the verdict, 0 to 1.
@@ -835,6 +856,24 @@ mandates.
 silence. Quote the passage establishing what this architecture is, and name the \
 stated condition of the clause that excludes it. Where the clause states no such \
 condition, you may not answer "not_applicable".
+5c. Never state a rule the clause does not. Before answering "contradicts", read \
+the clause's own force: one that says an option "shall be assessed as the primary \
+preference", or that provides for "other platforms" under stated conditions, is a \
+decision framework and not a mandate, and a design that chose differently has not \
+breached it. Do not write that the design "must use" something, or may use it \
+"only unless an exception is approved", unless the clause says so. Where the clause \
+asks for a choice to be assessed and the document does not record that assessment, \
+the answer is "not_assessable" and the missing thing is the decision record.
+5d. A technology being named is not a technology being approved. Where the clause \
+governs what is "approved", "certified", "authorised" or "designated", "covered" \
+needs the record quoted from the document - a waiver, a board decision, a \
+certification, an exception reference. Without it the answer is "not_assessable".
+5e. A requirement listing several control families is several questions. "must \
+comply with applicable governance, cybersecurity, identity, data protection, \
+connectivity, resiliency and regulatory requirements" is seven, and quotes about \
+firewalls and an identity provider answer two. Give a quote per family for \
+"covered"; otherwise answer "partial" and name the families nothing addresses. \
+Never write that evidence "implies" compliance with a family it does not mention.
 6. "contradicts" comes first, and it is never softened to "partial". A breach of ANY \
 prohibition or mandatory requirement in the clause is "contradicts", however many of \
 the clause's other requirements the design meets, and however the document excuses it — \

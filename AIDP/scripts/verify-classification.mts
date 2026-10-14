@@ -33,7 +33,6 @@ import {
   emptyCounts,
   readObligation,
   severityOf,
-  type Obligation,
   type Verdict,
 } from "../src/lib/ingest/verdicts";
 

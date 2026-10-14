@@ -32,6 +32,7 @@ from .. import (
     db,
     decisions,
     designs,
+    fidelity,
     lifecycle,
     logs,
     obligations,
@@ -1423,6 +1424,43 @@ def _guard(
             rationale,
         )
 
+    # ---- Does the conclusion say more than the clause does? ----
+    #
+    # Three checks, all reading only the clause's own words and the model's own
+    # output, all found by reproducing one real run of standard1 against a GCP
+    # design. See fidelity.py for what each one is answering.
+    evidence_text = " ".join(str(item.get("excerpt") or "") for item in evidence)
+
+    # A confirmed breach that rests on a restriction the clause never stated.
+    # Only "contradicts": on every other verdict an "it must use X" sentence is
+    # the concrete fix the prompt asks for, not a claim about the rule.
+    if verdict == "contradicts":
+        overreach = fidelity.overreaches(rationale, clause_text)
+        if overreach:
+            return _demoted(overreach, rationale)
+
+    if verdict == "covered":
+        # A clause about what is "approved" or "certified", answered by a design
+        # that names a technology and shows no approval. Not a breach and not a
+        # pass: the record is missing, which is exactly not_assessable.
+        missing_approval = fidelity.needs_approval_evidence(
+            clause_text, evidence_text, rationale
+        )
+        if missing_approval:
+            return _reclassified("not_assessable", missing_approval, rationale)
+
+        # A requirement enumerating several control families, answered on some of
+        # them. "Partial" with the unaddressed families named is the honest
+        # answer, and naming them is what makes it actionable.
+        compound = fidelity.controls(clause_text, evidence_text, rationale)
+        if compound.is_compound and compound.missing:
+            return _reclassified(
+                "partial",
+                f"Covers {len(compound.addressed)} of {len(compound.families)} control families "
+                f"this clause names; nothing addresses {', '.join(compound.missing)}.",
+                rationale,
+            )
+
     if verdict == "absent" and best_score < WEAK_RETRIEVAL:
         return _demoted(
             "Nothing relevant was retrieved, so the search may have missed it.", rationale
@@ -1445,6 +1483,25 @@ def _demoted(reason: str, rationale: str) -> tuple[str, str]:
     room = MAX_RATIONALE - len(reason) - 1
     tail = _shorten(rationale, room) if room >= 40 else ""
     return "needs_review", f"{reason} {tail}".strip()
+
+
+def _reclassified(verdict: str, reason: str, rationale: str) -> tuple[str, str]:
+    """A demotion that knows the right answer, not just that this one is wrong.
+
+    `_demoted` lands on needs_review, which is the honest answer when the engine
+    can only tell that a verdict is unsupported. These two cases are different:
+    a clause whose approval was never evidenced IS not_assessable, and a
+    compound requirement with families nobody addressed IS partial. Saying
+    needs_review there would throw away a conclusion the engine can actually
+    reach, and bury a real gap in the "a person has to look" pile.
+
+    Bounded like `_demoted`, and for the same reason: the guard's sentence and
+    the model's have to stay readable together in one row of the report.
+    """
+    reason = _shorten(reason, MAX_GUARD_REASON)
+    room = MAX_RATIONALE - len(reason) - 1
+    tail = _shorten(rationale, room) if room >= 40 else ""
+    return verdict, f"{reason} {tail}".strip()
 
 
 def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
