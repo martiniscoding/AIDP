@@ -9,7 +9,12 @@ import { readCoverage } from "@/lib/ingest/coverage";
 import { readAdvice } from "@/lib/ingest/advice";
 import { readLifecycle } from "@/lib/ingest/lifecycle";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
-import { emptyCounts, readEvidence, type VerdictCounts } from "@/lib/ingest/verdicts";
+import {
+  emptyCounts,
+  readEvidence,
+  readObligation,
+  type VerdictCounts,
+} from "@/lib/ingest/verdicts";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { draftView, draftsForRun } from "@/lib/ingest/standards";
@@ -147,6 +152,8 @@ export default async function DocumentPage({
     verdict: f.verdict,
     confidence: f.confidence,
     rationale: f.rationale,
+    obligation: readObligation(f.obligation),
+    obligationSource: f.obligationSource,
     evidence: readEvidence(f.evidence),
     reviewerState: f.reviewerState,
     reviewerVerdict: f.reviewerVerdict,

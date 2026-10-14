@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   CircleHelp,
+  CircleSlash,
   Loader2,
   Play,
   Scale,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
+  OBLIGATION_META,
   VERDICTS,
   SEVERITY_META,
   VERDICT_META,
@@ -23,6 +25,7 @@ import {
   severityOf,
   type EvidenceItem,
   type Lens,
+  type Obligation,
   type Verdict,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
@@ -61,6 +64,9 @@ export type FindingView = {
   verdict: string;
   confidence: number;
   rationale: string;
+  /** How strongly the clause bound, and how that was established. Severity rests on it. */
+  obligation: Obligation;
+  obligationSource: string;
   evidence: EvidenceItem[];
   reviewerState: string;
   reviewerVerdict: string | null;
@@ -144,6 +150,10 @@ const TONE: Record<string, string> = {
   bad: "border-danger-line bg-danger-tint text-danger",
   warn: "border-warn-line bg-warn-tint text-warn",
   unknown: "border-line bg-card text-ink/72",
+  // Deliberately the quietest chip on the screen. A clause that does not govern
+  // this design is not a result, and giving it any colour would put it in the
+  // same visual class as the findings that need a decision.
+  neutral: "border-line bg-canvas-sunk text-ink/50",
   good: "border-royal-mid/30 bg-royal/8 text-royal",
 };
 
@@ -979,7 +989,7 @@ function FindingRow({
   const [scope, setScope] = useState<DecisionScope>("organisation");
 
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
-  const severity = severityOf(finding.verdict, finding.confidence);
+  const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
   const decided = finding.reviewerState !== "pending";
 
   /**
@@ -1064,6 +1074,8 @@ function FindingRow({
             <TriangleAlert size={11} />
           ) : meta.tone === "good" ? (
             <Check size={11} />
+          ) : meta.tone === "neutral" ? (
+            <CircleSlash size={11} />
           ) : (
             <CircleHelp size={11} />
           )}
@@ -1142,13 +1154,38 @@ function FindingRow({
             </p>
           )}
 
+          {/* How strongly the clause binds, and how that was established.
+              Severity is a function of it, so a reviewer who disagrees with a
+              severity needs to see this to know what to argue with — and where
+              the standard never said, the honest answer is on the screen rather
+              than a level the engine made up. */}
+          <p className="mb-3 text-[12px] text-ink/58">
+            <span className="text-ink/72">{OBLIGATION_META[finding.obligation].label}</span>
+            {" · "}
+            {OBLIGATION_META[finding.obligation].blurb}
+            {finding.obligation !== "unstated" && finding.obligationSource !== "parsed" && (
+              <>
+                {" "}
+                {finding.obligationSource === "read"
+                  ? "Read from the clause's own wording, not from a structured requirement."
+                  : "The model's reading of the clause, not the standard's own structure."}
+              </>
+            )}
+          </p>
+
           {/* Kept, and kept here. Somebody who thinks a verdict is wrong wants
               to know how sure the engine was; somebody working down the list
               does not, and it was taking up the one place on the row where the
-              priority belongs. */}
+              priority belongs.
+
+              Called heuristic, not a probability: it is the model's opinion of
+              itself with no calibration dataset behind it, and presenting it as
+              a measured likelihood would be the same overclaim as a fabricated
+              citation. */}
           <p className="mb-3 text-[12px] text-ink/58">
             {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
-            The model was {Math.round(finding.confidence * 100)}% sure of this verdict.
+            Heuristic confidence {Math.round(finding.confidence * 100)}% — the model&rsquo;s own
+            certainty in this verdict, not a calibrated probability.
           </p>
 
           {finding.evidence.length > 0 ? (

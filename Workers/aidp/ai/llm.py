@@ -159,8 +159,16 @@ Choose exactly one verdict:
                    something it requires
 - "absent"       — the extracts are about other subjects; the design does not
                    engage with this clause at all
+- "not_assessable" — the design engages this clause's subject, but the particular
+                   evidence the clause has to be judged on is not in the document:
+                   an approval record, a policy, a stated figure, a named owner, a
+                   placement rationale. The document does not say. NOT a breach.
 - "needs_review" — the extracts are on the subject, but their wording is genuinely
                    ambiguous, so a person has to read them
+- "not_applicable" — the clause does not govern the architecture described, on a
+                   condition the clause itself states (it governs payment systems
+                   and this handles no payments). Never because the document is
+                   silent — that is "not_assessable".
 
 Rules that matter:
 
@@ -191,6 +199,27 @@ Rules that matter:
    answer "partial" you must be able to name a requirement of this clause that is
    unmet; if you cannot, and the extracts meet what it asks, the verdict is
    "covered".
+3c. A document that does not say is not a document that breaches. This is the
+   rule that matters most here. Where the clause turns on a record the design
+   would not normally contain — an approval, a waiver, a signed exception, a
+   governance decision, a named accountable owner, a stated RTO or retention
+   period, a placement rationale — and the extracts do not contain it, the
+   verdict is "not_assessable", never "contradicts" and never "absent". Say in
+   the rationale exactly which record is missing and who would hold it.
+   A technology being named is not proof it was approved; it is also not proof
+   it was not. Choosing a platform the clause does not list is not by itself a
+   breach: read the clause first and decide whether it mandates a platform,
+   states a preference, or sets conditions for choosing one. Only an actual
+   conflict with what the clause mandates is "contradicts".
+3d. Keep "absent" for a clause whose mechanism the design never engages, and
+   "not_assessable" for one it engages without the evidence to settle it. If the
+   extracts show the design doing the thing the clause is about but not to the
+   depth the clause demands, that is "partial", not "not_assessable" — reserve
+   not_assessable for a question the document genuinely leaves open.
+3e. "not_applicable" needs a reason from the clause, not from the document's
+   silence. Cite the passage establishing what this architecture is, and say
+   which stated condition of the clause excludes it. If the clause states no
+   such condition, you may not answer "not_applicable".
 4. Judge only what the clause requires. Do not reward the design for good
    practice the clause does not ask for.
 5. confidence is your own certainty in the verdict, 0 to 1.
@@ -221,6 +250,9 @@ Rules that matter:
 Reply with JSON only, no prose around it:
 {{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
 the concrete fix when not covered, 280 max",
+  "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
+read from its own words; "unstated" if it never says, and do not supply one it does \
+not state",
   "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...]}}"""
 
 
@@ -499,10 +531,31 @@ _VERDICT_SCHEMA = {
     "properties": {
         "verdict": {
             "type": "string",
-            "enum": ["covered", "partial", "absent", "contradicts", "needs_review"],
+            "enum": [
+                "covered",
+                "partial",
+                "absent",
+                "contradicts",
+                "needs_review",
+                "not_assessable",
+                "not_applicable",
+            ],
         },
         "confidence": {"type": "number"},
         "rationale": {"type": "string"},
+        # How strongly the judge reads this clause as binding. Asked for because
+        # the standards parser only records it for model-read rules, and almost
+        # every real clause came from the rule-based parser — so in practice no
+        # clause carried an obligation and severity had nothing to weigh. Costs
+        # nothing: the judge has the clause in front of it either way.
+        #
+        # "unstated" is a real answer and the honest one for a descriptive
+        # clause. The engine prefers its own deterministic reading of the
+        # clause's words over this where it has one, because that is verifiable.
+        "obligation": {
+            "type": "string",
+            "enum": ["must", "should", "may", "unstated"],
+        },
         "evidence": {"type": "array", "items": {"type": "string"}},
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
     },
@@ -724,8 +777,15 @@ Choose exactly one verdict:
 - "contradicts"  - it states something the clause forbids, or forbids something the
                    clause requires
 - "absent"       - nothing in the document addresses this clause
+- "not_assessable" - the document engages this clause's subject, but the particular
+                   evidence it has to be judged on is not in it: an approval record,
+                   a waiver, a policy, a stated figure, a named owner, a placement
+                   rationale. The document does not say. NOT a breach.
 - "needs_review" - you cannot tell: the document touches the subject but is
                    ambiguous, or the only support is a figure description
+- "not_applicable" - the clause does not govern the architecture described, on a
+                   condition the clause itself states. Never because the document
+                   is silent - that is "not_assessable".
 
 Rules that matter more than being decisive:
 
@@ -759,6 +819,22 @@ archival or disposal schedule, and one that names a database has not thereby \
 addressed ownership. Naming a neighbouring topic, or listing the clause as an open \
 item still to be decided, is "absent". Reserve "partial" for a design that does \
 engage the mechanism and leaves part of it unmet.
+5a. A document that does not say is not a document that breaches, and this rule \
+outranks being decisive. Where the clause turns on a record a design would not \
+normally carry - an approval, a waiver, a signed exception, a governance decision, \
+an accountable owner, a stated RTO or retention period, a rationale for a platform \
+choice - and the document does not carry it, the verdict is "not_assessable", never \
+"contradicts" and never "absent". Quote the passage that puts the design on the \
+subject, and name in the rationale exactly which record is missing and who would \
+hold it. A technology being named is not proof it was approved, nor proof it was \
+not. Selecting a platform the clause does not list is not by itself a breach: read \
+whether the clause mandates a platform, states a preference, or sets conditions for \
+choosing one, and answer "contradicts" only on an actual conflict with what it \
+mandates.
+5b. "not_applicable" needs a reason from the clause, not from the document's \
+silence. Quote the passage establishing what this architecture is, and name the \
+stated condition of the clause that excludes it. Where the clause states no such \
+condition, you may not answer "not_applicable".
 6. "contradicts" comes first, and it is never softened to "partial". A breach of ANY \
 prohibition or mandatory requirement in the clause is "contradicts", however many of \
 the clause's other requirements the design meets, and however the document excuses it — \
@@ -800,6 +876,9 @@ inventing a product.
 Reply with JSON only, no prose around it:
 {{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
 the concrete fix when not covered, 280 max",
+  "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
+read from its own words; "unstated" if it never says, and do not supply one it does \
+not state",
   "evidence": [{{"quote": "exact words from the document", "page": 12}}],
   "appliedDecisions": ["decision id", ...]}}"""
 
@@ -834,8 +913,22 @@ _DOCUMENT_VERDICT_SCHEMA = {
         },
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
-    "propertyOrdering": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
+    "required": [
+        "verdict",
+        "confidence",
+        "rationale",
+        "obligation",
+        "evidence",
+        "appliedDecisions",
+    ],
+    "propertyOrdering": [
+        "verdict",
+        "confidence",
+        "rationale",
+        "obligation",
+        "evidence",
+        "appliedDecisions",
+    ],
 }
 
 

@@ -1,6 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { requireMembership } from "./org";
-import { VERDICTS, readEvidence, type EvidenceItem } from "./verdicts";
+import {
+  VERDICTS,
+  readEvidence,
+  readObligation,
+  type EvidenceItem,
+  type Obligation,
+} from "./verdicts";
 
 /**
  * The same design assessed two ways, clause by clause.
@@ -16,6 +22,8 @@ export type ComparedFinding = {
   verdict: string;
   confidence: number;
   rationale: string;
+  /** Severity is a function of this, so each side carries its own. */
+  obligation: Obligation;
   evidence: EvidenceItem[];
 };
 
@@ -90,6 +98,7 @@ export async function compareModes(
     verdict: finding.verdict,
     confidence: finding.confidence,
     rationale: finding.rationale,
+    obligation: readObligation(finding.obligation),
     evidence: readEvidence(finding.evidence),
   });
 

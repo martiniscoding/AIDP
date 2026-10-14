@@ -138,7 +138,9 @@ function Side({
   finding: ComparedFinding | null;
   bordered?: boolean;
 }) {
-  const severity = finding ? severityOf(finding.verdict, finding.confidence) : null;
+  const severity = finding
+    ? severityOf(finding.verdict, finding.confidence, finding.obligation)
+    : null;
   return (
     <div className={cn("min-w-0 px-4 py-3", bordered && "border-t border-line md:border-l md:border-t-0")}>
       <div className="mb-1.5 flex flex-wrap items-center gap-2">

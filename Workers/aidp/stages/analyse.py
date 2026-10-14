@@ -34,6 +34,7 @@ from .. import (
     designs,
     lifecycle,
     logs,
+    obligations,
     progress,
     queue,
     retrieval,
@@ -48,15 +49,42 @@ from . import embed as embed_stage
 
 log = logs.get(__name__)
 
-VERDICTS = ("covered", "partial", "absent", "contradicts", "needs_review")
+VERDICTS = (
+    "covered",
+    "partial",
+    "absent",
+    "contradicts",
+    "needs_review",
+    # The design is on the subject and the evidence needed to judge it is not in
+    # the document — a named cloud service with no approval record, a network
+    # diagram with no firewall policy. Not a breach, and never Critical.
+    #
+    # Without it, the only answer for "the document does not say" was "absent",
+    # which a confirmed absent turned into a Critical gap. So a missing page of
+    # paperwork reached a report beside a real breach and read the same, which
+    # is the engine's worst habit and the one this verdict exists to break.
+    "not_assessable",
+    # The clause does not govern this architecture at all. The most dangerous
+    # verdict here, because it removes a clause from the report rather than
+    # answering it, so it is held to the strictest proof: it must cite the
+    # passage establishing what the design is, and it may not rest on a reading
+    # of a diagram.
+    "not_applicable",
+)
 
 # Verdicts that assert something about the submitted document, and so must point
 # at a passage in it.
-CITING_VERDICTS = ("covered", "partial", "contradicts")
+#
+# "not_assessable" is here because it is what separates it from "absent": the
+# design being *on the subject* is a claim about the document, and a
+# not-assessable citing nothing is indistinguishable from a clause the design
+# never mentions. "not_applicable" is here because a clause waved away with no
+# basis is the cheapest possible way to manufacture a clean report.
+CITING_VERDICTS = ("covered", "partial", "contradicts", "not_assessable", "not_applicable")
 
 # Verdicts that close a question. These are the ones a diagram description must
 # not reach on its own.
-DECISIVE_VERDICTS = ("covered", "contradicts")
+DECISIVE_VERDICTS = ("covered", "contradicts", "not_applicable")
 
 # How many standing decisions reach the prompt. This runs once per clause over a
 # hundred-odd clauses, so an uncapped register would land on every run's bill.
@@ -534,7 +562,7 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
         conn,
         """
         SELECT cl."id", cl."title", cl."statement", cl."rationale",
-               cl."requirements", cl."guidance",
+               cl."requirements", cl."guidance", cl."sourceRefs",
                s."headingPath", s."numberText", s."pageStart",
                d."title" AS "documentTitle", f."isBaseline"
           FROM "framework_document" fd
@@ -564,6 +592,10 @@ class _Judged:
     evidence: list[dict]
     applied: list[dict]
     best: float
+    # How strongly the judge read the clause as binding, before this engine's own
+    # reading of it gets the last word. Carried rather than resolved here so
+    # `_write` applies one rule for every path — see `obligations.resolve`.
+    obligation: str = ""
 
 
 def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "") -> None:
@@ -595,6 +627,7 @@ def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "
         evidence=judged.evidence,
         retrieval_score=judged.best,
         applied=judged.applied,
+        judged_obligation=judged.obligation,
     )
 
 
@@ -738,7 +771,10 @@ def _judge_by_search(
             c.excerpt for cid in cited_figures if (c := by_id.get(cid)) is not None
         ),
     )
-    return _Judged(verdict, confidence, rationale, evidence, applied, best)
+    return _Judged(
+        verdict, confidence, rationale, evidence, applied, best,
+        obligation=str(raw.get("obligation") or ""),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +934,7 @@ def _assess_document_one(
         evidence=evidence,
         retrieval_score=score,
         applied=applied,
+        judged_obligation=str(raw.get("obligation") or ""),
     )
 
 
@@ -1462,7 +1499,19 @@ def _render_clause(clause: dict) -> str:
     if clause["statement"]:
         parts.append(f"Statement: {clause['statement']}")
     if clause["requirements"]:
-        parts.append("Requirements:\n" + "\n".join(f"- {r}" for r in clause["requirements"]))
+        # Each requirement with how strongly it binds. The parser has always
+        # recorded this and nothing ever read it, so the judge could not tell a
+        # "shall" from a "may" and graded both the same — see obligations.py.
+        # Unstated is printed as unstated rather than omitted: the judge has to
+        # know the standard did not say, so that it does not supply a "must" of
+        # its own.
+        rows = obligations.per_requirement(clause)
+        parts.append(
+            "Requirements, with how strongly the standard binds each:\n"
+            + "\n".join(
+                f"- [{strength}] {text}" for text, strength in rows
+            )
+        )
     # Rationale and guidance are deliberately withheld: they explain why the
     # rule exists and how to implement it, and including them tempts the model
     # to mark a design down for not following advice the clause never required.
@@ -1503,9 +1552,14 @@ def _write(
     evidence: list[dict],
     retrieval_score: float,
     applied: list[dict],
+    judged_obligation: str = "",
 ) -> None:
     """One finding, committed on its own so a crash costs at most one clause."""
     reference = clause["numberText"] or clause["headingPath"]
+    # Severity is a function of this, so it is recorded with the finding rather
+    # than looked up later: the clause behind a report can be sharpened or
+    # retired, and a report has to keep explaining its own severities.
+    obligation = obligations.resolve(clause, judged_obligation)
     with db.transaction() as conn:
         db.execute(
             conn,
@@ -1513,15 +1567,17 @@ def _write(
             INSERT INTO "finding"
                 ("id","runId","clauseId","clauseRef","clauseTitle","clauseStatement",
                  "verdict","confidence","rationale","evidence","retrievalScore",
-                 "appliedDecisions")
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 "appliedDecisions","obligation","obligationSource")
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT ("runId","clauseId") DO UPDATE SET
                 "verdict"    = EXCLUDED."verdict",
                 "confidence" = EXCLUDED."confidence",
                 "rationale"  = EXCLUDED."rationale",
                 "evidence"   = EXCLUDED."evidence",
                 "retrievalScore" = EXCLUDED."retrievalScore",
-                "appliedDecisions" = EXCLUDED."appliedDecisions"
+                "appliedDecisions" = EXCLUDED."appliedDecisions",
+                "obligation" = EXCLUDED."obligation",
+                "obligationSource" = EXCLUDED."obligationSource"
             """,
             (
                 db.new_id(),
@@ -1536,6 +1592,8 @@ def _write(
                 Jsonb(evidence),
                 retrieval_score,
                 Jsonb(applied),
+                obligation.strength,
+                obligation.source,
             ),
         )
 

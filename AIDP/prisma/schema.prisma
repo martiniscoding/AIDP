@@ -1168,11 +1168,42 @@ model Finding {
   clauseStatement String @default("")
 
   // "covered" | "partial" | "absent" | "contradicts" | "needs_review"
+  // | "not_assessable" | "not_applicable"
+  //
+  // `not_assessable` is the design being on the subject with the evidence
+  // needed to judge it missing — a named cloud service with no approval record,
+  // a network diagram with no firewall policy. It is not a breach and never
+  // carries Critical severity. `absent` keeps its narrower meaning: the design
+  // never engages the clause's mechanism at all.
   verdict    String
   /// 0–1, from the model. Used to demote a low-confidence "absent" — see
   /// Workers/aidp/stages/analyse.py.
+  ///
+  /// The model's own opinion of itself, so it is a heuristic and not a
+  /// calibrated probability. It gates demotions and severity; it is never shown
+  /// as a percentage beside a verdict, because 87% next to "Contradicts"
+  /// invites a reader to treat a breach as 13% fine.
   confidence Float  @default(0)
   rationale  String @default("")
+
+  /// How strongly the clause bound, as established when this was judged:
+  /// "must" | "should" | "may" | "unstated". See Workers/aidp/obligations.py.
+  ///
+  /// Denormalised for the same reason as `clauseRef`: severity is a function of
+  /// it, and a report has to keep explaining its own severities after the clause
+  /// behind them has been sharpened or retired.
+  ///
+  /// `unstated` is not a synonym for advisory. It means the standard did not
+  /// establish the obligation, and the engine will not establish one on its
+  /// behalf — so severity says it needs a person rather than inventing a level.
+  obligation       String @default("unstated")
+
+  /// Where that obligation came from, weakest claim last: "parsed" (the
+  /// standard's own recorded structure), "read" (a modal verb in the clause's
+  /// own wording), "judge" (the model's reading of the clause it was given), or
+  /// "unstated". Stored so a reviewer can see which kind of answer a severity
+  /// rests on and disagree with the weaker ones.
+  obligationSource String @default("unstated")
 
   /// [{ chunkId, headingPath, page, excerpt }]. A verdict of covered, partial
   /// or contradicts with no evidence is downgraded, because a claim about a

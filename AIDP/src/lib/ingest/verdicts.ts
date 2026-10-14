@@ -13,16 +13,30 @@ export const VERDICTS = [
   "contradicts",
   "absent",
   "partial",
+  "not_assessable",
   "needs_review",
   "covered",
+  "not_applicable",
 ] as const;
 
 export type Verdict = (typeof VERDICTS)[number];
 
-/** Ordered worst-first: the review queue should open on what matters. */
+/**
+ * Ordered worst-first: the review queue should open on what matters.
+ *
+ * `not_assessable` is the verdict this vocabulary was missing, and its absence
+ * was the engine's worst habit. "The design names GKE but includes no approval
+ * record" is not a breach of an approval requirement — it is a document that
+ * does not say. Having only `absent` for it, the report called it a gap and
+ * `severityOf` called the gap Critical, so a missing page of paperwork arrived
+ * beside a real breach and read the same. The two are now different answers:
+ * `absent` is the design never engaging the clause's mechanism, which is a real
+ * gap; `not_assessable` is the mechanism being there with the evidence needed to
+ * judge it missing, which is a question for whoever wrote the document.
+ */
 export const VERDICT_META: Record<
   Verdict,
-  { label: string; tone: "bad" | "warn" | "unknown" | "good"; blurb: string }
+  { label: string; tone: "bad" | "warn" | "unknown" | "neutral" | "good"; blurb: string }
 > = {
   contradicts: {
     label: "Contradicts",
@@ -32,12 +46,17 @@ export const VERDICT_META: Record<
   absent: {
     label: "Absent",
     tone: "bad",
-    blurb: "The design does not address this requirement at all.",
+    blurb: "The design does not engage this requirement's mechanism at all.",
   },
   partial: {
     label: "Partial",
     tone: "warn",
     blurb: "Addressed, but a requirement is left unmet.",
+  },
+  not_assessable: {
+    label: "Not assessable",
+    tone: "unknown",
+    blurb: "The design is on the subject, but the evidence needed to judge it is not in it.",
   },
   needs_review: {
     label: "Needs review",
@@ -45,7 +64,38 @@ export const VERDICT_META: Record<
     blurb: "The evidence was inconclusive. A person has to decide.",
   },
   covered: { label: "Covered", tone: "good", blurb: "Every requirement is met." },
+  not_applicable: {
+    label: "Not applicable",
+    tone: "neutral",
+    blurb: "This requirement does not govern the architecture described.",
+  },
 };
+
+/**
+ * How strongly the clause binds, as the finding recorded it.
+ *
+ * Mirrors `Workers/aidp/obligations.py`. `unstated` is not a synonym for
+ * advisory: it means the standard did not establish the obligation, and the
+ * engine will not establish one on its behalf.
+ */
+export const OBLIGATIONS = ["must", "should", "may", "unstated"] as const;
+
+export type Obligation = (typeof OBLIGATIONS)[number];
+
+export const OBLIGATION_META: Record<Obligation, { label: string; blurb: string }> = {
+  must: { label: "Mandatory", blurb: "The standard requires this." },
+  should: { label: "Recommended", blurb: "The standard recommends this." },
+  may: { label: "Optional", blurb: "The standard permits this." },
+  unstated: {
+    label: "Obligation unstated",
+    blurb:
+      "The standard does not say whether this is mandatory. Severity needs a person's judgement.",
+  },
+};
+
+export function readObligation(value: unknown): Obligation {
+  return OBLIGATIONS.includes(value as Obligation) ? (value as Obligation) : "unstated";
+}
 
 /**
  * How much a finding should worry the person reading it.
@@ -72,17 +122,17 @@ export const SEVERITY_META: Record<
   critical: {
     label: "Critical",
     tone: "bad",
-    blurb: "The design breaks this requirement or does not address it. Fix before it ships.",
+    blurb: "A mandatory requirement is breached or unaddressed. Fix before this ships.",
   },
   moderate: {
     label: "Moderate",
     tone: "warn",
-    blurb: "Addressed, but something the requirement asks for is missing.",
+    blurb: "Worth resolving, but it does not have to block the design.",
   },
   check: {
     label: "Check",
     tone: "unknown",
-    blurb: "The engine could not settle this one. A person has to look.",
+    blurb: "Severity cannot be settled from the document. A person has to look.",
   },
 };
 
@@ -118,11 +168,41 @@ export const SETTLED_CONFIDENCE = 0.7;
  * stricter gate than any other verdict, and the design actively stating
  * something the standard forbids is the worst thing this tool can find.
  */
-export function severityOf(verdict: string, confidence: number): Severity | null {
-  if (verdict === "covered") return null;
-  if (verdict === "contradicts") return "critical";
-  if (verdict === "absent") return confidence >= SETTLED_CONFIDENCE ? "critical" : "check";
-  if (verdict === "partial") return "moderate";
+export function severityOf(
+  verdict: string,
+  confidence: number,
+  obligation: Obligation = "unstated",
+): Severity | null {
+  // Nothing to act on. A row reading "Covered · Low" reads as a problem when it
+  // is the opposite, and the same is true of a clause that does not apply.
+  if (verdict === "covered" || verdict === "not_applicable") return null;
+
+  // An evidence gap is never Critical, whatever the obligation. The document
+  // does not say; that is a question for its author, not a defect in the
+  // architecture, and this is the single rule the brief is most insistent on.
+  // A mandatory clause still earns priority over an advisory one, so the gaps
+  // worth chasing first are the ones that block a mandatory judgement.
+  if (verdict === "not_assessable") return obligation === "must" ? "moderate" : "check";
+
+  // A breach is a breach. Softened only where the standard itself is explicit
+  // that the rule is advisory — and never on `unstated`, because treating an
+  // unclassified clause as advisory would be inventing permission.
+  if (verdict === "contradicts") {
+    return obligation === "should" || obligation === "may" ? "moderate" : "critical";
+  }
+
+  if (verdict === "absent") {
+    // Critical needs two things: the design does not engage the mechanism, and
+    // the standard says it has to. Without a stated obligation the impact
+    // cannot be established, so this says so rather than inventing a level —
+    // which is also what stops a missing section from outranking a real breach.
+    if (obligation === "must") return confidence >= SETTLED_CONFIDENCE ? "critical" : "check";
+    if (obligation === "should" || obligation === "may") return "moderate";
+    return confidence >= SETTLED_CONFIDENCE ? "moderate" : "check";
+  }
+
+  if (verdict === "partial") return obligation === "may" ? "check" : "moderate";
+
   // needs_review, and anything a future engine adds that this has not been
   // taught: "a person has to look" is the safe answer, never "critical".
   return "check";
@@ -148,7 +228,14 @@ export type Lens = Verdict | "attention" | "all";
  */
 export function applyLens<T extends { verdict: string }>(findings: T[], lens: Lens): T[] {
   if (lens === "all") return findings;
-  if (lens === "attention") return findings.filter((finding) => finding.verdict !== "covered");
+  // Covered and not-applicable are both "nothing to do here", and a review
+  // queue that opens on them buries the findings that need a decision. Both
+  // stay counted and both stay reachable by their own lens.
+  if (lens === "attention") {
+    return findings.filter(
+      (finding) => finding.verdict !== "covered" && finding.verdict !== "not_applicable",
+    );
+  }
   return findings.filter((finding) => finding.verdict === lens);
 }
 
