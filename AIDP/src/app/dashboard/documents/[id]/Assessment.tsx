@@ -35,6 +35,9 @@ import {
   type AppliedDecision,
   type DecisionScope,
 } from "@/lib/ingest/decision-effects";
+import type { EvidenceView } from "@/lib/ingest/evidence-tables";
+import type { TableView } from "@/lib/ingest/documents";
+import { TableFigure } from "@/components/ui/TableFigure";
 import type { CoverageView } from "@/lib/ingest/coverage";
 import type { AdviceView } from "@/lib/ingest/advice";
 import type { LifecycleView } from "@/lib/ingest/lifecycle";
@@ -67,7 +70,7 @@ export type FindingView = {
   /** How strongly the clause bound, and how that was established. Severity rests on it. */
   obligation: Obligation;
   obligationSource: string;
-  evidence: EvidenceItem[];
+  evidence: EvidenceView[];
   reviewerState: string;
   reviewerVerdict: string | null;
   reviewerNote: string | null;
@@ -133,6 +136,12 @@ export type RunView = {
   job: JobView | null;
   /** Parts of the design no clause governs, and standards to add. The "Absent" section. */
   coverage: CoverageView | null;
+  /**
+   * The tables behind a gap's quote, by section ordinal, where the quote turned
+   * out to be made of them. A gap over a table section quoted sixteen "Category:"
+   * labels in one run-on line; this is the same table, shown as one.
+   */
+  coverageTables: Record<number, TableView[]>;
   /** Improvements to the design itself, suggested after the assessment. Advice, not a verdict. */
   advice: AdviceView | null;
   /** Whether the products the design names are still supported, from endoflife.date. Facts, not a verdict. */
@@ -562,7 +571,11 @@ export function Assessment({
           </div>
 
           {lens === "absent" ? (
-            <CoverageGaps coverage={run.coverage} frameworkName={run.frameworkName} />
+            <CoverageGaps
+              coverage={run.coverage}
+              frameworkName={run.frameworkName}
+              gapTables={run.coverageTables}
+            />
           ) : (
           <>
           {lens === "attention" && (run.coverage?.gaps.length ?? 0) > 0 && (
@@ -1224,7 +1237,26 @@ function FindingRow({
                         </span>
                       )}
                     </p>
-                    <Excerpt item={item} />
+                    {/* A fifth of the evidence in these reports is table cells
+                        printed as a run-on line — "Category: Programming
+                        Languages | Comments: V 11" is a five-column row with
+                        its three empty columns dropped. Where the passage came
+                        out of a table, the table is what the reviewer is shown,
+                        with the cited row marked. */}
+                    {item.table ? (
+                      <TableFigure
+                        table={item.table.table}
+                        bare
+                        highlightRow={item.table.row}
+                        caption={
+                          item.table.row === null
+                            ? "Quoted from this table"
+                            : "Quoted from the highlighted row"
+                        }
+                      />
+                    ) : (
+                      <Excerpt item={item} />
+                    )}
                   </div>
 
                   {/*

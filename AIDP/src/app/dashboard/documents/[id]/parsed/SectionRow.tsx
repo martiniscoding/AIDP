@@ -3,13 +3,9 @@
 import { useState } from "react";
 import { ChevronRight, ImageIcon, Table2 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { SectionContent, TableView } from "@/lib/ingest/documents";
-import {
-  gridColumns,
-  placeTables,
-  tableGrid,
-  type LineBlock,
-} from "@/lib/ingest/parsed-tables";
+import type { SectionContent } from "@/lib/ingest/documents";
+import { placeTables, type LineBlock } from "@/lib/ingest/parsed-tables";
+import { TableFigure } from "@/components/ui/TableFigure";
 
 /** The outline row's own data, which the page already has. */
 export type SectionSummary = {
@@ -329,89 +325,6 @@ function Clauses({ content }: { content: SectionContent }) {
         ))}
       </ol>
     </section>
-  );
-}
-
-/**
- * One table, as the document had it.
- *
- * Drawn the same whether it appears inline among the lines or in the leftovers
- * below them, so the two can never drift into looking like different things.
- */
-function TableFigure({ table, bare = false }: { table: TableView; bare?: boolean }) {
-  const columns = gridColumns(table.columns, table.rows);
-  const body = tableGrid(columns, table.rows);
-  return (
-    <figure
-      className={cn(
-        "overflow-hidden rounded-md bg-card",
-        bare ? "border border-line-soft" : "border border-line",
-      )}
-    >
-      <figcaption className="flex flex-wrap items-baseline gap-2 border-b border-line-soft px-2.5 py-1.5 text-[11.5px] text-ink/70">
-        <span className="min-w-0 flex-1">{table.caption || `Table ${table.ordinal}`}</span>
-        {/* Below 1 the parser was unsure of the shape — a merged cell,
-            a row that ran over a page break. Shown, because a table
-            silently reshaped is the worst kind of parse error. */}
-        {table.confidence < 1 && (
-          <span className="text-warn">
-            shape uncertain · {Math.round(table.confidence * 100)}%
-          </span>
-        )}
-        {table.pageStart != null && (
-          <span className="tabular-nums text-ink/55">p{table.pageStart}</span>
-        )}
-      </figcaption>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[11.5px]">
-          {columns.length > 0 && (
-            <thead>
-              <tr>
-                {columns.map((column, index) => (
-                  <th
-                    key={index}
-                    scope="col"
-                    className="border-b border-line-soft px-2 py-1 text-left align-bottom font-medium text-ink/72"
-                  >
-                    {column}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {body.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.map((cell, cellIndex) => (
-                  <td
-                    key={cellIndex}
-                    className={cn(
-                      "border-b border-line-soft px-2 py-1 align-top text-ink/78",
-                      // A blank cell is content: Tier 4's RPO is blank
-                      // on purpose and must not read as Tier 3's.
-                      cell === "" && "bg-canvas-sunk/70",
-                    )}
-                  >
-                    {/* The document's own line breaks inside a cell are part of
-                        the value — "v5.7.28 / 8.0" is two versions, not one. */}
-                    {cell === "" ? (
-                      <span className="text-ink/40">—</span>
-                    ) : (
-                      <span className="whitespace-pre-wrap">{cell}</span>
-                    )}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {body.length === 0 && (
-        <p className="px-2.5 py-2 text-[11.5px] text-warn">
-          Columns were found but no rows were extracted.
-        </p>
-      )}
-    </figure>
   );
 }
 

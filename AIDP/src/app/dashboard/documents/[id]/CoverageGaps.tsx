@@ -1,5 +1,7 @@
 import { BookPlus, CircleCheck } from "lucide-react";
 import type { CoverageGap, CoverageView } from "@/lib/ingest/coverage";
+import type { TableView } from "@/lib/ingest/documents";
+import { TableFigure } from "@/components/ui/TableFigure";
 
 /**
  * The report's "Absent" section: the parts of this design no standard covers.
@@ -15,10 +17,13 @@ import type { CoverageGap, CoverageView } from "@/lib/ingest/coverage";
 export function CoverageGaps({
   coverage,
   frameworkName,
+  gapTables = {},
   idPrefix = "",
 }: {
   coverage: CoverageView | null;
   frameworkName: string;
+  /** The tables a gap's quote was made of, by section ordinal. */
+  gapTables?: Record<number, TableView[]>;
   /** Keeps anchors unique where several designs' results share one page. */
   idPrefix?: string;
 }) {
@@ -77,6 +82,7 @@ export function CoverageGaps({
               key={gap.section}
               gap={gap}
               idPrefix={idPrefix}
+              tables={gapTables[gap.section]}
               covering={suggestions
                 .map((suggestion, index) => ({ suggestion, index }))
                 .filter(({ suggestion }) => suggestion.sections.includes(gap.section))}
@@ -141,9 +147,12 @@ function Gap({
   gap,
   idPrefix,
   covering,
+  tables = [],
 }: {
   gap: CoverageGap;
   idPrefix: string;
+  /** The tables this gap's quote was made of, where it was made of tables. */
+  tables?: TableView[];
   covering: { suggestion: CoverageView["suggestions"][number]; index: number }[];
 }) {
   const pages =
@@ -165,12 +174,25 @@ function Gap({
       {gap.what && (
         <p className="mt-2 text-[13px] leading-relaxed text-ink/80">{gap.what}</p>
       )}
-      <blockquote className="mt-2 border-l-2 border-line-strong pl-3 text-[12.5px] leading-relaxed text-ink/70">
-        “{gap.quote}”
-        {gap.page !== null && (
-          <span className="ml-1.5 text-[11.5px] whitespace-nowrap text-ink/58">p. {gap.page}</span>
-        )}
-      </blockquote>
+      {/* The quote is the proof the gap is real — it is checked against the
+          document before the gap is kept. Where the design put that proof in a
+          table, the quote is assembled from the section's lines and two clean
+          tables arrive as one paragraph saying "Category:" sixteen times. Same
+          words, shown as the design showed them. */}
+      {tables.length > 0 ? (
+        <div className="mt-2 space-y-2">
+          {tables.map((table) => (
+            <TableFigure key={table.id} table={table} caption="Quoted from this table" />
+          ))}
+        </div>
+      ) : (
+        <blockquote className="mt-2 border-l-2 border-line-strong pl-3 text-[12.5px] leading-relaxed text-ink/70">
+          “{gap.quote}”
+          {gap.page !== null && (
+            <span className="ml-1.5 text-[11.5px] whitespace-nowrap text-ink/58">p. {gap.page}</span>
+          )}
+        </blockquote>
+      )}
       {covering.length > 0 && (
         <p className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-ink/62">
           Suggested standard:

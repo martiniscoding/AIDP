@@ -15,6 +15,11 @@ import {
   readObligation,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
+import {
+  tablesForEvidence,
+  tablesForGaps,
+  withTables,
+} from "@/lib/ingest/evidence-tables";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { draftView, draftsForRun } from "@/lib/ingest/standards";
@@ -85,6 +90,15 @@ export default async function DocumentPage({
     : [];
   const counts: VerdictCounts = run ? await verdictCounts(run.id) : emptyCounts();
 
+  // A coverage gap quotes the design to prove the gap is real. Where the design
+  // put that proof in a table, the quote is assembled from the section's lines
+  // and arrives as one run-on paragraph. Recognised rather than followed: a gap
+  // carries its heading path, not the table's id — see `quoteIsTable`.
+  const coverageTables = await tablesForGaps(
+    [document.id],
+    readCoverage(run?.coverage ?? null)?.gaps ?? [],
+  );
+
   const runView: RunView = run
     ? {
         id: run.id,
@@ -100,6 +114,7 @@ export default async function DocumentPage({
         orphaned: run.orphaned,
         job: run.job,
         coverage: readCoverage(run.coverage),
+        coverageTables,
         advice: readAdvice(run.advice),
         lifecycle: readLifecycle(run.lifecycle),
       }
@@ -144,6 +159,15 @@ export default async function DocumentPage({
   // somebody asks for one, so this costs a keyed lookup on most reports.
   const drafts = run ? await draftsForRun(run.id) : new Map();
 
+  // A fifth of the evidence text in these reports is table cells printed as a
+  // run-on line. The link back to the table is exact — a table chunk carries its
+  // TableBlock id — so this reads it once for the whole page and the findings
+  // show the table instead. Nothing is re-run: reports written months ago get
+  // their tables back on the next load.
+  const evidenceTables = await tablesForEvidence(
+    findings.flatMap((f) => readEvidence(f.evidence).map((e) => e.chunkId)),
+  );
+
   const findingViews: FindingView[] = findings.map((f) => ({
     id: f.id,
     clauseRef: f.clauseRef,
@@ -154,7 +178,7 @@ export default async function DocumentPage({
     rationale: f.rationale,
     obligation: readObligation(f.obligation),
     obligationSource: f.obligationSource,
-    evidence: readEvidence(f.evidence),
+    evidence: withTables(readEvidence(f.evidence), evidenceTables),
     reviewerState: f.reviewerState,
     reviewerVerdict: f.reviewerVerdict,
     reviewerNote: f.reviewerNote,
