@@ -25,6 +25,14 @@ export type FrameworkSummary = {
   version: number;
   documentCount: number;
   clauseCount: number;
+  /**
+   * Standards in the library this framework does NOT measure against, and why.
+   *
+   * Carried so a screen can say so. A framework silently skipping half the
+   * library is the difference between "the engine is broken" and "two of your
+   * standards have not finished parsing", and only one of those is actionable.
+   */
+  excluded: { id: string; title: string; reason: "processing" | "failed" | "no-clauses" }[];
 };
 
 /**
@@ -39,6 +47,39 @@ export async function resolveFramework(organisationId: string): Promise<Framewor
   const ready = await prisma.document.findMany({
     where: { organisationId, role: "reference", status: "ready" },
     select: { id: true, title: true },
+    orderBy: { title: "asc" },
+  });
+
+  /**
+   * The standards in the library that this framework will NOT measure against,
+   * and why.
+   *
+   * A framework is built from reference documents that reached `ready`.
+   * Everything else — still parsing, failed, or parsed into no clauses at all —
+   * was dropped here silently, and nothing downstream could tell. So somebody
+   * who had uploaded four standards and watched one of them fail was assessed
+   * against the other three, or against one, and the only clue was a clause
+   * count that looked too low. That is indistinguishable from the engine being
+   * broken, which is exactly how it was read.
+   *
+   * Reported rather than fixed: a standard that failed to parse genuinely
+   * cannot be assessed against, and blocking the run over it would be worse
+   * than running what is ready and saying what is not.
+   */
+  const excluded = await prisma.document.findMany({
+    where: {
+      organisationId,
+      role: "reference",
+      OR: [
+        { status: { not: "ready" } },
+        // Ready, but contributes nothing: the parse found no rules in it, so
+        // the document looks healthy in the library and measures nothing.
+        // Clauses hang off sections, so this asks whether any section of it
+        // holds one.
+        { sections: { none: { clauses: { some: {} } } } },
+      ],
+    },
+    select: { id: true, title: true, status: true },
     orderBy: { title: "asc" },
   });
 
@@ -83,12 +124,25 @@ export async function resolveFramework(organisationId: string): Promise<Framewor
         });
 
   const clauseCount = await countClauses(framework.id);
+  const readyIds = new Set(ready.map((d) => d.id));
   return {
     id: framework.id,
     name: framework.name,
     version: framework.version,
     documentCount: framework.documents.length,
     clauseCount,
+    excluded: excluded.map((doc) => ({
+      id: doc.id,
+      title: doc.title,
+      // A document that is ready and still in this list is one the parse found
+      // no rules in — the case that looks healthiest and measures least.
+      reason:
+        doc.status === "failed"
+          ? ("failed" as const)
+          : readyIds.has(doc.id)
+            ? ("no-clauses" as const)
+            : ("processing" as const),
+    })),
   };
 }
 
@@ -136,7 +190,26 @@ export function describeScope(framework: FrameworkSummary): string {
     framework.documentCount === 1
       ? "1 standard"
       : `${framework.documentCount} standards`;
-  return `${clauses} from ${from} (${framework.name} v${framework.version})`;
+  const scope = `${clauses} from ${from} (${framework.name} v${framework.version})`;
+
+  // What is missing, named. A reader who uploaded four standards and is being
+  // measured against one needs to know which three are not in it, and that the
+  // reason is in their library rather than in the engine.
+  if (framework.excluded.length === 0) return scope;
+  const titles = framework.excluded
+    .slice(0, 3)
+    .map((doc) => {
+      const why =
+        doc.reason === "failed"
+          ? "failed to parse"
+          : doc.reason === "no-clauses"
+            ? "no rules found in it"
+            : "still processing";
+      return `${doc.title} (${why})`;
+    })
+    .join(", ");
+  const more = framework.excluded.length > 3 ? `, and ${framework.excluded.length - 3} more` : "";
+  return `${scope}. Not measured against: ${titles}${more}.`;
 }
 
 export async function countClauses(frameworkId: string): Promise<number> {
