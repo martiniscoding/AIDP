@@ -169,7 +169,12 @@ export async function openrouterModels(): Promise<ModelGroup[]> {
     ];
   });
   if (pinned.length) {
-    groups.unshift({ label: "Tested with this product", models: pinned });
+    // Named as a recommendation rather than as a fact about our test suite.
+    // "Tested with this product" is true but reads as trivia next to eight
+    // vendor groups, and an administrator who does not know which to pick was
+    // left comparing two hundred ids on price — the confusion this list exists
+    // to prevent. The two models here are the pair the engine is tuned for.
+    groups.unshift({ label: "Recommended — tested with this product", models: pinned });
   }
 
   return groups;

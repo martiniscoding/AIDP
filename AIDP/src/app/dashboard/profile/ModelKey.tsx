@@ -11,6 +11,19 @@ import { ProviderMark, type MarkName } from "./ProviderMark";
 import { removeModelKey, saveModelKey, setModelKeyEnabled } from "./actions";
 
 /**
+ * What each of the two fields is for, in the words of the job it does.
+ *
+ * These were "Model" and "Cheaper model", which named a billing property
+ * instead of a purpose and left an administrator guessing what the cheap one
+ * would be used for — the first question this screen got asked. The work each
+ * model does is the thing that decides which to pick, so that is the label.
+ */
+const FIELD_LABEL: Record<string, string> = {
+  model: "Assessment model",
+  fastModel: "Document-reading model",
+};
+
+/**
  * Choose a model, or type one.
  *
  * A model id typed from memory is how a key ends up pointed at something that
@@ -48,7 +61,7 @@ function ModelField({
   if (groups.length === 0 || typing) {
     return (
       <label className="block">
-        <Label>{name === "model" ? "Model" : "Cheaper model"}</Label>
+        <Label>{FIELD_LABEL[name] ?? "Model"}</Label>
         <input
           name={name}
           defaultValue={initial}
@@ -72,7 +85,7 @@ function ModelField({
 
   return (
     <label className="block">
-      <Label>{name === "model" ? "Model" : "Cheaper model"}</Label>
+      <Label>{FIELD_LABEL[name] ?? "Model"}</Label>
       <select
         name={name}
         defaultValue={initial}
@@ -291,8 +304,9 @@ export function ModelKey({
               initial={credential?.provider === provider ? credential.model : ""}
               fallback={defaults.model}
             >
-              Judges every clause and reads every standard. Leave it on the default for{" "}
-              {defaults.model}, which is what the product is tested against.
+              Judges every clause and reads every standard — this one decides the quality of the
+              assessment. Leave it on the default, {defaults.model}, which is what the product is
+              tested against.
             </ModelField>
 
             {defaults.twoModels && (
@@ -303,8 +317,9 @@ export function ModelKey({
                 initial={credential?.provider === provider ? credential.fastModel : ""}
                 fallback={defaults.fastModel}
               >
-                One call per chunk of every document — the largest single line on the bill, and a
-                summarising job, so it gets the cheap model.
+                Summarises and indexes each part of a document, once per chunk. It never reaches a
+                verdict, so the default, {defaults.fastModel}, is a smaller model on purpose: this
+                is the highest-volume call in a run, and the largest single line on the bill.
               </ModelField>
             )}
 
@@ -408,9 +423,9 @@ function Installed({ credential }: { credential: CredentialView }) {
           }
         />
         <Row label="Key" value={`•••• ${credential.keyLast4}`} mono />
-        <Row label="Model" value={credential.model} mono />
+        <Row label={FIELD_LABEL.model} value={credential.model} mono />
         {credential.fastModel !== credential.model && (
-          <Row label="Cheaper model" value={credential.fastModel} mono />
+          <Row label={FIELD_LABEL.fastModel} value={credential.fastModel} mono />
         )}
         {credential.provider === "openrouter" && (
           <Row
