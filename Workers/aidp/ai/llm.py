@@ -271,12 +271,25 @@ Rules that matter:
    the requirement left unmet. Start with the substance. No throat-clearing:
    never open with "The extracts show", "Based on the extracts", "It appears
    that" or "This clause".
-8. For "contradicts", "partial" and "absent" the rationale must also say what
-   would satisfy the clause, in concrete technical terms — the mechanism,
-   setting or control needed, not "address the requirement". Two short
-   sentences are allowed here, still within 280 characters: what is wrong, then
-   what is needed. "No retention period is stated; set a 7-year retention
-   policy on the audit log store" — not "retention is not addressed".
+8. For "contradicts", "partial" and "absent" the rationale takes three parts in
+   this order, at most three sentences and 280 characters in all:
+   GAP — what the design does or fails to do, in its own terms.
+   IMPACT — the consequence if it ships as it stands: the outage, breach, data
+   loss, audit failure or cost. One clause of plain consequence, never a
+   restatement of the gap and never "it is non-compliant", which says nothing a
+   reader cannot already see from the verdict.
+   FIX — the mechanism, setting or control that would satisfy the clause, named
+   concretely, never "address the requirement".
+   "Audit logs have no stated retention. A breach investigation would have no
+   record to reconstruct. Set a 7-year retention policy on the audit log store."
+8a. Write as a principal enterprise architect states a finding on the record:
+   authoritative, technical, and short. Banned outright — hedging ("it seems",
+   "arguably", "one could argue", "may want to", "it would be good to"), filler
+   ("in order to", "it is important to note", "as previously mentioned", "robust",
+   "leverage", "utilise", "holistic", "best practices", "going forward"), and
+   anything casual or chatty. No bullet points, no headings, no markdown, no
+   emoji, no exclamation marks, no first person. State the finding; do not
+   discuss it, soften it or recommend "considering" anything.
 9. Build that fix out of what the design already has. Name the components,
    services, protocols and stores the extracts themselves name, and extend
    them: if the design runs Kafka, the fix is a Kafka topic, not "a message
@@ -285,8 +298,24 @@ Rules that matter:
    design does not already use. Where the design names nothing that could carry
    the fix, say what capability is missing instead of inventing a product.
 
-Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
+Work the clause out in "internal_architect_reasoning" BEFORE you name a verdict. It is
+the first key you write and nobody ever reads it, so it is working space, not prose for
+a report. Use it to do the three things that decide whether the verdict is right:
+  1. TERMINOLOGY. What would THIS design call the mechanism the clause asks for? List
+     the design's own words for it and say whether any extract supplies it under
+     another name - "API Management" for an API gateway, "Entra ID" for an identity
+     provider, Kafka for a broker. Settle this before you may answer "absent".
+  2. CITATION. For each quote you intend to cite, confirm it appears in the extracts
+     word for word and that it bears on what the clause requires rather than on a
+     neighbouring subject. Drop any that does not survive this.
+  3. OBLIGATION AND SEVERITY. Read the clause's own force - must, should, may, or it
+     never says - and argue the verdict against the strongest rival reading before
+     choosing. Where the clause turns on a record the design would not carry, say so
+     here and answer "not_assessable".
+
+Then reply with JSON only, no prose around it:
+{{"internal_architect_reasoning": "your working, as above",
+"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
 the concrete fix when not covered, 280 max",
   "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
 read from its own words; "unstated" if it never says, and do not supply one it does \
@@ -569,6 +598,21 @@ _STRUCTURE_SCHEMA = {
 _VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
+        # First, and generated before the verdict on purpose.
+        #
+        # A model that emits "verdict" first has committed to an answer and
+        # spends the rest of the reply justifying it; the checks it should have
+        # made — is this component here under another name, does the quote I am
+        # about to cite really say this, is "must" the obligation or am I
+        # assuming it — happen after the decision or not at all. Ordering this
+        # ahead of the verdict buys those checks with one field, and
+        # `propertyOrdering` is the hint providers honour for key order.
+        #
+        # Never shown to anybody. `_normalise` reads the fields it needs by
+        # name, so this is working space that is dropped on the floor — which
+        # is also why it can be loose prose, and why its length is not policed
+        # the way the rationale's is.
+        "internal_architect_reasoning": {"type": "string"},
         "verdict": {
             "type": "string",
             "enum": [
@@ -599,8 +643,16 @@ _VERDICT_SCHEMA = {
         "evidence": {"type": "array", "items": {"type": "string"}},
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["verdict", "confidence", "rationale", "evidence", "appliedDecisions"],
+    "required": [
+        "internal_architect_reasoning",
+        "verdict",
+        "confidence",
+        "rationale",
+        "evidence",
+        "appliedDecisions",
+    ],
     "propertyOrdering": [
+        "internal_architect_reasoning",
         "verdict",
         "confidence",
         "rationale",
@@ -936,12 +988,25 @@ marked "on a related clause" can inform a verdict but cannot settle one on its o
 10. "rationale" is ONE sentence, under 220 characters, giving the decisive fact or the \
 requirement left unmet. Start with the substance. No throat-clearing: never open with \
 "The document states", "Based on the extracts", "It appears that" or "This clause".
-11. For "contradicts", "partial" and "absent" the rationale must also say what would \
-satisfy the clause, in concrete technical terms — the mechanism, setting or control \
-needed, never "address the requirement". Two short sentences are allowed here, still \
-within 280 characters: what is wrong, then what is needed. "No retention period is \
-stated; set a 7-year retention policy on the audit log store" — not "retention is not \
-addressed".
+11. For "contradicts", "partial" and "absent" the rationale takes three parts in this \
+order, at most three sentences and 280 characters in all: \
+GAP — what the design does or fails to do, in its own terms. \
+IMPACT — the consequence if it ships as it stands: the outage, breach, data loss, \
+audit failure or cost. One clause of plain consequence, never a restatement of the \
+gap and never "it is non-compliant", which tells a reader nothing the verdict has not \
+already said. \
+FIX — the mechanism, setting or control that would satisfy the clause, named \
+concretely, never "address the requirement". \
+"Audit logs have no stated retention. A breach investigation would have no record to \
+reconstruct. Set a 7-year retention policy on the audit log store."
+11a. Write as a principal enterprise architect states a finding on the record: \
+authoritative, technical, and short. Banned outright — hedging ("it seems", \
+"arguably", "one could argue", "may want to", "it would be good to"), filler ("in \
+order to", "it is important to note", "as previously mentioned", "robust", \
+"leverage", "utilise", "holistic", "best practices", "going forward"), and anything \
+casual or chatty. No bullet points, no headings, no markdown, no emoji, no \
+exclamation marks, no first person. State the finding; do not discuss it, soften it, \
+or recommend "considering" anything.
 12. Build that fix out of what the design already has. Name the components, services, \
 protocols and stores the document itself names, and extend them: if it runs Kafka the \
 fix is a Kafka topic, not "a message broker"; if it names an Oracle billing database, \
@@ -949,8 +1014,21 @@ say so. Never introduce a product or vendor the document does not mention. Where
 names nothing that could carry the fix, say what capability is missing instead of \
 inventing a product.
 
-Reply with JSON only, no prose around it:
-{{"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
+Work the clause out in "internal_architect_reasoning" BEFORE you name a verdict. It is \
+the first key you write and nobody ever reads it, so it is working space, not prose for \
+a report. Use it for the three things that decide whether the verdict is right: \
+(1) TERMINOLOGY - what would THIS document call the mechanism the clause asks for? List \
+its own words for it and say whether the document supplies it under another name; settle \
+this before you may answer "absent". (2) CITATION - for each quote you intend to cite, \
+confirm it is in the document character for character, on the page you will give, and \
+that it bears on what the clause requires; drop any that does not. (3) OBLIGATION AND \
+SEVERITY - read the clause's own force, argue the verdict against the strongest rival \
+reading, and where the clause turns on a record a design would not carry, say so here \
+and answer "not_assessable".
+
+Then reply with JSON only, no prose around it:
+{{"internal_architect_reasoning": "your working, as above", \
+"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
 the concrete fix when not covered, 280 max",
   "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
 read from its own words; "unstated" if it never says, and do not supply one it does \
@@ -969,6 +1047,11 @@ Give your verdict on this clause for the design document."""
 _DOCUMENT_VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
+        # First, and before the verdict. See _VERDICT_SCHEMA for why: the checks
+        # this prompt asks for — terminology, quote fidelity, obligation — are
+        # only worth anything if they happen before the answer is committed to.
+        # Never read back; `_normalise` takes the fields it needs by name.
+        "internal_architect_reasoning": {"type": "string"},
         "verdict": {
             "type": "string",
             "enum": ["covered", "partial", "absent", "contradicts", "needs_review"],
@@ -990,6 +1073,7 @@ _DOCUMENT_VERDICT_SCHEMA = {
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
+        "internal_architect_reasoning",
         "verdict",
         "confidence",
         "rationale",
@@ -998,6 +1082,7 @@ _DOCUMENT_VERDICT_SCHEMA = {
         "appliedDecisions",
     ],
     "propertyOrdering": [
+        "internal_architect_reasoning",
         "verdict",
         "confidence",
         "rationale",
@@ -1129,8 +1214,10 @@ _COVERAGE_MAX_TOKENS = 8192
 # Improvements to a design, after it has been assessed. See Workers/aidp/advice.py:
 # every section number and quote in the reply is checked before anything is kept.
 _ADVICE_SYSTEM = """\
-You are a senior solution architect reviewing the design document "{title}" before \
-it is built. It has already been assessed clause by clause against the \
+You are a principal enterprise architect reviewing the design document "{title}" \
+before it is built. Your register is authoritative, technical and short: you state \
+what to change and what happens if it is not changed. Never pad, never hedge, and \
+never write like a consultant selling a follow-on engagement. It has already been assessed clause by clause against the \
 organisation's own standards, and those results are reported separately. Your task \
 is different: find the improvements an experienced architect would still ask for in \
 this design's own architecture — its components, technologies, integrations, data \
@@ -1185,8 +1272,14 @@ failure mode, and the target state: not "add retries" but "bound the Orders API 
 retry to 3 attempts with exponential backoff and a 30s dead-letter queue". Advice \
 that would fit any design is not a suggestion, and these words are banned outright: \
 "consider", "ensure proper", "review and update", "confirm support status", "where \
-appropriate", "best practices". If you cannot name the mechanism and the target \
-state, omit the suggestion.
+appropriate", "best practices", "robust", "leverage", "utilise", "holistic", "going \
+forward", "it is important to note", "may want to", "arguably", "it seems". No \
+hedging, no first person, no markdown, no bullet points inside a field, no \
+exclamation marks. A recommendation phrased as a condition on a decision somebody \
+else will take — "retain X only with a documented trigger", "proceed subject to \
+review" — is not an engineering change: name the mechanism and the target state or \
+omit the suggestion. If you cannot name the mechanism and the target state, omit \
+the suggestion.
 3. Never repeat anything listed as already reported, even in other words. A \
 suggestion may go further than a finding — a concrete change to a named component \
 that would also resolve it — and then "clauses" gives that finding's reference, the \
@@ -1237,6 +1330,14 @@ mode or operational risk this avoids for this design — the outage, breach, dat
 or cost it prevents. Never a restatement of the recommendation.
 11. At most 15 suggestions, the most important first. Fewer is fine, and a sound \
 design may need few.
+12. Before writing any suggestion, work in "internal_architect_reasoning" - the first \
+key, and one nobody ever reads, so it is working space rather than prose for a report. \
+Use it to: (1) list the components, technologies and flows this design actually names, \
+in its own words, so every suggestion is anchored to one of them and no product is \
+imported that the design does not already run; (2) check that each quote you intend to \
+give is the design's own words, inside the section you will name; and (3) rank what you \
+have by what would actually hurt - breach, data loss, outage first - and drop anything \
+that would fit any design. Then write only the suggestions that survive.
 """
 
 _ADVICE_USER = "Suggest improvements to this design."
@@ -1244,6 +1345,13 @@ _ADVICE_USER = "Suggest improvements to this design."
 _ADVICE_SCHEMA = {
     "type": "object",
     "properties": {
+        # First, before any suggestion. Same reasoning as the verdict schemas:
+        # the sorting rule 12 asks for — is this component really named in that
+        # section, does the quote check out, is this the design's own stack or a
+        # product being imported — is worth nothing once fifteen suggestions are
+        # already written. Never read back; advice.check() takes the suggestions
+        # list by name and this is dropped on the floor.
+        "internal_architect_reasoning": {"type": "string"},
         "suggestions": {
             "type": "array",
             "items": {
@@ -1303,8 +1411,8 @@ _ADVICE_SCHEMA = {
             },
         },
     },
-    "required": ["suggestions"],
-    "propertyOrdering": ["suggestions"],
+    "required": ["internal_architect_reasoning", "suggestions"],
+    "propertyOrdering": ["internal_architect_reasoning", "suggestions"],
 }
 
 _ADVICE_MAX_TOKENS = 8192

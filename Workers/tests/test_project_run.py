@@ -452,24 +452,78 @@ SUMMARIES = [
     {"id": "doc-a", "summary": "Replaces the customer portal."},
     {"id": "doc-b", "summary": "The target architecture for it."},
 ]
-with mock.patch.object(analyse.db, "query", lambda conn, sql, args: SUMMARIES):
-    one_design = analyse._context(_Conn(), scope)
+
+# The project's own row, read by `_purpose`. Blank description is the ordinary
+# case and the one that has to leave the prompt exactly as it was.
+NO_BRIEF = {"name": "Emerald", "description": ""}
+BRIEF = {
+    "name": "Emerald",
+    "description": "Comparing two candidate B2B integration solutions to pick one.",
+}
+
+
+def _ctx(scope_in, rows=SUMMARIES, project_row=NO_BRIEF):
+    with mock.patch.object(analyse.db, "query", lambda conn, sql, args: rows):
+        with mock.patch.object(analyse.db, "one", lambda conn, sql, args: project_row):
+            return analyse._context(_Conn(), scope_in)
+
+
+one_design = _ctx(scope)
 ok(
     "one design's purpose is its own summary, as before",
     one_design == "Replaces the customer portal.",
     one_design,
 )
-with mock.patch.object(analyse.db, "query", lambda conn, sql, args: SUMMARIES):
-    many = analyse._context(_Conn(), project)
+many = _ctx(project)
 ok("several are labelled by design", many.count("=== design:") == 2, many)
 ok(
     "under one line saying they are one solution",
     many.startswith("These designs describe one solution"),
     many[:60],
 )
-with mock.patch.object(analyse.db, "query", lambda conn, sql, args: []):
-    ok("no summaries is no context", analyse._context(_Conn(), project) == "")
+ok("no summaries is no context", _ctx(project, rows=[]) == "")
 ok("no designs is no context", analyse._context(_Conn(), designs.Scope([], [])) == "")
+
+# A project whose row has gone, or was never in one, must not fail the run.
+ok("a missing project row is no purpose", _ctx(project, project_row=None).count("Emerald") == 0)
+ok(
+    "a design outside every project asks for no purpose",
+    _ctx(designs.Scope([A], [])) == "Replaces the customer portal.",
+)
+
+# ---------------------------------------------------------------------------
+print("\n7b. The project's stated purpose frames the designs")
+
+# The defect: ten designs uploaded to *compare* two solutions were each graded
+# as though they were the system being built, so the losing option's gaps were
+# reported as the project's own defects. The description is the only place that
+# intent is written down, and nothing read it.
+framed = _ctx(project, project_row=BRIEF)
+ok("the brief is carried into the prompt", "candidate B2B integration" in framed, framed[:120])
+ok("named as the project it belongs to", '"Emerald"' in framed, framed[:120])
+ok("and it comes first, before the summaries", framed.startswith("<what_this_project_is_for>"), framed[:40])
+ok("the designs still follow it", "=== design:" in framed, framed)
+ok(
+    "it is labelled intent, never evidence",
+    "never as evidence" in framed and "rests only on what" in framed,
+)
+ok(
+    "and says a weakness in one candidate is about that candidate",
+    "not a defect in the" in framed,
+)
+
+one_framed = _ctx(scope, project_row=BRIEF)
+ok(
+    "a single design in a project gets the brief too",
+    "candidate B2B integration" in one_framed and "Replaces the customer portal." in one_framed,
+    one_framed[:90],
+)
+
+# Free text a customer types, so it cannot be allowed to crowd out the design.
+LONG = {"name": "Emerald", "description": "x" * 4000}
+capped = _ctx(project, project_row=LONG)
+ok("a pasted essay is capped rather than sent whole", capped.count("x") <= 1250, capped.count("x"))
+ok("and says it was cut", "…" in capped)
 
 
 # ---------------------------------------------------------------------------

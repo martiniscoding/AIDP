@@ -254,6 +254,58 @@ def _shorten(text: str, limit: int) -> str:
     return window[: limit - 1].rstrip() + "…"
 
 
+def _purpose(conn, scope: designs.Scope) -> str:
+    """Why this project exists, in the words of whoever opened it.
+
+    A reviewer uploading two architectures to choose between them is doing
+    something the clause-by-clause reading cannot see. The engine graded each
+    design as though it were the system being built, so it reported the losing
+    option's gaps as the project's own defects, and a reader comparing two
+    candidates got two verdicts and no comparison.
+
+    The description is the one place that intent is written down (`Project.description`,
+    collected by NewProject.tsx and until now read by nothing). It is the
+    customer's own prose, so it is labelled as stated intent rather than as
+    fact, and nothing is inferred from it: the clause is still judged on what
+    the designs say. What it changes is which question the judge thinks it is
+    answering.
+
+    Empty for a design outside any project, and for a project whose description
+    was left blank — both give exactly the prompt this stage used before.
+    """
+    if not scope.project_id:
+        return ""
+    row = db.one(
+        conn,
+        'SELECT "name", "description" FROM "project" WHERE "id" = %s',
+        (scope.project_id,),
+    )
+    if row is None:
+        return ""
+    description = (row["description"] or "").strip()
+    if not description:
+        return ""
+    name = (row["name"] or "").strip()
+    titled = f'"{name}"' if name else "this project"
+    # Capped. A description is a short brief in practice, but it is free text a
+    # customer types, and an essay pasted in here would push the design itself
+    # out of the window — the thing the clause is actually judged on.
+    if len(description) > 1200:
+        description = description[:1200].rstrip() + "…"
+    return (
+        f"<what_this_project_is_for>\n"
+        f"The reviewer opened {titled} with this purpose, in their own words:\n\n"
+        f"{description}\n\n"
+        "Read it as the stated intent behind the work, not as a fact about the "
+        "architecture, and never as evidence: every verdict still rests only on what "
+        "the designs themselves say. Use it to judge the right question — for "
+        "instance, where the purpose is to compare candidate solutions, a weakness in "
+        "one candidate is a finding about that candidate and not a defect in the "
+        "project, and the designs are alternatives rather than parts of one system.\n"
+        "</what_this_project_is_for>"
+    )
+
+
 def _context(conn, scope: designs.Scope) -> str:
     """What the work under assessment is for, in the judge's words.
 
@@ -262,17 +314,27 @@ def _context(conn, scope: designs.Scope) -> str:
     of designs for one solution, because the alternative — three summaries run
     together — reads as three unrelated systems and invites a verdict about the
     wrong one.
+
+    The project's own stated purpose goes first, where there is one. It is the
+    frame the summaries are read inside: two designs under "choose between these
+    two" are not two halves of one system, and nothing else in the prompt could
+    tell the judge which it is looking at.
     """
     if not scope.designs:
         return ""
+    purpose = _purpose(conn, scope)
     rows = db.query(
         conn,
         'SELECT "id", "summary" FROM "document" WHERE "id" = ANY(%s)',
         (scope.document_ids,),
     )
     summaries = {r["id"]: (r["summary"] or "").strip() for r in rows}
+
+    def framed(body: str) -> str:
+        return f"{purpose}\n\n{body}" if purpose and body else (purpose or body)
+
     if len(scope.designs) == 1:
-        return summaries.get(scope.designs[0].document_id, "")
+        return framed(summaries.get(scope.designs[0].document_id, ""))
 
     blocks = [
         f'=== design: "{design.title}" ===\n{summaries[design.document_id]}'
@@ -280,8 +342,8 @@ def _context(conn, scope: designs.Scope) -> str:
         if summaries.get(design.document_id)
     ]
     if not blocks:
-        return ""
-    return (
+        return framed("")
+    return framed(
         "These designs describe one solution between them. Judge the clause against all "
         "of them together: what one leaves out another may answer.\n\n" + "\n\n".join(blocks)
     )
