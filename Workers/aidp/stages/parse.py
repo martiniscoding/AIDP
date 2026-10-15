@@ -274,15 +274,33 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     for index, section in enumerate(out.sections):
         if section.is_structural:
             continue
+        # Prose and tables both, not prose *or* tables.
+        #
+        # This was a cascade: whatever `from_prose` found stopped the table
+        # from being read at all. `from_prose` returns at most one clause — it
+        # builds a single Clause out of the section's Statement/Rationale/
+        # Requirements labels — so a section that opened with one labelled
+        # paragraph and then listed forty rules in a table yielded exactly one
+        # clause and silently dropped the forty. That is the "1 clause from a
+        # whole standard" failure: enterprise standards put their rules in
+        # tables (Domain | Rule | Rationale | Implication) under a prose
+        # preamble, which is the one shape this cascade could not read.
+        #
+        # Normative prose stays a fallback, because it *infers* rules from
+        # unlabelled sentences and would double-count the same rule a label or
+        # a table row already stated.
         found = clause_parser.from_prose(section)
-        if not found:
-            for table in out.tables.get(index, []):
-                found.extend(clause_parser.from_table(section, table.rows))
+        for table in out.tables.get(index, []):
+            found.extend(clause_parser.from_table(section, table.rows))
         if not found:
             found = clause_parser.from_normative_prose(section)
             if found:
                 inferred.add(index)
         if found:
+            # Re-numbered, because from_prose and from_table each number from
+            # one and a section can now hold both.
+            for ordinal, clause in enumerate(found, start=1):
+                clause.ordinal = ordinal
             out.clauses[index] = found
 
     source = rules.pdf_source(
@@ -606,15 +624,33 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
     for index, section in enumerate(out.sections):
         if section.is_structural:
             continue
+        # Prose and tables both, not prose *or* tables.
+        #
+        # This was a cascade: whatever `from_prose` found stopped the table
+        # from being read at all. `from_prose` returns at most one clause — it
+        # builds a single Clause out of the section's Statement/Rationale/
+        # Requirements labels — so a section that opened with one labelled
+        # paragraph and then listed forty rules in a table yielded exactly one
+        # clause and silently dropped the forty. That is the "1 clause from a
+        # whole standard" failure: enterprise standards put their rules in
+        # tables (Domain | Rule | Rationale | Implication) under a prose
+        # preamble, which is the one shape this cascade could not read.
+        #
+        # Normative prose stays a fallback, because it *infers* rules from
+        # unlabelled sentences and would double-count the same rule a label or
+        # a table row already stated.
         found = clause_parser.from_prose(section)
-        if not found:
-            for table in out.tables.get(index, []):
-                found.extend(clause_parser.from_table(section, table.rows))
+        for table in out.tables.get(index, []):
+            found.extend(clause_parser.from_table(section, table.rows))
         if not found:
             found = clause_parser.from_normative_prose(section)
             if found:
                 inferred.add(index)
         if found:
+            # Re-numbered, because from_prose and from_table each number from
+            # one and a section can now hold both.
+            for ordinal, clause in enumerate(found, start=1):
+                clause.ordinal = ordinal
             out.clauses[index] = found
 
     if read.undecodable_images:
