@@ -155,6 +155,38 @@ export type RunView = {
  */
 const RATIONALE_CLAMP = 160;
 
+/** The three parts of a rationale, in the order the engine writes them. */
+const RATIONALE_PARTS = ["Gap", "Impact", "Fix"] as const;
+
+/**
+ * A rationale split into gap, impact and fix.
+ *
+ * The judge is now told to write exactly those three, in that order, for any
+ * verdict that is not "covered" (rules 8 and 11 in Workers/aidp/ai/llm.py). Run
+ * together as one paragraph they read as the wall of text the whole change was
+ * meant to remove — the three facts are there but the reader has to find the
+ * boundaries, which is most of the work of skimming eighty findings.
+ *
+ * Split on sentence ends rather than on a delimiter the model was asked to
+ * emit: a format token is one more instruction to disobey, and the sentences
+ * are what the prompt actually constrains. Exactly three sentences is the
+ * shape being labelled, so anything else — a one-line "covered", an older
+ * finding written before the rule, a model that ignored it — is returned
+ * unsplit and rendered as the paragraph it is. That is the honest fallback:
+ * labelling two sentences "Gap" and "Impact" would promise a fix that was
+ * never written.
+ */
+function rationaleParts(rationale: string): string[] | null {
+  const trimmed = rationale.trim();
+  // A decimal or an abbreviation would split a sentence in the wrong place, so
+  // require a space and a capital after the stop.
+  const sentences = trimmed
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"“'])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return sentences.length === RATIONALE_PARTS.length ? sentences : null;
+}
+
 const TONE: Record<string, string> = {
   bad: "border-danger-line bg-danger-tint text-danger",
   warn: "border-warn-line bg-warn-tint text-warn",
@@ -1121,6 +1153,8 @@ function FindingRow({
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
   const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
   const decided = finding.reviewerState !== "pending";
+  // Gap / impact / fix, where the engine wrote three sentences; null otherwise.
+  const parts = rationaleParts(finding.rationale);
 
   /**
    * An accepted risk: the breach stands, allowed for this project alone.
@@ -1302,10 +1336,28 @@ function FindingRow({
 
       {open && (
         <div className="border-t border-line px-4 py-3.5">
-          {finding.rationale.length > RATIONALE_CLAMP && (
-            <p className="mb-3 text-[13px] leading-relaxed text-ink/78">
-              {finding.rationale}
-            </p>
+          {/* Gap, impact and fix on their own lines, where the engine wrote
+              three sentences. Labelled rather than run together: the reader is
+              asking "how bad, and what do I do?", and a three-clause paragraph
+              makes them parse it to find out. A rationale that is not three
+              sentences is shown as the paragraph it is — see rationaleParts. */}
+          {parts ? (
+            <dl className="mb-3.5 grid gap-2">
+              {parts.map((text, i) => (
+                <div key={RATIONALE_PARTS[i]} className="grid grid-cols-[56px_1fr] gap-x-3 gap-y-0.5 sm:grid-cols-[62px_1fr]">
+                  <dt className="pt-px font-display text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink/52">
+                    {RATIONALE_PARTS[i]}
+                  </dt>
+                  <dd className="min-w-0 text-[13px] leading-relaxed text-ink/82">{text}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            finding.rationale.length > RATIONALE_CLAMP && (
+              <p className="mb-3 text-[13px] leading-relaxed text-ink/78">
+                {finding.rationale}
+              </p>
+            )
           )}
           {finding.clauseStatement && (
             <p className="mb-3 text-[13px] leading-relaxed text-ink/72">

@@ -54,10 +54,7 @@ function Notice({ children, warn = false }: { children: React.ReactNode; warn?: 
 }
 
 export function Lifecycle({ lifecycle }: { lifecycle: LifecycleView | null }) {
-  // Runs from before this check existed have nothing to say, and say nothing.
-  if (!lifecycle) return null;
-
-  const complete = lifecycle.state === "complete" ? lifecycle : null;
+  const complete = lifecycle?.state === "complete" ? lifecycle : null;
   const tracked = complete ? complete.technologies.filter((t) => t.status !== "untracked") : [];
   const untracked = complete ? complete.technologies.filter((t) => t.status === "untracked") : [];
   const tally = (["ended", "ending", "supported"] as const)
@@ -84,8 +81,16 @@ export function Lifecycle({ lifecycle }: { lifecycle: LifecycleView | null }) {
       </div>
 
       {!complete ? (
-        <Notice warn={lifecycle.state === "failed"}>
-          {lifecycle.note ?? "The support status of this design's technologies was not checked."}
+        /* Every reason this can be empty says so, including the one that used to
+           return null and leave the tab blank: a run from before this check
+           existed. A section that disappears cannot be told apart from one that
+           found nothing, and on a tab of its own the reader is left looking at
+           an empty panel wondering which it is. */
+        <Notice warn={lifecycle?.state === "failed"}>
+          {lifecycle
+            ? (lifecycle.note ??
+              "The support status of this design's technologies was not checked.")
+            : "This assessment ran before designs were checked against public support dates. Run it again to see them."}
         </Notice>
       ) : (
         <div className="space-y-3">
