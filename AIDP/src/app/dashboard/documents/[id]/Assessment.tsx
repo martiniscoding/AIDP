@@ -316,18 +316,6 @@ function RunProgress({ run }: { run: NonNullable<RunView> }) {
 }
 
 /**
- * "Absent" asks the reverse of every other chip. The others count clauses by
- * what the design does about them; this counts the parts of the design no clause
- * governs at all. Clauses the design says nothing about are not listed: the
- * question a reviewer asked for is what the standards leave uncovered.
- */
-const ABSENT_META = {
-  label: "Absent",
-  tone: "bad",
-  blurb: "Parts of this design that no clause in your standards covers.",
-} as const;
-
-/**
  * The assessment surface for a submitted design.
  *
  * Findings arrive worst-first and default to collapsed. A reviewer working a
@@ -352,6 +340,99 @@ const ABSENT_META = {
 export type Scope =
   | { kind: "document"; documentId: string }
   | { kind: "project"; projectId: string };
+
+/**
+ * The report's four parts, and the order they are offered in.
+ *
+ * "compliance" is first and is what the page opens on: it is the only one of
+ * the four that answers "does this design meet the standards we wrote?", and
+ * every other tab holds something that is explicitly not a verdict. Keeping
+ * them in one column let a suggestion sit a screen below a breach, which is
+ * the clutter this split exists to remove.
+ */
+const TABS = ["compliance", "uncovered", "improvements", "technology"] as const;
+
+type Tab = (typeof TABS)[number];
+
+const TAB_META: Record<Tab, { label: string; blurb: string }> = {
+  compliance: {
+    label: "Compliance",
+    blurb: "Verdicts against the organisation's own standards, clause by clause.",
+  },
+  uncovered: {
+    label: "Not covered",
+    blurb: "Parts of this design that no clause in the framework governs.",
+  },
+  improvements: {
+    label: "Improvements",
+    blurb: "What a reviewer would still ask of the design. Advice, not verdicts.",
+  },
+  technology: {
+    label: "Technology support",
+    blurb: "Whether the products this design builds on are still supported.",
+  },
+};
+
+/**
+ * The tab bar, with a count on anything that has one.
+ *
+ * A count is what makes a tab worth clicking: "Improvements" says nothing about
+ * whether there are any, and a reviewer who opens an empty tab twice stops
+ * opening it. A tab with nothing in it is still shown and still reachable —
+ * each panel explains its own emptiness, including when a check could not run,
+ * and hiding it would leave a reader unable to tell "none" from "not asked".
+ */
+function Tabs({
+  tab,
+  setTab,
+  counts,
+}: {
+  tab: Tab;
+  setTab: (next: Tab) => void;
+  counts: Partial<Record<Tab, number>>;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Report sections"
+      className="mb-4 flex flex-wrap gap-1 border-b border-line"
+    >
+      {TABS.map((name) => {
+        const active = tab === name;
+        const count = counts[name];
+        return (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={TAB_META[name].blurb}
+            onClick={() => setTab(name)}
+            className={cn(
+              "-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2 text-[13px] transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+              active
+                ? "border-royal text-ink"
+                : "border-transparent text-ink/64 hover:border-line-strong hover:text-ink/82",
+            )}
+          >
+            {TAB_META[name].label}
+            {count !== undefined && count > 0 && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[11px]",
+                  active ? "bg-royal/12 text-royal" : "bg-canvas-sunk text-ink/62",
+                )}
+              >
+                {count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function Assessment({
   scope,
@@ -386,6 +467,30 @@ export function Assessment({
    * default and hides only covered; "all" is the explicit way back.
    */
   const [lens, setLens] = useState<Lens>("attention");
+
+  /**
+   * Which part of the report is on screen.
+   *
+   * Everything used to be one column: the clause findings, then what no
+   * standard covers, then the technology dates, then the suggested
+   * improvements. Three of those four are not verdicts against the customer's
+   * standards, and stacking them under the findings put general advice a model
+   * proposed in the same scroll as a breach of a rule the customer wrote. A
+   * reviewer answering "what fails our standards?" had to scroll past it, and
+   * the report read as longer and vaguer than it is.
+   *
+   * So compliance is the tab you land on and the others are a click away. The
+   * split is by what a thing *is*, not by how long it is: "Compliance" holds
+   * the verdicts, and the rest hold facts and advice that are explicitly not
+   * verdicts. Each section already said as much in its own words — see
+   * Improvements.tsx and Lifecycle.tsx — and this stops the layout implying
+   * otherwise.
+   *
+   * Not router state. A tab is a view of a report already fetched, and putting
+   * it in the URL would make the back button walk through tabs instead of
+   * leaving the report.
+   */
+  const [tab, setTab] = useState<Tab>("compliance");
 
   /**
    * Queued and running are different things, and collapsing them hid a real
@@ -537,14 +642,46 @@ export function Assessment({
 
       {inFlight && run && <RunProgress run={run} />}
 
-      {run && (findings.length > 0 || run.coverage !== null) && (
+      {run && !inFlight && (
+        <Tabs
+          tab={tab}
+          setTab={setTab}
+          counts={{
+            compliance: counts.contradicts + counts.partial + counts.needs_review,
+            uncovered: run.coverage?.gaps.length ?? 0,
+            improvements: run.advice?.suggestions.length ?? 0,
+            technology: run.lifecycle?.technologies.filter(
+              (t) => t.status === "ended" || t.status === "ending",
+            ).length ?? 0,
+          }}
+        />
+      )}
+
+      {/* Parts of the design no clause governs. Its own tab rather than a
+          verdict filter: these are passages of the design, not clauses, and
+          listing them through the same control as a verdict was what made
+          "Absent" look like a fifth verdict. */}
+      {run && !inFlight && tab === "uncovered" && (
+        <CoverageGaps
+          coverage={run.coverage}
+          frameworkName={run.frameworkName}
+          gapTables={run.coverageTables}
+        />
+      )}
+
+      {run && tab === "compliance" && (findings.length > 0 || run.coverage !== null) && (
         <>
-          {/* Coverage across the framework. Also the filter. */}
+          {/* Coverage across the framework. Also the filter.
+
+              Verdicts only now. The "Absent" chip here counted coverage gaps —
+              parts of the design, not clauses — so it sat in a row of verdicts
+              while meaning something else entirely, and clicking it replaced
+              the findings list with a different kind of thing. It is the "Not
+              covered" tab above. */}
           <div className="mb-4 flex flex-wrap gap-2">
-            {VERDICTS.map((verdict) => {
-              const gapsChip = verdict === "absent";
-              const meta = gapsChip ? ABSENT_META : VERDICT_META[verdict];
-              const count = gapsChip ? (run.coverage?.gaps.length ?? 0) : counts[verdict];
+            {VERDICTS.filter((verdict) => verdict !== "absent").map((verdict) => {
+              const meta = VERDICT_META[verdict];
+              const count = counts[verdict];
               const active = lens === verdict;
               return (
                 <button
@@ -552,9 +689,7 @@ export function Assessment({
                   type="button"
                   title={meta.blurb}
                   onClick={() => setLens(active ? "attention" : verdict)}
-                  // Always open: with nothing to list it still says why — an
-                  // older run, a check that could not run, or no gaps at all.
-                  disabled={!gapsChip && count === 0}
+                  disabled={count === 0}
                   className={cn(
                     "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] transition-opacity",
                     TONE[meta.tone],
@@ -570,30 +705,7 @@ export function Assessment({
             })}
           </div>
 
-          {lens === "absent" ? (
-            <CoverageGaps
-              coverage={run.coverage}
-              frameworkName={run.frameworkName}
-              gapTables={run.coverageTables}
-            />
-          ) : (
           <>
-          {lens === "attention" && (run.coverage?.gaps.length ?? 0) > 0 && (
-            <button
-              type="button"
-              onClick={() => setLens("absent")}
-              className="mb-3 flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border border-danger-line bg-danger-tint px-4 py-2.5 text-left text-[12.5px] text-danger transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
-            >
-              <span>
-                {run.coverage?.gaps.length} part{run.coverage?.gaps.length === 1 ? "" : "s"} of
-                this design no standard covers
-                {(run.coverage?.suggestions.length ?? 0) > 0 &&
-                  ` · ${run.coverage?.suggestions.length} standard${run.coverage?.suggestions.length === 1 ? "" : "s"} suggested`}
-              </span>
-              <span className="shrink-0 underline underline-offset-2">View</span>
-            </button>
-          )}
-
           <p className="mb-3 text-[12px] text-ink/62">
             {reviewed} of {findings.length} reviewed
             {folded > 0 && (
@@ -670,26 +782,31 @@ export function Assessment({
             </ul>
           )}
           </>
-          )}
         </>
       )}
 
-      {run && findings.length === 0 && !inFlight && run.coverage === null && (
+      {run && tab === "compliance" && findings.length === 0 && !inFlight && run.coverage === null && (
         <p className="rounded-xl border border-line bg-card px-5 py-8 text-center text-[13.5px] text-ink/64">
           No findings recorded. The run may have failed before it reached a clause.
         </p>
       )}
 
-      {/* After the findings, never among them: advice on the design, not a verdict
-          on a clause. Only for a finished run — a live one has nothing to show yet. */}
-      {/* Shown once the run is no longer live, not only when it completed.
-          These three passes run after the last clause, so a run stopped at
-          "14 of 14" has them worked out and stored — and gating on the run's
-          own state hid finished, complete suggestions and technology dates
-          behind a verdict about the clause loop. Each section reads its own
-          payload's state and says so itself, including when it failed. */}
-      {run && !inFlight && <Lifecycle lifecycle={run.lifecycle} />}
-      {run && !inFlight && <Improvements advice={run.advice} runId={run.id} />}
+      {/* Each on its own tab, never under the findings: these are facts about
+          the products and advice about the design, not verdicts against a
+          clause, and a reader must not take one for the other. Both sections
+          already say so in their own words; stacking them below a breach said
+          otherwise with the layout.
+
+          Shown once the run is no longer live, not only when it completed.
+          These passes run after the last clause, so a run stopped at "14 of 14"
+          has them worked out and stored — and gating on the run's own state hid
+          finished suggestions and technology dates behind a verdict about the
+          clause loop. Each reads its own payload's state and says so itself,
+          including when it failed, which is why an empty tab is still offered. */}
+      {run && !inFlight && tab === "technology" && <Lifecycle lifecycle={run.lifecycle} />}
+      {run && !inFlight && tab === "improvements" && (
+        <Improvements advice={run.advice} runId={run.id} />
+      )}
     </section>
   );
 }
@@ -1006,6 +1123,21 @@ function FindingRow({
   const decided = finding.reviewerState !== "pending";
 
   /**
+   * An accepted risk: the breach stands, allowed for this project alone.
+   *
+   * Read back from what the act leaves behind rather than stored as a fourth
+   * reviewer state — `beginAllow` is an override of a breach to "covered" kept
+   * at project scope, which is precisely this shape and nothing else produces
+   * it. Worth distinguishing on the row because it is the one outcome where the
+   * design ships against a standard, and a reviewer scanning a settled report
+   * should not have to open a card to find that out.
+   */
+  const allowed =
+    finding.verdict === "contradicts" &&
+    finding.reviewerState === "overridden" &&
+    finding.promotedScope === "project";
+
+  /**
    * Offered on a breach, and only with a project to confine it to.
    *
    * Not on "partial" or "needs_review": those are arguments about what the
@@ -1108,18 +1240,33 @@ function FindingRow({
         </span>
 
         <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-ink/62">
+          {/* What was decided, and about what.
+
+              This said "confirmed", full stop, and that one word was read as
+              the finding having been dealt with and emptied — the clause, the
+              severity and the reason all still there inside, but the row
+              announcing only that somebody had clicked. Three different acts
+              end up here: agreeing with the finding, correcting a verdict the
+              engine got wrong, and letting a breach stand anyway. A reviewer
+              coming back to a report of eighty rows has to tell them apart
+              without opening each one, and the risk accepted on a breach is
+              the one nobody should have to go looking for. */}
           {decided && (
             <span
               className={cn(
                 "rounded px-1.5 py-0.5",
                 finding.reviewerState === "overridden"
                   ? "bg-warn-tint text-warn"
-                  : "bg-canvas-sunk text-ink/68",
+                  : allowed
+                    ? "bg-danger-tint text-danger"
+                    : "bg-canvas-sunk text-ink/68",
               )}
             >
               {finding.reviewerState === "overridden"
-                ? `→ ${finding.reviewerVerdict ?? "changed"}`
-                : "confirmed"}
+                ? `Verdict corrected → ${VERDICT_META[finding.reviewerVerdict as Verdict]?.label ?? finding.reviewerVerdict ?? "changed"}`
+                : allowed
+                  ? "Risk accepted"
+                  : `Issue confirmed · ${meta.label}`}
             </span>
           )}
           {/* A kept ruling and a kept ruling that only reaches this project are
@@ -1337,7 +1484,7 @@ function FindingRow({
               className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/72 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
             >
               <Check size={12} />
-              Confirm
+              Confirm issue
             </button>
 
             {mode ? (
@@ -1348,7 +1495,9 @@ function FindingRow({
               <div className="w-full space-y-3 rounded-lg border border-line bg-canvas-sunk p-3">
                 {mode === "override" && (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="mr-1 text-[11.5px] text-ink/64">Correct verdict:</span>
+                    <span className="mr-1 text-[11.5px] text-ink/64">
+                      The engine judged this wrongly. Correct verdict:
+                    </span>
                     {/* Not "Absent": that section lists parts of the design, not
                         clauses, so a clause corrected to it would vanish. */}
                     {VERDICTS.filter((v) => v !== finding.verdict && v !== "absent").map((verdict) => (
@@ -1382,8 +1531,8 @@ function FindingRow({
 
                 {/* The breach is not being denied, and the wording says so: the
                     clause is still broken, and this is the dispensation for it.
-                    "Looks fine to me" is the Override path and means something
-                    else. */}
+                    "the engine got this wrong" is the Override verdict path
+                    and means something else. */}
                 {mode === "allow" && project && (
                   <p className="text-[11.5px] leading-relaxed text-ink/64">
                     Allowing this breach for{" "}
@@ -1492,7 +1641,7 @@ function FindingRow({
                         ? "Save and allow here"
                         : "Save and remember"
                       : mode === "override"
-                        ? "Save override"
+                        ? "Save corrected verdict"
                         : "Save"}
                   </button>
                   <button
@@ -1516,7 +1665,7 @@ function FindingRow({
                   onClick={() => setMode("confirm")}
                   className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
                 >
-                  Confirm with a reason…
+                  Confirm issue with a reason…
                 </button>
                 <button
                   type="button"
@@ -1524,7 +1673,7 @@ function FindingRow({
                   onClick={() => setMode("override")}
                   className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-warn-line hover:text-warn disabled:opacity-50"
                 >
-                  Override
+                  Override verdict&hellip;
                 </button>
                 {/* Last, and deliberately not dressed as the easy way out: it
                     is the one action here that lets a design ship against a
@@ -1537,7 +1686,7 @@ function FindingRow({
                     onClick={beginAllow}
                     className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
                   >
-                    Allow for this project…
+                    Accept risk for this project…
                   </button>
                 )}
                 {/* The other direction entirely: not a dispensation for this
