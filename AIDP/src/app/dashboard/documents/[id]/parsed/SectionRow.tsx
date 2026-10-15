@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { ChevronRight, ImageIcon, Table2 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { SectionContent } from "@/lib/ingest/documents";
+import type { SectionContent, TableView } from "@/lib/ingest/documents";
+import {
+  gridColumns,
+  placeTables,
+  tableGrid,
+  type LineBlock,
+} from "@/lib/ingest/parsed-tables";
 
 /** The outline row's own data, which the page already has. */
 export type SectionSummary = {
@@ -182,18 +188,31 @@ function Extraction({ content }: { content: SectionContent }) {
     );
   }
 
+  // Tables go back into the stream only where the stream is the thing being
+  // read. A standard's lines are the record behind its clauses and start
+  // collapsed, so drawing its tables inside them would hide the tables until
+  // somebody expanded a list they had no reason to open; those keep their own
+  // section above, as before. A design has no clauses — the lines *are* the
+  // extraction — so that is where its tables belong.
+  const inline = !standard;
+  const laid = placeTables(content.lines, content.tables);
+  const blocks: LineBlock[] = inline
+    ? laid.blocks
+    : content.lines.map((line) => ({ kind: "line", line }));
+  const placed = inline ? laid.placed : new Set<string>();
+
   return (
     <div className="space-y-3.5">
       {standard ? (
         <>
           <Clauses content={content} />
-          <Tables content={content} />
-          <Lines content={content} collapsedByDefault />
+          <Tables content={content} skip={placed} />
+          <Lines content={content} blocks={blocks} collapsedByDefault />
         </>
       ) : (
         <>
-          <Lines content={content} />
-          <Tables content={content} />
+          <Lines content={content} blocks={blocks} />
+          <Tables content={content} skip={placed} />
           <Clauses content={content} />
         </>
       )}
@@ -313,91 +332,115 @@ function Clauses({ content }: { content: SectionContent }) {
   );
 }
 
-function cells(rows: unknown): string[][] {
-  if (!Array.isArray(rows)) return [];
-  return rows.map((row) =>
-    Array.isArray(row)
-      ? row.map((cell) => (cell === null || cell === undefined ? "" : String(cell)))
-      : [String(row)],
+/**
+ * One table, as the document had it.
+ *
+ * Drawn the same whether it appears inline among the lines or in the leftovers
+ * below them, so the two can never drift into looking like different things.
+ */
+function TableFigure({ table, bare = false }: { table: TableView; bare?: boolean }) {
+  const columns = gridColumns(table.columns, table.rows);
+  const body = tableGrid(columns, table.rows);
+  return (
+    <figure
+      className={cn(
+        "overflow-hidden rounded-md bg-card",
+        bare ? "border border-line-soft" : "border border-line",
+      )}
+    >
+      <figcaption className="flex flex-wrap items-baseline gap-2 border-b border-line-soft px-2.5 py-1.5 text-[11.5px] text-ink/70">
+        <span className="min-w-0 flex-1">{table.caption || `Table ${table.ordinal}`}</span>
+        {/* Below 1 the parser was unsure of the shape — a merged cell,
+            a row that ran over a page break. Shown, because a table
+            silently reshaped is the worst kind of parse error. */}
+        {table.confidence < 1 && (
+          <span className="text-warn">
+            shape uncertain · {Math.round(table.confidence * 100)}%
+          </span>
+        )}
+        {table.pageStart != null && (
+          <span className="tabular-nums text-ink/55">p{table.pageStart}</span>
+        )}
+      </figcaption>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-[11.5px]">
+          {columns.length > 0 && (
+            <thead>
+              <tr>
+                {columns.map((column, index) => (
+                  <th
+                    key={index}
+                    scope="col"
+                    className="border-b border-line-soft px-2 py-1 text-left align-bottom font-medium text-ink/72"
+                  >
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          )}
+          <tbody>
+            {body.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={cellIndex}
+                    className={cn(
+                      "border-b border-line-soft px-2 py-1 align-top text-ink/78",
+                      // A blank cell is content: Tier 4's RPO is blank
+                      // on purpose and must not read as Tier 3's.
+                      cell === "" && "bg-canvas-sunk/70",
+                    )}
+                  >
+                    {/* The document's own line breaks inside a cell are part of
+                        the value — "v5.7.28 / 8.0" is two versions, not one. */}
+                    {cell === "" ? (
+                      <span className="text-ink/40">—</span>
+                    ) : (
+                      <span className="whitespace-pre-wrap">{cell}</span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {body.length === 0 && (
+        <p className="px-2.5 py-2 text-[11.5px] text-warn">
+          Columns were found but no rows were extracted.
+        </p>
+      )}
+    </figure>
   );
 }
 
-function Tables({ content }: { content: SectionContent }) {
-  if (content.tables.length === 0) return null;
+/**
+ * Tables that did not appear among the lines.
+ *
+ * Normally none: every table is drawn where the document put it. One lands here
+ * when all of its rows rendered empty and the line stream dropped them, which
+ * leaves the table stored with nothing in the lines to anchor it — and a table
+ * nobody can see is exactly the parse failure this page exists to surface.
+ */
+function Tables({ content, skip }: { content: SectionContent; skip: Set<string> }) {
+  const left = content.tables.filter((table) => !skip.has(table.id));
+  if (left.length === 0) return null;
+  // Nothing was drawn in the stream, so these are simply this section's tables.
+  // Some were, so these are the ones that could not be placed — which is worth
+  // saying, because it means the lines and the stored tables disagree.
+  const leftover = skip.size > 0;
   return (
     <section>
       <h4 className="text-[11px] font-medium uppercase tracking-[0.09em] text-ink/62">
-        Tables extracted ({content.tables.length})
+        {leftover
+          ? `Tables with no lines of their own (${left.length})`
+          : `Tables extracted (${left.length})`}
       </h4>
       <div className="mt-1.5 space-y-2.5">
-        {content.tables.map((table) => {
-          const body = cells(table.rows);
-          return (
-            <figure key={table.id} className="overflow-hidden rounded-md border border-line bg-card">
-              <figcaption className="flex flex-wrap items-baseline gap-2 border-b border-line-soft px-2.5 py-1.5 text-[11.5px] text-ink/70">
-                <span className="min-w-0 flex-1">{table.caption || `Table ${table.ordinal}`}</span>
-                {/* Below 1 the parser was unsure of the shape — a merged cell,
-                    a row that ran over a page break. Shown, because a table
-                    silently reshaped is the worst kind of parse error. */}
-                {table.confidence < 1 && (
-                  <span className="text-warn">
-                    shape uncertain · {Math.round(table.confidence * 100)}%
-                  </span>
-                )}
-                {table.pageStart != null && (
-                  <span className="tabular-nums text-ink/55">p{table.pageStart}</span>
-                )}
-              </figcaption>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-[11.5px]">
-                  {table.columns.length > 0 && (
-                    <thead>
-                      <tr>
-                        {table.columns.map((column, index) => (
-                          <th
-                            key={index}
-                            scope="col"
-                            className="border-b border-line-soft px-2 py-1 text-left font-medium text-ink/72"
-                          >
-                            {column}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                  )}
-                  <tbody>
-                    {body.map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {row.map((cell, cellIndex) => (
-                          <td
-                            key={cellIndex}
-                            className={cn(
-                              "border-b border-line-soft px-2 py-1 align-top text-ink/78",
-                              // A blank cell is content: Tier 4's RPO is blank
-                              // on purpose and must not read as Tier 3's.
-                              cell === "" && "bg-canvas-sunk/70",
-                            )}
-                          >
-                            {cell === "" ? (
-                              <span className="text-ink/40">—</span>
-                            ) : (
-                              cell
-                            )}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {body.length === 0 && (
-                <p className="px-2.5 py-2 text-[11.5px] text-warn">
-                  Columns were found but no rows were extracted.
-                </p>
-              )}
-            </figure>
-          );
-        })}
+        {left.map((table) => (
+          <TableFigure key={table.id} table={table} />
+        ))}
       </div>
     </section>
   );
@@ -412,9 +455,11 @@ const KIND_LABEL: Record<string, string> = {
 
 function Lines({
   content,
+  blocks,
   collapsedByDefault = false,
 }: {
   content: SectionContent;
+  blocks: LineBlock[];
   collapsedByDefault?: boolean;
 }) {
   const [shown, setShown] = useState(!collapsedByDefault);
@@ -438,7 +483,33 @@ function Lines({
 
       {shown && (
         <ol className="mt-1.5 divide-y divide-line-soft overflow-hidden rounded-md border border-line bg-card">
-          {content.lines.map((line) => (
+          {blocks.map((block) =>
+            block.kind === "table" && block.table ? (
+              // The table, where the document had it. Its lines are the flat
+              // transcript of these same cells and would only say it worse —
+              // the stream drops a row's empty cells, so "Category: X |
+              // Comments: Y" is a five-column row with three columns missing.
+              <li
+                key={`${block.ref}-${block.lines[0]?.ordinal ?? 0}`}
+                className="flex items-baseline gap-2 px-2.5 py-1.5"
+              >
+                <span className="w-10 shrink-0 font-mono text-[10px] text-royal/70">
+                  {block.ref}
+                </span>
+                <span className="w-[4.5rem] shrink-0 text-[10px] uppercase tracking-[0.06em] text-ink/45">
+                  table
+                </span>
+                <span className="min-w-0 flex-1 py-0.5">
+                  <TableFigure table={block.table} bare />
+                </span>
+                {block.lines[0]?.page != null && (
+                  <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-ink/50">
+                    p{block.lines[0].page}
+                  </span>
+                )}
+              </li>
+            ) : (
+              (block.kind === "table" ? block.lines : [block.line]).map((line) => (
             <li key={line.ordinal} className="flex items-baseline gap-2 px-2.5 py-1">
               {/* The parser's own handle, which clauses cite in sourceRefs —
                   so a clause's "L14" can be found in this list. */}
@@ -460,7 +531,9 @@ function Lines({
                 </span>
               )}
             </li>
-          ))}
+              ))
+            ),
+          )}
         </ol>
       )}
     </section>
