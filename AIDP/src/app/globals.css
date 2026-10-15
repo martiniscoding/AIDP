@@ -129,6 +129,38 @@ body {
   overflow-x: clip;
 }
 
+/* The hand cursor, back where it was.
+ *
+ * Reported from the upload panel — "while adding a file, the pointer does not
+ * get changed" — and it was never about that panel. Tailwind v3's Preflight
+ * set `cursor: pointer` on buttons; v4 dropped it in favour of the browser
+ * default, which for a <button> is `cursor: default`. So every button in this
+ * app stopped saying it could be clicked the moment the dependency moved, and
+ * the upload zone is simply the largest one and the first anybody noticed.
+ *
+ * Fixed once here rather than by adding a class to the couple of hundred
+ * buttons: anything else leaves the next button somebody writes with the same
+ * defect, and the eight files that already set `cursor-pointer` were a patch
+ * on exactly this.
+ *
+ * `:disabled` keeps the default arrow, which is the half of v3's behaviour
+ * worth keeping — a pointer over a control that will not respond is a worse
+ * lie than no pointer at all. `[aria-disabled="true"]` too, for the controls
+ * that stay focusable while refusing input. */
+button:not(:disabled):not([aria-disabled="true"]),
+[role="button"]:not(:disabled):not([aria-disabled="true"]),
+label[for],
+summary {
+  cursor: pointer;
+}
+
+button:disabled,
+button[aria-disabled="true"],
+[role="button"]:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: default;
+}
+
 /* Paper tooth. Multiplied rather than laid over, so it darkens the ground
    slightly instead of dusting grey on top of it — at this opacity it reads
    as stock, not as noise. Fixed overlay above content, non-interactive. */
