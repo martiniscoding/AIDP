@@ -6,7 +6,12 @@ import { prisma } from "@/lib/prisma";
 import { NoAccess, requireAccess } from "@/lib/access/gate";
 import { canManageStandards } from "@/lib/access/roles";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { resolveFramework, runJobWhere, supersedeFrameworksFor } from "@/lib/ingest/assessment";
+import {
+  describeScope,
+  resolveFramework,
+  runJobWhere,
+  supersedeFrameworksFor,
+} from "@/lib/ingest/assessment";
 import { promoteFinding } from "@/lib/ingest/decisions";
 import type { DecisionScope } from "@/lib/ingest/decision-effects";
 import { OutcomeRefused, record as recordRunOutcome } from "@/lib/ingest/outcomes";
@@ -339,7 +344,7 @@ export async function startAssessment(
       return run.id;
     });
 
-    const scope = `${framework.clauseCount} clauses from ${framework.name} v${framework.version}`;
+    const scope = describeScope(framework);
     revalidatePath(`/dashboard/documents/${documentId}`);
     return {
       ok: true,

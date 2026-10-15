@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { canManageStandards } from "@/lib/access/roles";
 import type { Access } from "@/lib/access/gate";
 import { describeJob, describePipeline, JOB_SELECT, STAGES, type PipelineView } from "./pipeline";
-import { resolveFramework } from "./assessment";
+import { describeScope, resolveFramework } from "./assessment";
 import { designResult, type CompletedRun, type DesignResult } from "./results";
 
 /**
@@ -554,6 +554,6 @@ export async function startProjectRun(
   const designs = ready.length === 1 ? "1 design" : `${ready.length} designs`;
   return {
     runId,
-    scope: `${designs} against ${framework.clauseCount} clauses from ${framework.name} v${framework.version}`,
+    scope: `${designs} against ${describeScope(framework)}`,
   };
 }

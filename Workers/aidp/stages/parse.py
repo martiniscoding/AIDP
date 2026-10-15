@@ -1005,25 +1005,77 @@ def _empty_sections(out: _Result) -> set[int]:
 
 
 
+#: Sections per clause, above which a standard is reported as under-extracted.
+#:
+#: Measured on the three sample standards, where the parser is known to be
+#: right: Data 32 sections → 14 clauses, Security 26 → 13, Solution
+#: Architecture 25 → 12. That is a clause every 2.0 to 2.3 sections, because a
+#: standard alternates rules with the headings, scope notes and tables around
+#: them. Eight is comfortably past anything those documents produce and still
+#: catches the failure this exists for — a document whose rules were lumped
+#: into one clause, where the ratio is the section count itself.
+_SECTIONS_PER_CLAUSE = 8
+
+#: Below this a standard is too small for the ratio to mean anything. A
+#: genuinely short policy — one page, one rule — is a real thing, and
+#: reporting it would train reviewers to dismiss this notice.
+_MIN_SECTIONS_TO_JUDGE = 10
+
+
 def _flag_no_clauses(out: _Result, document: dict) -> None:
-    """A reference standard that produced no clauses assesses nothing.
+    """A reference standard that produced no clauses, or implausibly few.
 
     The framework is built from clauses, so a reference document with none
     contributes exactly nothing to every future assessment while still appearing
     in the library as an indexed, healthy-looking document. That is worth
     stopping the reviewer over — most often it means the document is a template
     nobody filled in, or its house style is one no extractor here recognises.
+
+    One clause is the same failure wearing a healthy face, and it is the one
+    that actually reached a customer: a standard of a hundred rules extracted as
+    a single clause passed every check here, reached `ready`, joined the
+    framework, and the assessment screen read "2 designs against 1 clauses from
+    Standards v3". Nothing was broken enough to fail — there was simply no test
+    for "far fewer rules than a document this size can hold", because the only
+    threshold was zero.
+
+    So the ratio is checked as well. It cannot know the right number of clauses,
+    and does not try: it reports, at low severity, that the extraction looks
+    thin and says what to compare it against. The document still ingests, still
+    joins the framework and still assesses, because a parser that refused
+    anything it found surprising would be worse than one that says so.
     """
     if document.get("role") != "reference":
         return
-    if sum(len(c) for c in out.clauses.values()) > 0:
+
+    found = sum(len(c) for c in out.clauses.values())
+    if found == 0:
+        out.issue(
+            "high",
+            "no_clauses",
+            "No clauses could be extracted from this reference document, so it "
+            "contributes nothing to an assessment. Check that it contains stated "
+            "rules rather than being an unfilled template.",
+        )
         return
+
+    sections = len(out.sections)
+    if sections < _MIN_SECTIONS_TO_JUDGE:
+        return
+    # `<=`, so exactly one clause every _SECTIONS_PER_CLAUSE sections is
+    # accepted and the constant reads as the ratio it is named for.
+    if sections <= found * _SECTIONS_PER_CLAUSE:
+        return
+
     out.issue(
-        "high",
-        "no_clauses",
-        "No clauses could be extracted from this reference document, so it "
-        "contributes nothing to an assessment. Check that it contains stated "
-        "rules rather than being an unfilled template.",
+        "low",
+        "few_clauses",
+        f"Only {found} clause{'' if found == 1 else 's'} came out of "
+        f"{sections} sections, which is far fewer than a standard this size "
+        "usually holds. Every assessment measures against these clauses alone, "
+        "so check the report's clause list covers the rules you expect. If it "
+        "does not, the document's layout is one the extractor did not "
+        "recognise — reprocess it, or raise it with support.",
     )
 
 

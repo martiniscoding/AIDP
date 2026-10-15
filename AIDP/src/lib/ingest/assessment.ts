@@ -118,6 +118,27 @@ export async function supersedeFrameworksFor(documentId: string): Promise<number
   return done.count;
 }
 
+/**
+ * What a run is measuring against, in one phrase.
+ *
+ * Shared by the design and project paths so they cannot word it differently,
+ * and written to make a thin framework obvious rather than grammatical. The
+ * screen that prompted this read "Assessing 2 designs against 1 clauses from
+ * Standards v3" — a plural that gave the sentence away as generated, and a
+ * number nobody could act on because nothing said how many standards those
+ * clauses came from. A reviewer seeing "1 clause from 3 standards" knows
+ * immediately that something is wrong with the standards, which is the whole
+ * job of the line.
+ */
+export function describeScope(framework: FrameworkSummary): string {
+  const clauses = `${framework.clauseCount} clause${framework.clauseCount === 1 ? "" : "s"}`;
+  const from =
+    framework.documentCount === 1
+      ? "1 standard"
+      : `${framework.documentCount} standards`;
+  return `${clauses} from ${from} (${framework.name} v${framework.version})`;
+}
+
 export async function countClauses(frameworkId: string): Promise<number> {
   return prisma.clause.count({
     where: {
