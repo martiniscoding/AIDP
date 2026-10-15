@@ -472,19 +472,38 @@ def handle(job: Job, heartbeat) -> None:
     heartbeat()
     coverage.record(run, clauses, scope.designs)
 
+    # Whether the products the design builds on are still supported, from public
+    # lifecycle data — facts beside the findings, never a verdict. Only product
+    # ids are looked up. Never fails the run; see lifecycle.py.
+    #
+    # Before the suggestions, not after. This is the only stage that reads
+    # today's dates from outside, and the suggestions stage is forbidden to
+    # claim a version is out of support from its own training (rule 9 in
+    # llm._ADVICE_SYSTEM). Run the other way round, as it was, a reviewer got
+    # the support dates in one part of the report and "confirm the support
+    # status" in the other, because the model with the advice in it was the one
+    # kept in the dark. Now the established facts go into that call, so a
+    # suggestion can name the version to move to.
+    progress.step("Checking the technologies' support dates")
+    heartbeat()
+    support = lifecycle.record(run, scope.designs)
+
     # What an experienced reviewer would still ask of the design, beyond the
     # standards. Last, and in its own call, so it can draw on every finding above
     # and can never soften one. Never fails the run; see advice.py.
     progress.step("Suggesting improvements to the design")
     heartbeat()
-    advice.record(run, scope.designs, fresh=bool(job.payload.get("freshAdvice")))
-
-    # Whether the products the design builds on are still supported, from public
-    # lifecycle data — facts beside the findings, never a verdict. Only product
-    # ids are looked up. Never fails the run; see lifecycle.py.
-    progress.step("Checking the technologies' support dates")
-    heartbeat()
-    lifecycle.record(run, scope.designs)
+    advice.record(
+        run,
+        scope.designs,
+        fresh=bool(job.payload.get("freshAdvice")),
+        # Empty whenever the check was skipped, unreachable or found everything
+        # supported, which is the ordinary case and asks the question this stage
+        # asked before. A failed lookup never costs the run its suggestions.
+        lifecycle=lifecycle.for_advice(
+            support, scope.designs, document_id=run.get("documentId")
+        ),
+    )
 
     # "Compare both": this run is done, and the other mode's run is opened in
     # the same transaction and carried on by this same job. See
@@ -519,7 +538,23 @@ def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
 
     heartbeat()
     fresh = bool(job.payload.get("freshAdvice"))
-    result = advice.record(run, scope.designs, fresh=fresh)
+    # The support facts this run already established, read back off the run
+    # rather than looked up again: a new set of suggestions should rest on the
+    # same dates the report beside it states, and re-reading endoflife.date here
+    # would let the two disagree. A run from before the column existed, or whose
+    # check did not complete, gives an empty mapping and the question this path
+    # asked before.
+    stored = run.get("lifecycle")
+    result = advice.record(
+        run,
+        scope.designs,
+        fresh=fresh,
+        lifecycle=lifecycle.for_advice(
+            stored if isinstance(stored, dict) else {},
+            scope.designs,
+            document_id=run.get("documentId"),
+        ),
+    )
     with db.transaction() as conn:
         queue.complete(conn, job)
     logs.info(

@@ -220,6 +220,74 @@ def render_products(known: dict[str, Product]) -> str:
     return "\n".join(lines)
 
 
+# The statuses worth telling the suggestions model about: a technology whose
+# support has ended or is ending is the only case where "move to a newer
+# version" is a fact rather than an opinion. A supported one needs no advice,
+# and an unchecked or unversioned one has nothing established to act on — a
+# suggestion built on either would be the guesswork rule 9 exists to prevent.
+_ADVISABLE = ("ended", "ending")
+
+
+def render_for_advice(technologies: list[dict]) -> str:
+    """The looked-up support facts, for the suggestions prompt. "" when there are none.
+
+    This is the one place today's dates reach the advice stage. The model that
+    suggests improvements has no internet access and training older than the
+    question, so it is forbidden to say a version is out of support (rule 9 in
+    llm._ADVICE_SYSTEM). That rule is right about what the *model* knows and
+    wrong about what this pipeline knows: by the time advice is asked for,
+    endoflife.date has already been read, every product id checked against its
+    own list and every version against the design's own words.
+
+    So the established facts are handed over as facts, with the release to move
+    to, and rule 9 is narrowed to allow a recommendation that rests on one of
+    these lines and nothing else. Only ended and ending lines are listed, and
+    only ones carrying a replacement version: "upgrade" is advice a reviewer can
+    act on precisely when there is somewhere to go.
+
+    Deliberately not a judgement. The report still states support status beside
+    the findings from `lifecycle` itself; this exists so that a suggestion about
+    the same component can name the version to move to instead of asking for the
+    support status to be confirmed, which is what it used to do.
+    """
+    lines: list[str] = []
+    for item in technologies:
+        if not isinstance(item, dict) or item.get("status") not in _ADVISABLE:
+            continue
+        label = str(item.get("label") or item.get("name") or "").strip()
+        version = str(item.get("version") or "").strip()
+        if not label or not version:
+            continue
+
+        # Where to go: the line to move to, else the newest line the product has.
+        move = str(item.get("upgradeTo") or item.get("current") or "").strip()
+        if not move:
+            continue
+        # The newest patch of that line, when the data names one — "15.14" is a
+        # more useful thing to write into a design than "15".
+        latest = str(item.get("latest") or "").strip()
+
+        ended = item.get("status") == "ended"
+        when = str(item.get("eol") or "").strip()
+        if ended:
+            state = f"support ended {when}" if when else "support has ended"
+        else:
+            state = f"support ends {when}" if when else "support is ending"
+
+        newest = f", newest release in that line {latest}" if latest else ""
+        lines.append(
+            f"- {label} {version}: {state}. Supported line to move to: {move}{newest}."
+        )
+
+    if not lines:
+        return ""
+    today = db.now().date().isoformat()
+    return (
+        f"Checked against {SOURCE} on {today}. These are established facts about this "
+        "design's technologies, not your recollection:\n" + "\n".join(lines)
+    )
+
+
 # ------------------------------------------------------------------ #
 # Matching a stated version, and what its dates mean today
 # ------------------------------------------------------------------ #
@@ -726,6 +794,49 @@ def _worked_out(run: dict, scope: list[designs.Design] | None) -> dict:
     merged = designs.merge(outcomes, items=_ITEMS)
     merged["technologies"] = _collapse(merged.get("technologies") or [])
     return merged
+
+
+def for_advice(
+    result: dict,
+    scope: list[designs.Design] | None = None,
+    *,
+    document_id: str | None = None,
+) -> dict[str | None, str]:
+    """A support block per document, for the suggestions stage.
+
+    `record`'s outcome holds every design's technologies in one list, each row
+    tagged with the document it came from (`designs.tag`). The suggestions stage
+    asks about one design at a time, so the rows are split back out by document
+    id and rendered separately — see advice._worked_out on why a design is never
+    shown another design's technologies.
+
+    A run over a single design has no tags on its rows, so that case is keyed by
+    `document_id` — the run's own, which is what advice._worked_out looks the
+    block up by. Anything other than a completed check gives an empty mapping,
+    and the suggestions stage then asks exactly the question it asked before
+    this existed.
+    """
+    if result.get("state") != "complete":
+        return {}
+    rows = result.get("technologies") or []
+
+    by_document: dict[str | None, list[dict]] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            by_document.setdefault(row.get("documentId"), []).append(row)
+
+    # One design: the rows carry no document id, so they are all this run's and
+    # are keyed by the id the suggestions stage will ask for.
+    if not scope:
+        block = render_for_advice(by_document.get(None) or [])
+        return {document_id: block} if block else {}
+
+    out: dict[str | None, str] = {}
+    for design in scope:
+        block = render_for_advice(by_document.get(design.document_id) or [])
+        if block:
+            out[design.document_id] = block
+    return out
 
 
 def record(run: dict, scope: list[designs.Design] | None = None) -> dict:

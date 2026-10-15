@@ -395,7 +395,9 @@ class LLM(Protocol):
         self, *, document: str, reference: str, clause: str, precedents: str = ""
     ) -> dict: ...
     def find_uncovered(self, *, design: str, standards: str, title: str) -> dict: ...
-    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict: ...
+    def suggest_improvements(
+        self, *, design: str, findings: str, title: str, lifecycle: str = ""
+    ) -> dict: ...
     def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict: ...
     def find_technologies(self, *, design: str, products: str, title: str) -> dict: ...
     def confirm_absent(self, *, document: str, clauses: str) -> dict: ...
@@ -1112,7 +1114,7 @@ Already reported against the standards. Do not suggest these again:
 {findings}
 </findings>
 
-Review the design the way a design review board would, for example:
+{lifecycle}Review the design the way a design review board would, for example:
 - single points of failure, high availability, backup and disaster recovery for the \
 components it names
 - failure handling between its components and with external systems: timeouts, \
@@ -1179,12 +1181,22 @@ of the design is, and remember rule 3: a suggestion that only restates a finding
 still not wanted — go further, and name the change.
 8. "category" is one of: security, resilience, data, integration, operations, \
 performance, cost, maintainability, documentation.
-9. You cannot check today's date, release notes or security advisories. Never state \
-that a product or version is out of support, end of life, deprecated or vulnerable, \
-and never suggest confirming a support status or planning an upgrade path — that is \
-checked elsewhere and is not a suggestion. Say nothing about versions or support \
-unless the design itself states a version constraint, and then address only what it \
-states.
+9. You cannot check today's date, release notes or security advisories, so your own \
+recollection of what is current is not evidence. Never state from memory that a \
+product or version is out of support, end of life, deprecated or vulnerable, and \
+never suggest confirming a support status or planning an unspecified upgrade path.
+9a. The one exception is the block headed "Technology support, looked up" above, if \
+it is present. Those lines were looked up today against a public lifecycle database \
+and checked against this design's own words, so they are facts you may act on. For a \
+technology listed there you may — and should — suggest moving to the supported \
+version the line names, as one concrete change: name the component, the version the \
+design states, and the exact version to move to, copied from that block. Treat it as \
+a "high" priority under rule 7a, since running past the end of support takes security \
+fixes away from a system that is in production. Say nothing about the support status \
+of any technology that block does not list, and never contradict it or invent a \
+version it does not give. Apart from that block, say nothing about versions or \
+support unless the design itself states a version constraint, and then address only \
+what it states.
 10. "why" is a single sentence, at most 200 characters, naming the concrete failure \
 mode or operational risk this avoids for this design — the outage, breach, data loss \
 or cost it prevents. Never a restatement of the recommendation.
@@ -1263,8 +1275,30 @@ _ADVICE_SCHEMA = {
 _ADVICE_MAX_TOKENS = 8192
 
 
-def _advice_system(*, design: str, findings: str, title: str) -> str:
-    return _ADVICE_SYSTEM.format(design=design, findings=findings, title=title.replace('"', "'"))
+def _advice_system(*, design: str, findings: str, title: str, lifecycle: str = "") -> str:
+    """The suggestions prompt, with today's support facts if there are any.
+
+    `lifecycle` is lifecycle.render_for_advice's block — established facts, not
+    the model's recollection; rule 9a is what may be done with them. Empty is
+    the ordinary case (every technology supported, or the check off or
+    unreachable), and then the section is left out altogether rather than
+    rendered with nothing under it: a heading followed by a blank is an
+    invitation to fill it from memory, which is exactly what rule 9 forbids.
+    """
+    # Carries its own trailing newline so the template reads the same either
+    # way: with no facts the section collapses entirely rather than leaving a
+    # gap of blank lines between the findings and the review checklist.
+    block = (
+        f"Technology support, looked up — see rules 9 and 9a:\n\n{lifecycle}\n\n"
+        if lifecycle.strip()
+        else ""
+    )
+    return _ADVICE_SYSTEM.format(
+        design=design,
+        findings=findings,
+        title=title.replace('"', "'"),
+        lifecycle=block,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1795,10 +1829,12 @@ class GeminiLLM:
             raise RuntimeError("gemini returned an empty verdict")
         return _parse_json(text)
 
-    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+    def suggest_improvements(
+        self, *, design: str, findings: str, title: str, lifecycle: str = ""
+    ) -> dict:
         text = self._generate(
             [{"text": _ADVICE_USER}],
-            system=_advice_system(design=design, findings=findings, title=title),
+            system=_advice_system(design=design, findings=findings, title=title, lifecycle=lifecycle),
             max_tokens=_ADVICE_MAX_TOKENS,
             schema=_ADVICE_SCHEMA,
         )
@@ -2078,13 +2114,15 @@ class AnthropicLLM:
         )
         return _parse_json("{" + self._text_of(data))
 
-    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+    def suggest_improvements(
+        self, *, design: str, findings: str, title: str, lifecycle: str = ""
+    ) -> dict:
         data = self._send(
             {
                 "model": self.model,
                 "max_tokens": _ADVICE_MAX_TOKENS,
                 "temperature": 0,
-                "system": _advice_system(design=design, findings=findings, title=title),
+                "system": _advice_system(design=design, findings=findings, title=title, lifecycle=lifecycle),
                 "messages": [
                     {"role": "user", "content": _ADVICE_USER},
                     {"role": "assistant", "content": "{"},
@@ -2480,12 +2518,14 @@ class OpenRouterLLM:
             raise RuntimeError("openrouter returned an empty verdict")
         return _parse_json(text)
 
-    def suggest_improvements(self, *, design: str, findings: str, title: str) -> dict:
+    def suggest_improvements(
+        self, *, design: str, findings: str, title: str, lifecycle: str = ""
+    ) -> dict:
         text = self._chat(
             [
                 {
                     "role": "system",
-                    "content": _advice_system(design=design, findings=findings, title=title),
+                    "content": _advice_system(design=design, findings=findings, title=title, lifecycle=lifecycle),
                 },
                 {"role": "user", "content": _ADVICE_USER},
             ],
@@ -2749,13 +2789,15 @@ def judge_document(*, document: str, reference: str, clause: str, precedents: st
     )
 
 
-def suggest_improvements(*, design: str, findings: str, title: str) -> dict:
+def suggest_improvements(*, design: str, findings: str, title: str, lifecycle: str = "") -> dict:
     """Improvements to a design, each anchored to one of its sections.
 
     Section numbers and quotes only; see `advice.py`, which checks every one
     against the design before any suggestion is kept.
     """
-    return client().suggest_improvements(design=design, findings=findings, title=title)
+    return client().suggest_improvements(
+        design=design, findings=findings, title=title, lifecycle=lifecycle
+    )
 
 
 def sharpen_clause(*, clause: str, finding: str, evidence: str) -> dict:

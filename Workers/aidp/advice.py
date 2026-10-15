@@ -425,13 +425,35 @@ _ITEMS = ("suggestions",)
 
 
 def _worked_out(
-    run: dict, scope: list[designs.Design] | None, *, fresh: bool
+    run: dict,
+    scope: list[designs.Design] | None,
+    *,
+    fresh: bool,
+    lifecycle: dict[str | None, str] | None = None,
 ) -> dict:
-    """One design's suggestions, or every design's merged. Raises as `work_out` does."""
+    """One design's suggestions, or every design's merged. Raises as `work_out` does.
+
+    `lifecycle` maps a document id to its support block, keyed as
+    lifecycle.record tags its rows. Each design is asked about with its own
+    facts: PostgreSQL 11 in one design of a project says nothing about the
+    version another design names, and handing every design the whole project's
+    list would invite a suggestion about a technology this design never
+    mentions — which rule 1 would then throw away.
+    """
+    facts = lifecycle or {}
     if not scope:
-        return work_out(run, fresh=fresh)
+        return work_out(run, fresh=fresh, lifecycle=facts.get(run.get("documentId"), ""))
     outcomes = [
-        designs.tag(work_out(run, fresh=fresh, design=design), design, keys=_ITEMS)
+        designs.tag(
+            work_out(
+                run,
+                fresh=fresh,
+                design=design,
+                lifecycle=facts.get(design.document_id, ""),
+            ),
+            design,
+            keys=_ITEMS,
+        )
         for design in scope
     ]
     return designs.merge(outcomes, items=_ITEMS)
@@ -459,7 +481,11 @@ def _outcome(state: str, note: str | None, **rest) -> dict:
 
 
 def work_out(
-    run: dict, *, fresh: bool = False, design: designs.Design | None = None
+    run: dict,
+    *,
+    fresh: bool = False,
+    design: designs.Design | None = None,
+    lifecycle: str = "",
 ) -> dict:
     """The improvements suggested for one design, ready to store.
 
@@ -467,6 +493,12 @@ def work_out(
     document is read, which is every run opened for a single design. The cache
     key is built from the design's own text, so a project's designs each keep
     their own stored reply and adding a design does not invalidate the others.
+
+    `lifecycle` is lifecycle.render_for_advice's block for this design: the
+    support facts looked up earlier in the run, which let a suggestion name the
+    version to move to instead of asking for a support status to be confirmed.
+    Empty — every technology supported, or the check off or unreachable — is the
+    ordinary case and asks exactly the question this stage asked before.
 
     Reuses the reply stored for the same design, standards, model and prompt
     unless `fresh` is set, in which case the model is asked again and its answer
@@ -501,9 +533,15 @@ def work_out(
         )
 
     findings = render_findings(failing)
+    # The support block counts against the same budget as the findings: it is
+    # short (one line per out-of-support technology) but it is prompt either
+    # way, and leaving it out of the sum is how a long design plus a long list
+    # overruns the window.
     budget = max(
         20_000,
-        cfg.whole_document_max_tokens * whole_document.CHARS_PER_TOKEN - len(findings),
+        cfg.whole_document_max_tokens * whole_document.CHARS_PER_TOKEN
+        - len(findings)
+        - len(lifecycle),
     )
     design, shortened = coverage.render_design(sections, budget)
 
@@ -521,6 +559,7 @@ def work_out(
                 model=model,
                 prompt=llm.advice_prompt_identity(),
                 version=VERSION,
+                lifecycle=lifecycle,
             )
 
     stored = (
@@ -539,7 +578,9 @@ def work_out(
             hits=stored.hits,
         )
     else:
-        raw = llm.suggest_improvements(design=design, findings=findings, title=whole.title)
+        raw = llm.suggest_improvements(
+            design=design, findings=findings, title=whole.title, lifecycle=lifecycle
+        )
         # To the millisecond, as the cache column keeps it, so a set reused later
         # reports exactly the time this one does.
         now = db.now()
@@ -583,9 +624,18 @@ def work_out(
 
 
 def record(
-    run: dict, scope: list[designs.Design] | None = None, *, fresh: bool = False
+    run: dict,
+    scope: list[designs.Design] | None = None,
+    *,
+    fresh: bool = False,
+    lifecycle: dict[str | None, str] | None = None,
 ) -> dict:
     """Suggest and store improvements for the run's designs. Never raises.
+
+    `lifecycle` carries the support facts looked up earlier in the run, by
+    document id — see `_worked_out`. Omitted, this stage behaves exactly as it
+    did before those facts were available, which is what the advice-only path
+    and every existing caller want.
 
     One design behaves exactly as it did before projects existed. Several are
     asked about one at a time and the suggestions merged, each carrying the
@@ -597,7 +647,7 @@ def record(
     """
     why: str | None = None
     try:
-        result = _worked_out(run, scope, fresh=fresh)
+        result = _worked_out(run, scope, fresh=fresh, lifecycle=lifecycle)
     except Exception as exc:  # noqa: BLE001 — a run's verdicts stand without this
         logs.warn(log, "improvements could not be suggested", runId=run["id"], error=str(exc)[:300])
         why = (

@@ -232,12 +232,22 @@ def advice_key(
     model: str,
     prompt: str,
     version: int,
+    lifecycle: str = "",
 ) -> str:
     """The identity of one set of suggested improvements.
 
     Everything the model is shown except the findings: the design's text, its
-    title, the clause set it was assessed against, which model, and the exact
-    instructions. A change to any of them is a different question and misses.
+    title, the clause set it was assessed against, which model, the exact
+    instructions, and the support facts it was given. A change to any of them is
+    a different question and misses.
+
+    `lifecycle` is in the key because it is the one input that changes without
+    the design changing. An unchanged design whose PostgreSQL line reached its
+    end-of-life date last night is a different question today than it was
+    yesterday, and a key without it would keep answering with advice written
+    while that version was still supported — for up to ADVICE_CACHE_DAYS. It is
+    the rendered block rather than the date, so a run on a later day with the
+    same facts still hits.
 
     The findings are left out on purpose, and it is the one place this module
     departs from "everything that can change the output". Verdicts drift between
@@ -246,7 +256,9 @@ def advice_key(
     suggestion says it would help with — is re-checked against the current run
     every time the reply is reused; see advice.py.
     """
-    return fingerprint(ADVICE, str(version), provider, model, prompt, title, standards, design)
+    return fingerprint(
+        ADVICE, str(version), provider, model, prompt, title, standards, lifecycle, design
+    )
 
 
 def lifecycle_key(
