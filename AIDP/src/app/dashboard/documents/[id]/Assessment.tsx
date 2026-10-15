@@ -167,7 +167,22 @@ export function rationaleParts(rationale: string): string[] | null {
   // A decimal or an abbreviation would split a sentence in the wrong place, so
   // require a space and a capital after the stop.
   const sentences = trimmed
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"“'])/)
+    // A stop ends a sentence only when a space and a capital follow, which
+    // keeps "TLS 1.2", "1.0" and "section 4.2" intact.
+    //
+    // The lookbehind then excludes the abbreviations that *do* take a capital
+    // after them — "e.g. Kafka", "i.e. Apigee", "Acme Inc. Payments" — because
+    // the budget is now 600 characters rather than 280, and a sentence with
+    // room for an aside will contain one. Each is listed with its trailing dot,
+    // since the split point sits after that dot and that is what the lookbehind
+    // sees. A rationale that splits wrongly loses its labels and renders as a
+    // paragraph, so this is worth being exact about.
+    //
+    // "etc." is deliberately absent: it ends a sentence at least as often as it
+    // sits inside one, and guarding it broke the commoner case.
+    .split(
+      /(?<!\be\.g\.|\bi\.e\.|\bvs\.|\bcf\.|\bapprox\.|\bno\.|\bfig\.|\bincl\.|\bInc\.|\bLtd\.|\bDept\.)(?<=[.!?])\s+(?=[A-Z0-9"“'])/,
+    )
     .map((part) => part.trim())
     .filter(Boolean);
   return sentences.length === RATIONALE_PARTS.length ? sentences : null;

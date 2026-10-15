@@ -79,7 +79,11 @@ print("\nLength caps cut at a sentence, not mid-clause")
 
 ok("recommendation cap", advice.MAX_RECOMMENDATION == 320)
 ok("why cap", advice.MAX_WHY == 220)
-ok("rationale cap", analyse.MAX_RATIONALE == 280)
+# 600, not 280. Three sentences of real English do not fit in 280 characters,
+# and the model compressed its grammar to survive the old budget — "retain GCP
+# only with a documented trigger" was the result. The row shows the first
+# sentence alone now, so the cap no longer has to fit a table cell.
+ok("rationale cap", analyse.MAX_RATIONALE == 600)
 
 cut = coverage._sentences("The gateway terminates TLS for every inbound call. " * 12, 320)
 ok("within the cap", len(cut) <= 320, len(cut))
@@ -93,7 +97,7 @@ ok(
 _, _, rationale, _, _ = analyse._normalise(
     {"verdict": "partial", "confidence": 0.8, "rationale": "The design states a thing. " * 40}
 )
-ok("a long rationale is cut to the cap", len(rationale) <= 280, len(rationale))
+ok("a long rationale is cut to the cap", len(rationale) <= 600, len(rationale))
 ok("and ends on a full stop", rationale.endswith("."), rationale[-40:])
 
 

@@ -117,10 +117,26 @@ export const OBLIGATION_META: Record<Obligation, { label: string; blurb: string 
   must: { label: "Mandatory", blurb: "The standard requires this." },
   should: { label: "Recommended", blurb: "The standard recommends this." },
   may: { label: "Optional", blurb: "The standard permits this." },
+  /**
+   * No label, on purpose.
+   *
+   * This read "Obligation unstated", which is jargon for a fact the reader
+   * cannot act on, and it appeared on every finding from a standard written in
+   * declarative prose — which is most of them, since enterprise standards say
+   * "All external APIs are exposed through Apigee" rather than "APIs MUST be
+   * exposed through Apigee". A badge on every card saying a word nobody uses
+   * is noise, and a reader learns to skip the line it sits on.
+   *
+   * The fact underneath is still worth having, so the sentence stays and the
+   * label goes: anywhere the UI shows a label it now shows nothing for this
+   * case, and the explanation carries itself. `label: ""` rather than a
+   * removed key so every consumer keeps working and none of them has to know
+   * which obligations have labels.
+   */
   unstated: {
-    label: "Obligation unstated",
+    label: "",
     blurb:
-      "The standard does not say whether this is mandatory. Severity needs a person's judgement.",
+      "This standard states the rule without saying whether it is mandatory, so how serious a breach would be is a judgement for a reviewer.",
   },
 };
 

@@ -272,7 +272,9 @@ Rules that matter:
    never open with "The extracts show", "Based on the extracts", "It appears
    that" or "This clause".
 8. For "contradicts", "partial" and "absent" the rationale takes three parts in
-   this order, at most three sentences and 280 characters in all:
+   this order, as three complete sentences in plain English, up to 600 characters
+   in all — about 200 a sentence, which is room to name the component, the page
+   and the mechanism without abbreviating:
    GAP — what the design does or fails to do, in its own terms.
    IMPACT — the consequence if it ships as it stands: the outage, breach, data
    loss, audit failure or cost. One clause of plain consequence, never a
@@ -280,8 +282,20 @@ Rules that matter:
    reader cannot already see from the verdict.
    FIX — the mechanism, setting or control that would satisfy the clause, named
    concretely, never "address the requirement".
-   "Audit logs have no stated retention. A breach investigation would have no
-   record to reconstruct. Set a 7-year retention policy on the audit log store."
+   Write each one as a senior architect writes in a review document, in full
+   sentences with ordinary grammar. Never compress: no dropped articles, no
+   telegraphic fragments, no noun stacks standing in for a clause. "Retain GCP
+   only with a documented trigger" is exactly what not to write — it survives a
+   character count and tells the reader nothing. Say instead: "Keep the workload
+   on GCP only if the Architecture Review Board records an exception naming the
+   capability GCP provides that the approved platforms do not."
+   A worked example of the three together: "The Property Management System is
+   deployed on Google Cloud Platform (section 4.2, page 18), which the
+   Infrastructure Standard permits only for a workload with an approved
+   exception. An unapproved provider splits identity governance across two
+   clouds and leaves its network interconnect outside the monitored estate.
+   Move the compute and database tiers into the AWS landing zone, or record an
+   Architecture Review Board exception before the build starts."
 8a. Write as a principal enterprise architect states a finding on the record:
    authoritative, technical, and short. Banned outright — hedging ("it seems",
    "arguably", "one could argue", "may want to", "it would be good to"), filler
@@ -315,8 +329,8 @@ a report. Use it to do the three things that decide whether the verdict is right
 
 Then reply with JSON only, no prose around it:
 {{"internal_architect_reasoning": "your working, as above",
-"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
-the concrete fix when not covered, 280 max",
+"verdict": "...", "confidence": 0.0, "rationale": "a full sentence when covered; \
+when not, three complete sentences - gap, impact, fix - up to 600 chars",
   "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
 read from its own words; "unstated" if it never says, and do not supply one it does \
 not state",
@@ -989,7 +1003,9 @@ marked "on a related clause" can inform a verdict but cannot settle one on its o
 requirement left unmet. Start with the substance. No throat-clearing: never open with \
 "The document states", "Based on the extracts", "It appears that" or "This clause".
 11. For "contradicts", "partial" and "absent" the rationale takes three parts in this \
-order, at most three sentences and 280 characters in all: \
+order, as three complete sentences in plain English, up to 600 characters in all — \
+about 200 a sentence, which is room to name the component, the page and the \
+mechanism without abbreviating: \
 GAP — what the design does or fails to do, in its own terms. \
 IMPACT — the consequence if it ships as it stands: the outage, breach, data loss, \
 audit failure or cost. One clause of plain consequence, never a restatement of the \
@@ -997,8 +1013,19 @@ gap and never "it is non-compliant", which tells a reader nothing the verdict ha
 already said. \
 FIX — the mechanism, setting or control that would satisfy the clause, named \
 concretely, never "address the requirement". \
-"Audit logs have no stated retention. A breach investigation would have no record to \
-reconstruct. Set a 7-year retention policy on the audit log store."
+Write each one as a senior architect writes in a review document, in full sentences \
+with ordinary grammar. Never compress: no dropped articles, no telegraphic \
+fragments, no noun stacks standing in for a clause. "Retain GCP only with a \
+documented trigger" is exactly what not to write — it survives a character count \
+and tells the reader nothing. Say instead: "Keep the workload on GCP only if the \
+Architecture Review Board records an exception naming the capability GCP provides \
+that the approved platforms do not." A worked example of the three together: \
+"The Property Management System is deployed on Google Cloud Platform (section 4.2, \
+page 18), which the Infrastructure Standard permits only for a workload with an \
+approved exception. An unapproved provider splits identity governance across two \
+clouds and leaves its network interconnect outside the monitored estate. Move the \
+compute and database tiers into the AWS landing zone, or record an Architecture \
+Review Board exception before the build starts."
 11a. Write as a principal enterprise architect states a finding on the record: \
 authoritative, technical, and short. Banned outright — hedging ("it seems", \
 "arguably", "one could argue", "may want to", "it would be good to"), filler ("in \
@@ -1028,8 +1055,8 @@ and answer "not_assessable".
 
 Then reply with JSON only, no prose around it:
 {{"internal_architect_reasoning": "your working, as above", \
-"verdict": "...", "confidence": 0.0, "rationale": "one sentence under 220 chars; add \
-the concrete fix when not covered, 280 max",
+"verdict": "...", "confidence": 0.0, "rationale": "a full sentence when covered; \
+when not, three complete sentences - gap, impact, fix - up to 600 chars",
   "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
 read from its own words; "unstated" if it never says, and do not supply one it does \
 not state",
@@ -1266,8 +1293,10 @@ words; (b) the exact parameter, mechanism or protocol to add or change; and (c) 
 runtime state that results — what is then true when the system runs. Extend the \
 stack the design already has rather than replacing it: propose a product it does not \
 already name only when nothing it names could do the job, and say why.
-2. "recommendation" is one concrete engineering change to that component, at most \
-two crisp sentences and 280 characters. Name the mechanism, parameter, protocol or \
+2. "recommendation" is one concrete engineering change to that component, in one or \
+two complete sentences of up to 400 characters. Write ordinary English, never a \
+telegraphic fragment: an instruction a reader has to decode is not a \
+recommendation. Name the mechanism, parameter, protocol or \
 failure mode, and the target state: not "add retries" but "bound the Orders API \
 retry to 3 attempts with exponential backoff and a 30s dead-letter queue". Advice \
 that would fit any design is not a suggestion, and these words are banned outright: \

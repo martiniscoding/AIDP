@@ -206,11 +206,27 @@ UNCONFIRMED_ABSENT = "Absent confirmation unavailable; verify manually."
 # given up on, and it carries a checked quote rather than certainty.
 CONFIRM_CONFIDENCE = 0.7
 
-# The longest rationale kept. A finding's reason is shown in the collapsed row,
-# before anything is expanded, and a guard demotion prepends its own sentence to
-# it — so a model that writes four sentences pushed the clause title off the row
-# and buried the reason the verdict changed.
-MAX_RATIONALE = 280
+# The longest rationale kept.
+#
+# This was 280, and 280 was the cause of the worst output this engine produced.
+# The judge is asked for three things — the gap, what it costs, and the fix —
+# and three sentences of real English do not fit in 280 characters. So the model
+# did what the budget forced and compressed its grammar instead of its content,
+# which is where "retain GCP only with a documented trigger" came from: a
+# telegraphic fragment that survives a character count and tells a reader
+# nothing. A reviewer reading that cannot act on it, and a CTO reading it in a
+# report does not believe the tool wrote it on purpose.
+#
+# 600 is three unhurried sentences — roughly 200 characters each, which is a
+# normal written sentence naming a component, a page and a mechanism. The
+# original reason for the cap was that the whole rationale sat in the collapsed
+# row, where a fourth sentence pushed the clause title off the line; that is no
+# longer true. The row shows the first sentence alone (see `rationaleParts` in
+# the report), and the rest is read in the dialog, which has room for it.
+#
+# Still capped, because an unbounded rationale is a model writing an essay into
+# a column, and because the guards below prepend their own sentence to it.
+MAX_RATIONALE = 600
 
 # A guard's own sentence, which is prepended to the model's. Kept short for the
 # same reason: the two together have to stay readable in one row.

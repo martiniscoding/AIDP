@@ -254,8 +254,15 @@ export function FindingModal({
             the standard never said, the honest answer is on the screen rather
             than a level the engine made up. */}
         <p className="mb-3 text-[12px] text-ink/58">
-          <span className="text-ink/72">{OBLIGATION_META[finding.obligation].label}</span>
-          {" · "}
+          {/* The label is empty for an unstated obligation — see OBLIGATION_META
+              — so the separator goes with it rather than leaving a leading
+              "· " on the line. */}
+          {OBLIGATION_META[finding.obligation].label && (
+            <>
+              <span className="text-ink/72">{OBLIGATION_META[finding.obligation].label}</span>
+              {" · "}
+            </>
+          )}
           {OBLIGATION_META[finding.obligation].blurb}
           {finding.obligation !== "unstated" && finding.obligationSource !== "parsed" && (
             <>
