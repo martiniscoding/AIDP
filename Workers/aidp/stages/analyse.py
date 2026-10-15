@@ -492,12 +492,68 @@ def handle(job: Job, heartbeat) -> None:
         if whole is not None
         else "Assessing clauses by search"
     )
+    refused = 0
     for index, clause in enumerate(pending, start=1):
         progress.step(step_label, done=len(done) + index - 1, total=len(clauses))
-        if whole is not None:
-            _assess_document_one(run, clause, whole, scope, document_context)
-        else:
-            _assess_one(run, clause, scope, document_context)
+        try:
+            if whole is not None:
+                _assess_document_one(run, clause, whole, scope, document_context)
+            else:
+                _assess_one(run, clause, scope, document_context)
+        except llm.QuotaExhausted:
+            # Not this clause's problem and not survivable: every clause after
+            # it would fail the same way, and the run is worth retrying once
+            # the customer's credit is back. Let the job layer back off.
+            raise
+        except Exception as exc:  # noqa: BLE001 — one clause must not cost the other ninety-nine
+            # A clause that cannot be judged is recorded as needing a person,
+            # and the run goes on.
+            #
+            # Before this, anything raised here — a model returning JSON that
+            # does not parse, a provider 500, one unreadable figure — aborted
+            # the whole run. The clauses already committed stayed (each is its
+            # own transaction), the rest were never attempted, and the report
+            # opened showing however few had landed before the failure, with a
+            # dead-lettered job as the only trace. A hundred-clause framework
+            # reporting one clause is that bug, and it looks like a limit
+            # somebody left in rather than the single failure it is.
+            #
+            # `needs_review` rather than a silent skip: the clause was in scope
+            # and was not judged, and the one thing the report must not do is
+            # imply it passed. The rationale says what happened so a reviewer
+            # knows this is a system failure and not a reading of their design.
+            refused += 1
+            logs.warn(
+                log,
+                "clause could not be judged, continuing",
+                runId=run_id,
+                clauseId=clause["id"],
+                clauseRef=clause.get("numberText") or clause["id"],
+                error=f"{type(exc).__name__}: {exc}"[:300],
+            )
+            try:
+                _write(
+                    run_id,
+                    clause,
+                    verdict="needs_review",
+                    confidence=0.0,
+                    rationale=(
+                        "This clause could not be assessed: the model did not return a usable "
+                        "answer for it. Nothing is implied about the design. Run the assessment "
+                        "again to retry this clause."
+                    ),
+                    evidence=[],
+                    retrieval_score=0.0,
+                    applied=[],
+                )
+            except Exception as write_exc:  # noqa: BLE001 — the database is the one thing worth stopping for
+                logs.warn(
+                    log,
+                    "clause failure could not be recorded",
+                    runId=run_id,
+                    clauseId=clause["id"],
+                    error=str(write_exc)[:200],
+                )
         heartbeat()
         # Every clause, not every fifth. A clause takes around fifteen seconds,
         # so batching the write held the progress bar still for over a minute at
@@ -515,6 +571,18 @@ def handle(job: Job, heartbeat) -> None:
             with db.transaction() as conn:
                 queue.complete(conn, job, chain=False)
             return
+
+    # Said once, at the end, rather than only per clause: a run where the model
+    # failed on a third of the framework is still a complete run, and whoever
+    # reads the log should see that in one line instead of counting warnings.
+    if refused:
+        logs.warn(
+            log,
+            "clauses that could not be judged",
+            runId=run_id,
+            refused=refused,
+            clauses=len(clauses),
+        )
 
     # Search shows the judge eight passages, so "absent" is the one verdict it
     # cannot really reach: a claim about everywhere it did not look. Every clause
