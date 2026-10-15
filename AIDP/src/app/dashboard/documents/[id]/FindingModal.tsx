@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Scale, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Scale, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   OBLIGATION_META,
@@ -56,12 +56,18 @@ export function FindingModal({
   finding,
   project,
   mayCurate,
+  position,
+  onNavigate,
   onClose,
 }: {
   finding: FindingView;
   project: ProjectRef | null;
   /** Whether this person may change the standards. See canManageStandards. */
   mayCurate: boolean;
+  /** Where this finding sits in the list on screen, for "3 of 41". */
+  position: { index: number; total: number };
+  /** Step by -1 or +1 through the list behind the dialog. */
+  onNavigate: (delta: number) => void;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -82,11 +88,42 @@ export function FindingModal({
   const [scope, setScope] = useState<DecisionScope>("organisation");
 
   const panel = useRef<HTMLDivElement | null>(null);
+  const scroller = useRef<HTMLDivElement | null>(null);
+
+  const hasPrev = position.index > 0;
+  const hasNext = position.index < position.total - 1;
 
   // Escape closes, and the page behind does not scroll while this is up.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+
+      /**
+       * Arrow keys and j/k step through the list, except while typing.
+       *
+       * The justification box is a textarea inside this dialog, and a reviewer
+       * writing "k" in a sentence must not be thrown onto the next finding. So
+       * anything with a text caret keeps its keystrokes, and a modifier means
+       * the shortcut was not meant for us either.
+       */
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable ||
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT";
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+
+      if (event.key === "ArrowLeft" || event.key === "k") {
+        event.preventDefault();
+        onNavigate(-1);
+      } else if (event.key === "ArrowRight" || event.key === "j") {
+        event.preventDefault();
+        onNavigate(1);
+      }
     };
     document.addEventListener("keydown", onKey);
     const previous = document.body.style.overflow;
@@ -96,7 +133,17 @@ export function FindingModal({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onClose]);
+  }, [onClose, onNavigate]);
+
+  /**
+   * Scroll back to the top when the dialog moves to another finding.
+   *
+   * Without this, stepping from a long finding to a short one opens the next
+   * one already scrolled past its own gap — the one line the reader most needs.
+   */
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: 0 });
+  }, [finding.id]);
 
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
   const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
@@ -206,18 +253,50 @@ export function FindingModal({
               {finding.clauseTitle}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="-mr-1 shrink-0 rounded-lg p-1.5 text-ink/58 transition-colors hover:bg-canvas-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
-          >
-            <X size={16} />
-          </button>
+          {/* Where the reader is, and the two controls that move them.
+              A standard now yields tens of clauses, so stepping through them
+              without closing the dialog is the difference between reviewing a
+              report and clicking through one. */}
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="hidden whitespace-nowrap px-1 text-[11.5px] tabular-nums text-ink/58 sm:inline">
+              {position.index + 1} of {position.total}
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate(-1)}
+              disabled={!hasPrev}
+              aria-label="Previous finding"
+              title="Previous finding (← or k)"
+              className="rounded-lg p-1.5 text-ink/58 transition-colors hover:bg-canvas-sunk hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate(1)}
+              disabled={!hasNext}
+              aria-label="Next finding"
+              title="Next finding (→ or j)"
+              className="rounded-lg p-1.5 text-ink/58 transition-colors hover:bg-canvas-sunk hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+            >
+              <ChevronRight size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="ml-0.5 rounded-lg p-1.5 text-ink/58 transition-colors hover:bg-canvas-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* The detail scrolls inside the dialog rather than moving the page. */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5">
+        <div
+          ref={scroller}
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5"
+        >
         {/* Gap, impact and fix on their own lines, where the engine wrote
             three sentences. Labelled rather than run together: the reader is
             asking "how bad, and what do I do?", and a three-clause paragraph
@@ -653,6 +732,25 @@ export function FindingModal({
             </>
           )}
         </div>
+        </div>
+
+        {/* Named, because a shortcut nobody is told about is not a feature.
+            Hidden on a phone, where there is no keyboard to use it with. */}
+        <div className="hidden items-center justify-between gap-3 border-t border-line bg-card px-5 py-2 text-[11.5px] text-ink/55 sm:flex">
+          <span>
+            <kbd className="rounded border border-line px-1 font-mono">←</kbd>
+            {" / "}
+            <kbd className="rounded border border-line px-1 font-mono">→</kbd>
+            {" or "}
+            <kbd className="rounded border border-line px-1 font-mono">k</kbd>
+            {" / "}
+            <kbd className="rounded border border-line px-1 font-mono">j</kbd>
+            {" to step between findings"}
+          </span>
+          <span>
+            <kbd className="rounded border border-line px-1 font-mono">Esc</kbd>
+            {" to close"}
+          </span>
         </div>
       </div>
     </div>

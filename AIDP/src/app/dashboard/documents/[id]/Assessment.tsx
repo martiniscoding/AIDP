@@ -526,6 +526,16 @@ export function Assessment({
   const [tab, setTab] = useState<Tab>("compliance");
 
   /**
+   * Which finding is open in the dialog, by id.
+   *
+   * Held here rather than inside each row, because the dialog can now step to
+   * the next finding and a row only knows about itself. An id rather than an
+   * index: the list re-sorts when a decision lands (a verdict can change), and
+   * an index would then point at a different finding than the one on screen.
+   */
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  /**
    * Queued and running are different things, and collapsing them hid a real
    * failure: with no analyse worker up, a run sat queued for two days while
    * this panel said "Assessing clause by clause…" and showed a progress bar
@@ -554,6 +564,15 @@ export function Assessment({
    */
   const judged = VERDICTS.reduce((total, verdict) => total + counts[verdict], 0);
   const hidden = judged - shown.length;
+  /**
+   * Where the open finding sits in the list on screen, or -1 for none.
+   *
+   * Resolved from the id on every render, so a finding that moves when the
+   * list re-sorts after a decision keeps the dialog on the same finding, and
+   * one that leaves the current filter altogether closes it rather than
+   * stranding the reader on a row they can no longer see.
+   */
+  const openIndex = openId === null ? -1 : shown.findIndex((f) => f.id === openId);
   // Only worth mentioning the fold when it is actually hiding something.
   const folded = lens === "attention" ? counts.covered : 0;
   /**
@@ -838,14 +857,31 @@ export function Assessment({
                 <FindingRow
                   key={finding.id}
                   finding={finding}
-                  project={project}
-                  mayCurate={mayCurate}
+                  onOpen={() => setOpenId(finding.id)}
                 />
               ))}
             </ul>
           )}
           </>
         </>
+      )}
+
+      {/* One dialog for the whole list, so it can step between findings.
+          `shown` is the filtered, sorted array the reader is actually looking
+          at, so Previous and Next follow the order on screen rather than some
+          underlying order they cannot see. */}
+      {openIndex >= 0 && (
+        <FindingModal
+          finding={shown[openIndex]!}
+          project={project}
+          mayCurate={mayCurate}
+          position={{ index: openIndex, total: shown.length }}
+          onNavigate={(delta) => {
+            const next = shown[openIndex + delta];
+            if (next) setOpenId(next.id);
+          }}
+          onClose={() => setOpenId(null)}
+        />
       )}
 
       {run && tab === "compliance" && findings.length === 0 && !inFlight && run.coverage === null && (
@@ -1158,16 +1194,12 @@ export function StandardProposal({
  */
 function FindingRow({
   finding,
-  project,
-  mayCurate,
+  onOpen,
 }: {
   finding: FindingView;
-  project: ProjectRef | null;
-  /** Whether this person may change the standards. See canManageStandards. */
-  mayCurate: boolean;
+  /** Opens the shared dialog on this finding. See `openId` in Assessment. */
+  onOpen: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
   const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
   const decided = finding.reviewerState !== "pending";
@@ -1204,7 +1236,7 @@ function FindingRow({
     <li>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={onOpen}
         aria-haspopup="dialog"
         className={cn(
           "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors",
@@ -1301,14 +1333,6 @@ function FindingRow({
         </span>
       </button>
 
-      {open && (
-        <FindingModal
-          finding={finding}
-          project={project}
-          mayCurate={mayCurate}
-          onClose={() => setOpen(false)}
-        />
-      )}
     </li>
   );
 }
