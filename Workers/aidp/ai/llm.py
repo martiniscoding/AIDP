@@ -185,6 +185,23 @@ Rules that matter:
    mechanism and leave part of it unmet, that is "partial", and the rationale must
    name what is missing. Anything you call absent is read again against the whole
    document before it reaches a report.
+3aa. Before you answer "absent", check the clause's terms against the design's own
+   vocabulary. A design satisfies a clause with the component the clause asks for
+   even when it calls that component something else, and the standard's wording is
+   not the only correct name for it. Ask yourself what this design would call the
+   thing, and look for that: "API Management" or "API gateway tier" for an API
+   gateway; "identity provider", "SSO" or "Entra ID" for authentication; "WAF" or
+   "edge protection" for a web application firewall; "replica", "standby" or
+   "secondary region" for failover; "vault", "Key Vault" or "secrets manager" for
+   key management; "observability", "telemetry" or a named tool for monitoring;
+   "message broker", "queue" or a named product such as Kafka for asynchronous
+   messaging. A vendor's product name, an acronym, an internal system name or a
+   named platform service all count as engaging the mechanism. Say "absent" only
+   when nothing in the extracts performs the clause's function under ANY name — not
+   merely when the clause's own phrase does not appear. If you find the function
+   under another name, quote that passage and judge it on what it does; if your
+   rationale would say the design "does not mention X", first satisfy yourself the
+   design does not provide X by another name.
 3a. A breach is never "partial". If the extracts show the design doing something the
    clause forbids, or refusing something it requires, the verdict is "contradicts" —
    whatever else in the clause is met, and however the design excuses it. If your
@@ -842,6 +859,24 @@ archival or disposal schedule, and one that names a database has not thereby \
 addressed ownership. Naming a neighbouring topic, or listing the clause as an open \
 item still to be decided, is "absent". Reserve "partial" for a design that does \
 engage the mechanism and leaves part of it unmet.
+5aa. Before you answer "absent", search the document for the clause's mechanism under \
+the design's OWN vocabulary, not the standard's. A design satisfies a clause with the \
+component the clause asks for even when it calls that component something else, and \
+the standard's phrase is not the only correct name for it. The whole document is above \
+you, so this is a search you can actually perform: ask what this design would call the \
+thing, then look for that. "API Management", "API tier" or a named platform service \
+for an API gateway; "identity provider", "SSO" or "Entra ID" for authentication; \
+"WAF" or "edge protection" for a web application firewall; "replica", "standby" or \
+"secondary region" for failover; "vault", "Key Vault" or "secrets manager" for key \
+management; "observability", "telemetry" or a named tool for monitoring; "message \
+broker", "queue", or a named product such as Kafka for asynchronous messaging. A \
+vendor product name, an acronym, an internal system name or a managed cloud service \
+all count as engaging the mechanism. Answer "absent" only when nothing in the document \
+performs the clause's function under ANY name — never merely because the clause's own \
+term does not appear. Where you find the function under another name, quote that \
+passage and judge the clause on what the design does, saying in the rationale which \
+term the design uses. If your rationale would say the design "does not mention" or \
+"lacks" something, satisfy yourself first that it does not provide it by another name.
 5a. A document that does not say is not a document that breaches, and this rule \
 outranks being decisive. Where the clause turns on a record a design would not \
 normally carry - an approval, a waiver, a signed exception, a governance decision, \
@@ -1573,6 +1608,19 @@ requires: "covered" when it meets every requirement, "partial" when it engages b
 leaves one unmet. Keep "absent" only where the document is genuinely silent on what \
 the clause requires. A passage about a neighbouring subject is not engagement: \
 authentication does not answer an encryption clause.
+3a. The commonest reason a search misses is that the design names the thing \
+differently, so this is the specific check to make before confirming "absent": what \
+would THIS document call the mechanism the clause asks for? Look for that, not for \
+the clause's own phrase. "API Management" or a named platform service for an API \
+gateway; "identity provider", "SSO" or "Entra ID" for authentication; "WAF" for a web \
+application firewall; "replica", "standby" or "secondary region" for failover; \
+"vault" or "secrets manager" for key management; "observability" or a named tool for \
+monitoring; "message broker", "queue" or a named product such as Kafka for \
+asynchronous messaging. A vendor product name, an acronym, an internal system name or \
+a managed cloud service all count. The clause's own words never having to appear is \
+the point of reading the whole document: confirm "absent" only when nothing here \
+performs the clause's function under ANY name, and when you do change the verdict, \
+say in the rationale which term the design uses instead.
 
 Reply with JSON only:
 {{"clauses": [{{"clause": 1, "verdict": "absent", "quote": "", "page": null,
