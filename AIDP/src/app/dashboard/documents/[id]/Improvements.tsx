@@ -1,4 +1,7 @@
-import { ChevronDown, Lightbulb } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Check, ChevronRight, Lightbulb, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   ADVICE_PRIORITIES,
@@ -8,6 +11,8 @@ import {
   type Suggestion,
 } from "@/lib/ingest/advice";
 import { RefreshSuggestions } from "./RefreshSuggestions";
+import { ImprovementDialog } from "./ItemDialogs";
+import { itemKey, useReviewMarks } from "@/lib/ingest/review-marks";
 
 /**
  * The report's "Suggested improvements": what an experienced reviewer would still
@@ -29,28 +34,20 @@ const PRIORITY_META: Record<AdvicePriority, { label: string; tone: string }> = {
   low: { label: "Low", tone: "border-line bg-card text-ink/62" },
 };
 
-function where(suggestion: Suggestion): string {
-  // A document with no title stores paths that start " › ", so trim each part.
-  const path = suggestion.headingPath
-    .split("›")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  // The first part is the document's own title, which the reader is already looking
-  // at: a section directly under it is named alone, a deeper one by its last two.
-  const name =
-    path.length === 0
-      ? suggestion.sectionTitle
-      : path.length <= 2
-        ? path[path.length - 1]
-        : path.slice(-2).join(" › ");
-  const { pageStart, pageEnd } = suggestion;
-  const pages =
-    pageStart === null
-      ? ""
-      : pageEnd !== null && pageEnd !== pageStart
-        ? `pages ${pageStart}–${pageEnd}`
-        : `page ${pageStart}`;
-  return [name, pages].filter(Boolean).join(", ");
+/**
+ * A stable name for one suggestion.
+ *
+ * Built from what it is about rather than where it sits, so a mark follows the
+ * suggestion across a page load and does not transfer to whatever takes its
+ * index after a refresh.
+ */
+function keyOf(suggestion: Suggestion): string {
+  return itemKey([
+    suggestion.section,
+    suggestion.component,
+    suggestion.title,
+    suggestion.recommendation.slice(0, 80),
+  ]);
 }
 
 function Notice({ children, warn = false }: { children: React.ReactNode; warn?: boolean }) {
@@ -78,6 +75,16 @@ function day(iso: string): string {
 
 export function Improvements({ advice, runId }: { advice: AdviceView | null; runId: string }) {
   const complete = advice?.state === "complete" ? advice : null;
+  /**
+   * Which suggestion is open, by its content key.
+   *
+   * An id rather than an index, for the reason the compliance list uses one:
+   * the array is rewritten by a refresh, and an index would then point at a
+   * different suggestion than the one on screen. A key built from the content
+   * either finds the same suggestion or finds nothing and closes.
+   */
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const { marks, mark } = useReviewMarks(runId, "advice");
   const refreshing = advice?.refreshing === true;
   const tally = complete
     ? ADVICE_PRIORITIES.map((priority) => ({
@@ -88,6 +95,10 @@ export function Improvements({ advice, runId }: { advice: AdviceView | null; run
   // "skipped" means switched off, no key, or no stored pages — asking again
   // cannot change any of those, so there is nothing to offer.
   const askable = advice?.state !== "skipped";
+  const openIndex =
+    openKey === null || !complete
+      ? -1
+      : complete.suggestions.findIndex((s) => keyOf(s) === openKey);
 
   return (
     <section aria-labelledby="improvements-heading" className="mt-10">
@@ -174,14 +185,44 @@ export function Improvements({ advice, runId }: { advice: AdviceView | null; run
           {complete.suggestions.length === 0 ? (
             <Notice>No specific improvements were suggested for this design.</Notice>
           ) : (
-            <ol className="space-y-2">
-              {complete.suggestions.map((suggestion, index) => (
-                <SuggestionRow
-                  key={`${suggestion.section}-${suggestion.title}-${index}`}
-                  suggestion={suggestion}
+            <>
+              <ol className="space-y-2">
+                {complete.suggestions.map((suggestion) => {
+                  const key = keyOf(suggestion);
+                  return (
+                    <SuggestionRow
+                      key={key}
+                      suggestion={suggestion}
+                      mark={marks[key]}
+                      onOpen={() => setOpenKey(key)}
+                    />
+                  );
+                })}
+              </ol>
+
+              {/* One dialog for the list, so it can step between suggestions —
+                  the same arrangement the compliance tab uses. */}
+              {openIndex >= 0 && (
+                <ImprovementDialog
+                  suggestion={complete.suggestions[openIndex]!}
+                  mark={marks[keyOf(complete.suggestions[openIndex]!)]}
+                  onMark={(value) => {
+                    mark(keyOf(complete.suggestions[openIndex]!), value);
+                    // Decide and move: the point of the pattern is that a
+                    // reviewer with thirty suggestions never goes back to the
+                    // list to find their place. The last one closes.
+                    const next = complete.suggestions[openIndex + 1];
+                    setOpenKey(next ? keyOf(next) : null);
+                  }}
+                  position={{ index: openIndex, total: complete.suggestions.length }}
+                  onNavigate={(delta) => {
+                    const next = complete.suggestions[openIndex + delta];
+                    if (next) setOpenKey(keyOf(next));
+                  }}
+                  onClose={() => setOpenKey(null)}
                 />
-              ))}
-            </ol>
+              )}
+            </>
           )}
         </div>
       )}
@@ -189,70 +230,95 @@ export function Improvements({ advice, runId }: { advice: AdviceView | null; run
   );
 }
 
-function SuggestionRow({ suggestion }: { suggestion: Suggestion }) {
+/**
+ * One suggestion as a strip, with the detail over the top.
+ *
+ * Was a `<details>` that expanded in place, which is the pattern the
+ * compliance tab moved away from: thirty suggestions expanding inline is the
+ * wall of text the report exists to avoid, and a reviewer loses their place
+ * every time they open one. The strip carries what decides whether to open it
+ * — priority, category, the component and the first line — and the dialog
+ * carries the rest.
+ */
+function SuggestionRow({
+  suggestion,
+  mark,
+  onOpen,
+}: {
+  suggestion: Suggestion;
+  mark: "accepted" | "dismissed" | undefined;
+  onOpen: () => void;
+}) {
   const meta = PRIORITY_META[suggestion.priority];
+  const settled = mark !== undefined;
+
   return (
-    <li className="rounded-xl border border-line bg-card">
-      <details className="group">
-        <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid [&::-webkit-details-marker]:hidden">
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        className={cn(
+          "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+          settled
+            ? "border-line bg-canvas-sunk/60 hover:bg-canvas-sunk"
+            : "border-line bg-card hover:border-line-strong",
+        )}
+      >
+        <span
+          className={cn(
+            "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+            meta.tone,
+            settled && "opacity-70",
+          )}
+        >
+          {meta.label}
+        </span>
+
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span
+              className={cn(
+                "truncate text-[13.5px]",
+                settled ? "text-ink/62" : "text-ink/88",
+              )}
+            >
+              {suggestion.title}
+            </span>
+            {suggestion.component && (
+              <span className="font-mono text-[11.5px] text-ink/58">{suggestion.component}</span>
+            )}
+          </span>
           <span
             className={cn(
-              "mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-              meta.tone,
+              "mt-0.5 block truncate text-[12.5px] leading-relaxed",
+              settled ? "text-ink/50" : "text-ink/66",
             )}
           >
-            {meta.label}
+            {suggestion.recommendation}
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[13.5px] font-medium text-ink">{suggestion.title}</span>
-            <span className="mt-0.5 block text-[12px] text-ink/62">
-              {suggestion.component && (
-                <span className="mr-1.5 rounded-md border border-line bg-canvas px-1.5 py-px text-ink/78">
-                  {suggestion.component}
-                </span>
-              )}
-              {CATEGORY_LABEL[suggestion.category]} ·{" "}
-              {suggestion.kind === "add" ? "Missing from the design" : "Change to the design"}
-              {where(suggestion) && ` · ${where(suggestion)}`}
+        </span>
+
+        <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-ink/62">
+          {mark === "accepted" && (
+            <span className="hidden items-center gap-1 rounded bg-ok-tint px-1.5 py-0.5 text-ok sm:inline-flex">
+              <Check size={10} aria-hidden="true" />
+              Accepted
             </span>
+          )}
+          {mark === "dismissed" && (
+            <span className="hidden items-center gap-1 rounded bg-canvas-sunk px-1.5 py-0.5 text-ink/68 sm:inline-flex">
+              <X size={10} aria-hidden="true" />
+              Dismissed
+            </span>
+          )}
+          <span className="hidden text-ink/58 sm:inline">
+            {CATEGORY_LABEL[suggestion.category]}
           </span>
-          <ChevronDown
-            size={15}
-            aria-hidden="true"
-            className="mt-1 shrink-0 text-ink/50 transition-transform group-open:rotate-180"
-          />
-        </summary>
-        <div className="space-y-3 border-t border-line px-4 py-3 text-[13px] leading-relaxed text-ink/84">
-          <p>{suggestion.recommendation}</p>
-          {suggestion.why && (
-            <p className="text-ink/70">
-              <span className="font-medium text-ink/82">Why: </span>
-              {suggestion.why}
-            </p>
-          )}
-          {suggestion.quote && (
-            <figure className="rounded-lg border border-line bg-canvas-sunk px-3 py-2">
-              <blockquote className="text-[12.5px] text-ink/82">“{suggestion.quote}”</blockquote>
-              <figcaption className="mt-1 text-[11.5px] text-ink/58">
-                From the design{suggestion.page !== null ? `, page ${suggestion.page}` : ""}
-              </figcaption>
-            </figure>
-          )}
-          {suggestion.clauses.length > 0 && (
-            <p className="flex flex-wrap items-center gap-1.5 text-[12px] text-ink/62">
-              Would help with
-              {suggestion.clauses.map((ref) => (
-                <span
-                  key={ref}
-                  className="rounded-md border border-line bg-canvas px-1.5 py-0.5 text-ink/78"
-                >
-                  {ref}
-                </span>
-              ))}
-            </p>
-          )}
-        </div>
-      </details>
+          <ChevronRight size={14} className="text-ink/40" aria-hidden="true" />
+        </span>
+      </button>
     </li>
   );
 }

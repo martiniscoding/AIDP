@@ -692,6 +692,7 @@ export function Assessment({
         <CoverageGaps
           coverage={run.coverage}
           frameworkName={run.frameworkName}
+          runId={run.id}
           gapTables={run.coverageTables}
         />
       )}

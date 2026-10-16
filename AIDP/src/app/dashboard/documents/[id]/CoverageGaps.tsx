@@ -1,7 +1,20 @@
-import { BookPlus, CircleCheck } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { BookPlus, Check, ChevronRight, CircleCheck, X } from "lucide-react";
+import { cn } from "@/lib/cn";
 import type { CoverageGap, CoverageView } from "@/lib/ingest/coverage";
 import type { TableView } from "@/lib/ingest/documents";
-import { TableFigure } from "@/components/ui/TableFigure";
+import { itemKey, useReviewMarks } from "@/lib/ingest/review-marks";
+import { GapDialog } from "./ItemDialogs";
+
+/**
+ * A stable name for one gap, so a mark follows the gap rather than its
+ * position: the coverage array is rewritten whole by the next assessment.
+ */
+function keyOf(gap: CoverageGap): string {
+  return itemKey([gap.section, gap.headingPath, gap.title, gap.quote.slice(0, 80)]);
+}
 
 /**
  * The report's "Absent" section: the parts of this design no standard covers.
@@ -17,16 +30,24 @@ import { TableFigure } from "@/components/ui/TableFigure";
 export function CoverageGaps({
   coverage,
   frameworkName,
+  runId,
   gapTables = {},
   idPrefix = "",
 }: {
   coverage: CoverageView | null;
+  /** Which run these gaps belong to, so a reviewer's marks reset on a re-run. */
+  runId: string;
   frameworkName: string;
   /** The tables a gap's quote was made of, by section ordinal. */
   gapTables?: Record<number, TableView[]>;
   /** Keeps anchors unique where several designs' results share one page. */
   idPrefix?: string;
 }) {
+  // Before any early return: hooks cannot be conditional, and this component
+  // returns early for a missing or incomplete coverage payload.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const { marks, mark } = useReviewMarks(runId, "coverage");
+
   if (!coverage) {
     return (
       <Notice>
@@ -46,6 +67,7 @@ export function CoverageGaps({
 
   const { gaps, suggestions } = coverage;
   const plural = gaps.length === 1;
+  const openIndex = openKey === null ? -1 : gaps.findIndex((gap) => keyOf(gap) === openKey);
 
   return (
     <div className="space-y-7">
@@ -76,19 +98,47 @@ export function CoverageGaps({
           Nothing in this design falls outside your standards.
         </p>
       ) : (
-        <ol className="space-y-2.5">
-          {gaps.map((gap) => (
-            <Gap
-              key={gap.section}
-              gap={gap}
-              idPrefix={idPrefix}
-              tables={gapTables[gap.section]}
-              covering={suggestions
-                .map((suggestion, index) => ({ suggestion, index }))
-                .filter(({ suggestion }) => suggestion.sections.includes(gap.section))}
+        <>
+          <ol className="space-y-2">
+            {gaps.map((gap) => {
+              const key = keyOf(gap);
+              return (
+                <Gap
+                  key={key}
+                  gap={gap}
+                  mark={marks[key]}
+                  onOpen={() => setOpenKey(key)}
+                />
+              );
+            })}
+          </ol>
+
+          {/* One dialog for the list, stepping between gaps — the same
+              arrangement the compliance and improvements tabs use. */}
+          {openIndex >= 0 && (
+            <GapDialog
+              gap={gaps[openIndex]!}
+              standard={
+                suggestions.find((s) => s.sections.includes(gaps[openIndex]!.section)) ?? null
+              }
+              tables={gapTables[gaps[openIndex]!.section]}
+              mark={marks[keyOf(gaps[openIndex]!)]}
+              onMark={(value) => {
+                mark(keyOf(gaps[openIndex]!), value);
+                // Decide and move on, as the other two tabs do. The last one
+                // closes rather than sticking.
+                const next = gaps[openIndex + 1];
+                setOpenKey(next ? keyOf(next) : null);
+              }}
+              position={{ index: openIndex, total: gaps.length }}
+              onNavigate={(delta) => {
+                const next = gaps[openIndex + delta];
+                if (next) setOpenKey(keyOf(next));
+              }}
+              onClose={() => setOpenKey(null)}
             />
-          ))}
-        </ol>
+          )}
+        </>
       )}
 
       {suggestions.length > 0 && (
@@ -145,16 +195,14 @@ export function CoverageGaps({
 
 function Gap({
   gap,
-  idPrefix,
-  covering,
-  tables = [],
+  mark,
+  onOpen,
 }: {
   gap: CoverageGap;
-  idPrefix: string;
-  /** The tables this gap's quote was made of, where it was made of tables. */
-  tables?: TableView[];
-  covering: { suggestion: CoverageView["suggestions"][number]; index: number }[];
+  mark: "accepted" | "dismissed" | undefined;
+  onOpen: () => void;
 }) {
+  const settled = mark !== undefined;
   const pages =
     gap.pageStart === null
       ? null
@@ -163,50 +211,52 @@ function Gap({
         : `page ${gap.pageStart}`;
 
   return (
-    <li className="rounded-xl border border-danger-line bg-card px-4 py-3.5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-        <p className="text-[14px] font-medium text-ink/92">{gap.title || gap.headingPath}</p>
-        {pages && <p className="text-[11.5px] text-ink/60 tabular-nums">{pages}</p>}
-      </div>
-      {gap.headingPath && gap.headingPath !== gap.title && (
-        <p className="mt-0.5 text-[11.5px] break-words text-ink/58">{gap.headingPath}</p>
-      )}
-      {gap.what && (
-        <p className="mt-2 text-[13px] leading-relaxed text-ink/80">{gap.what}</p>
-      )}
-      {/* The quote is the proof the gap is real — it is checked against the
-          document before the gap is kept. Where the design put that proof in a
-          table, the quote is assembled from the section's lines and two clean
-          tables arrive as one paragraph saying "Category:" sixteen times. Same
-          words, shown as the design showed them. */}
-      {tables.length > 0 ? (
-        <div className="mt-2 space-y-2">
-          {tables.map((table) => (
-            <TableFigure key={table.id} table={table} caption="Quoted from this table" />
-          ))}
-        </div>
-      ) : (
-        <blockquote className="mt-2 border-l-2 border-line-strong pl-3 text-[12.5px] leading-relaxed text-ink/70">
-          “{gap.quote}”
-          {gap.page !== null && (
-            <span className="ml-1.5 text-[11.5px] whitespace-nowrap text-ink/58">p. {gap.page}</span>
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        className={cn(
+          "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
+          settled
+            ? "border-line bg-canvas-sunk/60 hover:bg-canvas-sunk"
+            : "border-danger-line bg-card hover:border-line-strong",
+        )}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span className={cn("truncate text-[13.5px]", settled ? "text-ink/62" : "text-ink/88")}>
+              {gap.title || gap.headingPath}
+            </span>
+            {pages && <span className="font-mono text-[11.5px] text-ink/58">{pages}</span>}
+          </span>
+          <span
+            className={cn(
+              "mt-0.5 block truncate text-[12.5px] leading-relaxed",
+              settled ? "text-ink/50" : "text-ink/66",
+            )}
+          >
+            {gap.what}
+          </span>
+        </span>
+
+        <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-ink/62">
+          {mark === "accepted" && (
+            <span className="hidden items-center gap-1 rounded bg-ok-tint px-1.5 py-0.5 text-ok sm:inline-flex">
+              <Check size={10} aria-hidden="true" />
+              Marked
+            </span>
           )}
-        </blockquote>
-      )}
-      {covering.length > 0 && (
-        <p className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-ink/62">
-          Suggested standard:
-          {covering.map(({ suggestion, index }) => (
-            <a
-              key={index}
-              href={`#${idPrefix}suggested-standard-${index}`}
-              className="rounded-full border border-royal/30 bg-royal-tint px-2 py-0.5 text-royal-deep transition-colors hover:bg-royal/15"
-            >
-              {suggestion.title}
-            </a>
-          ))}
-        </p>
-      )}
+          {mark === "dismissed" && (
+            <span className="hidden items-center gap-1 rounded bg-canvas-sunk px-1.5 py-0.5 text-ink/68 sm:inline-flex">
+              <X size={10} aria-hidden="true" />
+              Dismissed
+            </span>
+          )}
+          <ChevronRight size={14} className="text-ink/40" aria-hidden="true" />
+        </span>
+      </button>
     </li>
   );
 }
