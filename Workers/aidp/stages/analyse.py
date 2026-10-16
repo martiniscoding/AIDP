@@ -663,7 +663,9 @@ def handle(job: Job, heartbeat) -> None:
         handle(replace(job, payload={"runId": next_id}), heartbeat)
         return
 
-    _complete(job, run_id)
+    # Carries the clauses that could not be judged, so the run can say its
+    # coverage was not total rather than reporting a clean completion.
+    _complete(job, run_id, refused)
 
 
 def _suggest_again(job: Job, run_id: str, heartbeat) -> None:
@@ -1891,13 +1893,52 @@ def _fail(run_id: str, reason: str) -> None:
         )
 
 
-def _complete(job: Job, run_id: str) -> None:
+def _complete(job: Job, run_id: str, refused: int = 0) -> None:
+    """Close the run, and say so honestly when part of it could not be judged.
+
+    `refused` is the number of clauses the model could not answer usably. Each
+    one is on the report as `needs_review` with its own reason, but the run
+    itself used to say nothing: state "complete", completedClauses equal to
+    totalClauses, and a reader with no way to tell a run where every clause was
+    judged from one where a third of them failed and were recorded as questions.
+
+    A run that assessed 60 of 94 clauses is not a complete assessment of 94
+    clauses, and presenting it as one is the single most misleading thing this
+    stage can do — a governance reviewer signing off on that has been told the
+    coverage was total. So the count goes in the run's note, which the report
+    already shows above the findings.
+
+    The state stays "complete", because the run did finish and its findings
+    stand; what changes is that the report no longer implies the coverage was
+    total. Appended to whatever the note already said rather than replacing it:
+    the fallback-to-search reason and the designs left out are both in there.
+    """
+    said = (
+        f"{refused} of {{total}} clauses could not be assessed — the model did not return a "
+        "usable answer for them, and each is on the report as needing review. This is not a "
+        "complete assessment of every clause; run it again to retry them."
+        if refused
+        else None
+    )
+
     with db.transaction() as conn:
         counts = db.query(
             conn,
             'SELECT "verdict", count(*)::int AS n FROM "finding" WHERE "runId" = %s GROUP BY 1',
             (run_id,),
         )
+        if said is not None:
+            row = db.one(
+                conn, 'SELECT "totalClauses", "note" FROM "assessment_run" WHERE "id" = %s', (run_id,)
+            )
+            total = (row or {}).get("totalClauses") or 0
+            previous = ((row or {}).get("note") or "").strip()
+            note = said.format(total=total)
+            db.execute(
+                conn,
+                'UPDATE "assessment_run" SET "note" = %s WHERE "id" = %s',
+                (f"{previous} {note}".strip(), run_id),
+            )
         db.execute(
             conn,
             """
@@ -1915,6 +1956,7 @@ def _complete(job: Job, run_id: str) -> None:
         log,
         "assessment complete",
         runId=run_id,
+        refused=refused,
         **{c["verdict"]: c["n"] for c in counts},
     )
 
