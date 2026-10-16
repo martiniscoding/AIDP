@@ -14,7 +14,8 @@ import {
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, SCOPE_META, type DecisionScope } from "@/lib/ingest/decision-effects";
 import { rationaleSections } from "@/lib/ingest/verdicts";
-import { citedRowText, type EvidenceView } from "@/lib/ingest/evidence-tables";
+import { citedRowText } from "@/lib/ingest/table-text";
+import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import { TableFigure } from "@/components/ui/TableFigure";
 import { makeStandard, reviewFinding } from "../actions";
 import {

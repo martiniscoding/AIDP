@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { TableView } from "./documents";
+import { cellValues } from "./table-text";
 import type { EvidenceItem } from "./verdicts";
 
 /**
@@ -238,42 +239,6 @@ export function citedRow(chunkText: string, rows: unknown): number | null {
   });
 
   return !tied && bestScore > 0 ? best : null;
-}
-
-/**
- * The cited rows of a table as one line, for a side-by-side comparison.
- *
- * A contradiction is settled by a row — "Application pattern | Modular
- * monolith with catalogue, order, payment adapter" — and a reviewer holding
- * that against the clause should not have to find it in the drawing first.
- * Empty cells are dropped here, unlike the table itself, because this is a
- * quotation and not the document's own grid.
- */
-export function citedRowText(table: TableView, rows: number[]): string | null {
-  const all = Array.isArray(table.rows) ? table.rows : [];
-  const wanted = rows.length > 0 ? rows : [];
-  if (wanted.length === 0) return null;
-  const lines = wanted
-    .map((index) => all[index])
-    .filter((row) => row !== undefined)
-    .map((row) =>
-      cellValues(row)
-        .map((cell) => cell.trim())
-        .filter(Boolean)
-        .join(" — "),
-    )
-    .filter(Boolean);
-  return lines.length > 0 ? lines.join("; ") : null;
-}
-
-function cellValues(row: unknown): string[] {
-  if (Array.isArray(row)) return row.map(String);
-  if (row && typeof row === "object") {
-    return Object.values(row as Record<string, unknown>)
-      .filter((value) => value !== null && value !== undefined)
-      .map(String);
-  }
-  return [String(row)];
 }
 
 /** Whitespace and case flattened, so a line break in a cell is not a mismatch. */
