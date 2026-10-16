@@ -107,7 +107,8 @@ function foldDuplicates(items: EvidenceView[]): EvidenceView[] {
       kept.push(item);
       continue;
     }
-    if (quoteIsTable(item.excerpt, shown.get(item.documentId) ?? [])) continue;
+    const address = `${item.documentTitle} ${item.headingPath}`;
+    if (quoteIsTable(item.excerpt, shown.get(item.documentId) ?? [], address)) continue;
     // The run-on twins also duplicate each other: the `clause` chunk and the
     // `section` chunk over one table differ only in where the flattening
     // started. Where two are the same text, the longer one is the whole of it.
@@ -269,13 +270,46 @@ const MIN_QUOTE_WORDS = 20;
 /** Below this the quote is its own prose and the tables are a coincidence. */
 const COVERED_AT = 0.8;
 
-export function quoteIsTable(quote: string, tables: TableView[]): boolean {
+/** Too little left after the address to judge the passage by what remains. */
+const MIN_CONTENT_WORDS = 8;
+
+export function quoteIsTable(
+  quote: string,
+  tables: TableView[],
+  /**
+   * The passage's own address — the design it is from and its heading path.
+   *
+   * A chunk carries its address at the front of its text: "Customer Order
+   * Platform (COP) › 4 Application and infrastructure decisions Area Decision
+   * / current choice …". Those words are where the passage is, not what it
+   * says, and they are never in the table's cells. Counting them against the
+   * match held the real duplicates at 0.72–0.79 — just under the threshold —
+   * so a table the reviewer was already looking at was printed again
+   * underneath it as a run-on line. Thirty-seven of them, on this workspace's
+   * findings alone, several of which are the table and nothing else.
+   */
+  address = "",
+): boolean {
   const words = contentWords(quote);
   if (words.length < MIN_QUOTE_WORDS || tables.length === 0) return false;
+
   const inTables = new Set(tables.flatMap((table) => contentWords(tableText(table))));
   if (inTables.size === 0) return false;
-  const hits = words.filter((word) => inTables.has(word)).length;
-  return hits / words.length >= COVERED_AT;
+
+  const content = subtract(words, address);
+  // Below this the address has eaten the passage and a ratio over what is left
+  // means nothing, so the question is asked of the whole passage instead.
+  const tested = content.length >= MIN_CONTENT_WORDS ? content : words;
+
+  const hits = tested.filter((word) => inTables.has(word)).length;
+  return hits / tested.length >= COVERED_AT;
+}
+
+/** The passage's words with its address removed, keeping duplicates in place. */
+function subtract(words: string[], address: string): string[] {
+  if (!address.trim()) return words;
+  const drop = new Set(contentWords(address));
+  return drop.size === 0 ? words : words.filter((word) => !drop.has(word));
 }
 
 /** Every word a table puts on the page: its headers and its cells. */
@@ -337,7 +371,7 @@ export async function tablesForGaps(
 
   for (const gap of gaps) {
     const tables = byPath.get(gap.headingPath) ?? [];
-    if (quoteIsTable(gap.quote, tables)) out[gap.section] = tables;
+    if (quoteIsTable(gap.quote, tables, gap.headingPath)) out[gap.section] = tables;
   }
   return out;
 }

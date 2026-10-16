@@ -154,5 +154,51 @@ ok(
   ]),
 );
 
+console.log("\nThe passage's own address must not count against the match");
+// The bug the reviewer saw: a table drawn, and the same table printed again
+// underneath as a run-on line. A chunk carries its address at the front of its
+// text, those words are never in the table's cells, and counting them held the
+// real duplicates at 0.72-0.79 — just under the threshold.
+// A real one, from the document this was reported on. Heading paths run four
+// levels deep, so the address is a substantial share of a short passage.
+const ADDRESS =
+  "Payor Management Audit SBD v1.1 › 3 SOLUTION ARCHITECTURE › " +
+  "3.4 Technology Architecture › 3.4.2 Technology Stack";
+// Built the way the chunk really is: the address, then the table's own header
+// row, then its cells — which is what makes it indistinguishable from the table
+// once the address is set aside.
+const flattened =
+  ADDRESS +
+  " " +
+  COLUMNS.join(" ") +
+  " Container Management Platform" +
+  " Relational DB (if any) MySQL instance on PCF CloudSQL/MySQL service v5.7.28 8.0" +
+  " Messaging RabbitMQ";
+ok(
+  "counting the address, the duplicate survives — which is the bug",
+  !quoteIsTable(flattened, [TABLE]),
+);
+ok(
+  "ignoring it, the duplicate is recognised",
+  quoteIsTable(flattened, [TABLE], ADDRESS),
+);
+ok(
+  "and prose about the subject is still not a duplicate, address or no address",
+  !quoteIsTable(
+    ADDRESS +
+      " The platform runs on Google Kubernetes Engine with a managed relational " +
+      "database, and the team expects to revisit the messaging choice once throughput " +
+      "is understood because the current broker was chosen for familiarity rather than " +
+      "for its delivery guarantees under sustained load across several regions.",
+    [TABLE],
+    ADDRESS,
+  ),
+);
+ok(
+  "an address that eats the passage falls back to judging the whole of it",
+  quoteIsTable(flattened, [TABLE], flattened) === quoteIsTable(flattened, [TABLE]),
+);
+ok("an empty address changes nothing", quoteIsTable(realQuote, [TABLE], "") === quoteIsTable(realQuote, [TABLE]));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
