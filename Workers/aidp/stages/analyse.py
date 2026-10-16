@@ -1122,6 +1122,39 @@ def _assess_document_one(
     )
 
 
+#: A rationale claiming the design does not state something. "absent" is not
+#: the only verdict that makes this claim — a "partial" routinely does, in the
+#: half of the clause it says is unmet — and until now only "absent" was read
+#: again against the whole document.
+#:
+#: The failure this exists for: a partial reported that an integration design
+#: did not specify a correlation id, while the design's own operational-controls
+#: table listed one. The search had not retrieved that table, nothing re-read
+#: the document, and the finding reached a report as a confirmed omission.
+_CLAIMS_OMISSION = re.compile(
+    r"\b(?:not (?:specified|stated|defined|documented|described|addressed|mentioned|"
+    r"present|included|provided|covered)"
+    r"|no (?:mention|evidence|statement|specification|definition|reference|detail)"
+    r"|does not (?:specify|state|define|document|describe|address|mention|include|cover)"
+    r"|is (?:missing|absent)|are (?:missing|absent)"
+    r"|without (?:any )?(?:stated|specified|documented|defined)"
+    r"|fails to (?:specify|state|define|document|mention)"
+    r"|neither .{0,40} nor)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_an_omission(rationale: str) -> bool:
+    """Whether a rationale asserts the design does not say something.
+
+    Used to decide which findings are worth a second read. Deliberately broad:
+    the cost of re-reading a finding that did not need it is one more clause in
+    an existing batched call, and the cost of missing one is a reviewer sent to
+    build what the document already specifies.
+    """
+    return bool(_CLAIMS_OMISSION.search(rationale or ""))
+
+
 def _confirm_absents(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
     """Re-read each design whole for every clause the search found nothing for.
 
@@ -1215,16 +1248,28 @@ def _confirm(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
     five designs that is the difference between five full passes and one.
     """
     with db.connection() as conn:
-        absent_ids = db.query(
+        # Not only "absent". A "partial" that says the design does not specify
+        # something is making the same claim about the same document, and it was
+        # never checked — which is how a finding reporting a missing correlation
+        # id survived beside a design table that listed one. The verdict is not
+        # what decides whether a claim of absence is worth verifying; the claim
+        # is.
+        rows = db.query(
             conn,
-            'SELECT "clauseId" FROM "finding" WHERE "runId" = %s AND "verdict" = %s',
-            (run["id"], "absent"),
+            'SELECT "clauseId", "verdict", "rationale" FROM "finding" '
+            'WHERE "runId" = %s AND "verdict" = ANY(%s)',
+            (run["id"], ["absent", "partial", "not_assessable"]),
         )
-    if not absent_ids:
+    candidates = [
+        row
+        for row in rows
+        if row["verdict"] == "absent" or claims_an_omission(row.get("rationale") or "")
+    ]
+    if not candidates:
         return
 
     by_id = {clause["id"]: clause for clause in clauses}
-    outstanding = [by_id[row["clauseId"]] for row in absent_ids if row["clauseId"] in by_id]
+    outstanding = [by_id[row["clauseId"]] for row in candidates if row["clauseId"] in by_id]
     absent_count = len(outstanding)
     limit = get_config().whole_document_max_tokens
     changed = 0
@@ -1321,7 +1366,7 @@ def _adopt_confirmations(
         if not check.verified:
             logs.warn(
                 log,
-                "absent stands: the quoted words are not in the design",
+                "the first verdict stands: the quoted words are not in the design",
                 documentId=design.document_id,
                 reason=check.reason,
                 quote=quote[:300],
@@ -1336,14 +1381,19 @@ def _adopt_confirmations(
             verdict=verdict,
             confidence=CONFIRM_CONFIDENCE,
             rationale=(
+                # The opening has to match what was actually re-read. The pass
+                # now covers any finding that claimed the design does not say
+                # something, not only "absent", and telling a reviewer "a search
+                # found nothing" about a clause that had come back partial is a
+                # false account of how the verdict was reached.
                 (
-                    "A search found nothing for this clause, so each design was read in "
+                    "The first reading reported this as unmet, so each design was read in "
                     f'full — and "{design.title}" does address it. {rationale}'
                 )
                 if len(scope.designs) > 1
                 else (
-                    "A search of this design found nothing for this clause, so the whole "
-                    f"document was read again — and it does address it. {rationale}"
+                    "The first reading reported this as unmet, so the whole document was "
+                    f"read again — and it does address it. {rationale}"
                 )
             ),
             evidence=[
@@ -1765,6 +1815,64 @@ def _fix_is_a_compliance_claim(verdict: str, rationale: str) -> bool:
     return bool(_COMPLIANT_PROSE.search(fix)) and not _IMPERATIVE.match(fix)
 
 
+#: Control families a security clause might name. Checked against the clause's
+#: own words before a rationale is allowed to say one is unmet.
+_CONTROL_FAMILIES = (
+    "governance",
+    "cybersecurity",
+    "identity",
+    "data protection",
+    "privacy",
+    "connectivity",
+    "resiliency",
+    "resilience",
+    "regulatory",
+    "compliance",
+    "authentication",
+    "authorization",
+    "authorisation",
+    "encryption",
+    "auditability",
+    "monitoring",
+    "availability",
+    "integrity",
+    "confidentiality",
+)
+
+
+def invented_families(rationale: str, clause: dict | None) -> list[str]:
+    """Control families a rationale blames the design for, that the clause never asked for.
+
+    The failure this exists for: a clause requiring "authentication,
+    authorization, encryption and appropriate security controls" produced a
+    finding reading "three of the four control families are covered; regulatory
+    requirements are not addressed". The clause says nothing about regulatory
+    requirements. The engine had invented a fourth obligation and then marked the
+    design short of it, which is the most damaging kind of false positive — it
+    looks precise, it counts, and it cannot be traced to anything.
+
+    Both judge prompts already tell the model to answer each family the clause
+    names and no others (rules 3h and 5e). A cheap model counts anyway, so the
+    claim is checked here: a family named as unmet has to appear in the clause.
+
+    Returns the families that do not, so the caller can say so rather than
+    silently rewriting the verdict — the rest of the finding may be sound.
+    """
+    text = _clause_text(clause).lower()
+    if not text:
+        return []
+    low = (rationale or "").lower()
+    # Only when the rationale is actually making a family claim. Mentioning
+    # encryption in passing is not the same as counting it as a failed family.
+    if not re.search(r"\b(?:famil|requirements? (?:are|is) not|not addressed|unaddressed)\b", low):
+        return []
+    return [
+        family
+        for family in _CONTROL_FAMILIES
+        if family in low and family not in text
+    ]
+
+
 def _clause_text(clause: dict | None) -> str:
     """A clause's own words, for deciding what it is asking for."""
     if not clause:
@@ -1857,6 +1965,19 @@ def _normalise(
     # A technical clause answered with a complaint about paperwork. Sent to
     # needs_review rather than guessed: the engine can tell the answer is wrong
     # without knowing the right one, and a person reading the clause settles it.
+    # A family blamed on the design that the clause never named. Said in the
+    # rationale rather than used to flip the verdict: the finding may be right
+    # about the families the clause does name, and the reviewer is the one who
+    # should see which part was invented.
+    stray = invented_families(rationale, clause)
+    if stray:
+        logs.info(log, "rationale named a requirement the clause does not", families=stray)
+        named = ", ".join(stray)
+        rationale = (
+            f"{rationale} (This clause does not state a requirement for {named}; "
+            "that part of the assessment is not traceable to it.)"
+        )[:MAX_RATIONALE]
+
     if _paperwork_answer_to_a_technical_clause(verdict, rationale, clause):
         logs.info(log, "governance answer to a technical clause; sending for review")
         verdict = "needs_review"

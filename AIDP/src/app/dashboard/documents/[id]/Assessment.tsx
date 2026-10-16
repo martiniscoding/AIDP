@@ -411,8 +411,14 @@ const TAB_META: Record<Tab, { label: string; blurb: string }> = {
     blurb: "Verdicts against the organisation's own standards, clause by clause.",
   },
   uncovered: {
-    label: "Not covered",
-    blurb: "Parts of this design that no clause in the framework governs.",
+    // "Design gaps", not "Not covered". The old label put this tab's count in
+    // the same breath as the clause verdicts, and a reviewer reconciling
+    // "24 clauses, 4 partial + 20 covered" against "Not covered 5" read the 5
+    // as a 25th clause that did not add up. It counts a different thing
+    // entirely: passages of the design, not clauses of the standard.
+    label: "Design gaps",
+    blurb:
+      "Parts of this design that no clause in the framework governs. Counts passages of the design, not clauses of the standard.",
   },
   improvements: {
     label: "Improvements",

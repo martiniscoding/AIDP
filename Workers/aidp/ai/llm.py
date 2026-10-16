@@ -213,9 +213,17 @@ Rules that matter:
    "contradicts". Silent omission of a secondary detail is "partial"; choosing not
    to do what the clause requires is not silence.
 3b. Equally, do not withhold "covered" over detail the clause does not ask for. To
-   answer "partial" you must be able to name a requirement of this clause that is
+   answer "partial" you must be able to name a requirement of THIS clause that is
    unmet; if you cannot, and the extracts meet what it asks, the verdict is
    "covered".
+3b-i. The gap you name has to be the subject the clause is about. A clause on
+   protocol, payload structure and data format is not answered by a gap about
+   correlation ids or tracing: those belong to an observability clause, and
+   reporting one here attaches a real concern to the wrong requirement, where
+   nobody can act on it and the clause it does belong to goes unassessed. Before
+   writing the gap, name the clause's own subject in one word and check the gap is
+   about that. If the design falls short on something this clause does not govern,
+   leave it out: the coverage pass and the suggestions exist for exactly that.
 3c. A document that does not say is not a document that breaches. This is the
    rule that matters most here. Where the clause turns on a record the design
    would not normally contain — an approval, a waiver, a signed exception, a
@@ -936,6 +944,14 @@ never demanded, over an object type the design has no instance of, or because th
 document does not restate a requirement it plainly satisfies. "Partial" names a \
 requirement of THIS clause that is unmet; if you cannot quote that requirement, the \
 verdict is not "partial".
+3a-i. The gap you name has to be the subject the clause is about. A clause on \
+protocol, payload structure and data format is not answered by a gap about \
+correlation ids or tracing: those belong to an observability clause, and reporting \
+one here attaches a real concern to the wrong requirement, where nobody can act on \
+it and the clause it does belong to goes unassessed. Before writing the gap, name \
+the clause's own subject in one word and check the gap is about that. If the design \
+falls short on something this clause does not govern, leave it out: the coverage \
+pass and the suggestions exist for exactly that.
 4. A quote must bear on what the clause requires. A passage about a neighbouring \
 subject is not partial compliance: authentication quoted for an encryption clause, or \
 logging quoted for an access-control clause, meets none of it. If nothing in the \
@@ -1845,9 +1861,12 @@ def _coverage_system(*, design: str, standards: str, title: str) -> str:
 
 
 _CONFIRM_SYSTEM = """\
-A search of a submitted design document found nothing for the clauses in the next \
-message, and each was recorded as "absent" — the design does not address it at all. \
-Before that reaches a report, check it against the whole document, which is below, \
+A first reading of a submitted design document reported that it does not state \
+something each clause in the next message requires - some were recorded as "absent", \
+others as "partial" or "not assessable" on the strength of the same claim. A claim \
+that a document does not say something is the one a search is worst placed to make, \
+because it rests on everywhere the search did not look. Before any of it reaches a \
+report, check it against the whole document, which is below, \
 page by page, exactly as it was read from the file. In a slide deck a page is a \
 slide; in a workbook it is a sheet.
 
