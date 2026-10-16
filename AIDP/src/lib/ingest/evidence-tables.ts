@@ -21,23 +21,126 @@ import type { EvidenceItem } from "./verdicts";
 export type EvidenceTable = {
   table: TableView;
   /**
-   * Which row the passage was cited for, when it was cited for one. A
-   * `table_row` chunk is a single row; showing the whole table without saying
-   * which row would answer a question nobody asked. Null when the chunk is the
-   * whole table, or when the row could not be identified beyond doubt.
+   * Which rows the passage was cited for. A `table_row` chunk is a single row;
+   * showing the whole table without saying which row would answer a question
+   * nobody asked. Empty when the chunk is the whole table, when the row could
+   * not be identified beyond doubt, or when several citations of one table
+   * were folded together and disagreed about the row.
    */
-  row: number | null;
+  rows: number[];
 };
 
 /** A cited passage, with the table it came out of when it came out of one. */
 export type EvidenceView = EvidenceItem & { table: EvidenceTable | null };
 
-/** Attach each passage's table, for the views that render findings. */
+/**
+ * Attach each passage's table, for the views that render findings, and show
+ * each distinct passage once.
+ *
+ * A table arrives in the index up to four ways — as a `table` chunk, as one
+ * `table_row` chunk per row, and again inside the `clause` and `section`
+ * chunks that carry the same cells flattened into a line. Retrieval has no
+ * reason to prefer one, so a finding routinely cites several of them and the
+ * reviewer is handed the same table three times: once drawn, once drawn with a
+ * row marked, and once as the run-on transcript the drawing exists to replace.
+ *
+ * Nothing is thrown away here that the reviewer did not already have. A
+ * passage is dropped only when another passage on screen contains it.
+ */
 export function withTables(
   evidence: EvidenceItem[],
   tables: Map<string, EvidenceTable>,
 ): EvidenceView[] {
-  return evidence.map((item) => ({ ...item, table: tables.get(item.chunkId) ?? null }));
+  return foldDuplicates(
+    evidence.map((item) => ({ ...item, table: tables.get(item.chunkId) ?? null })),
+  );
+}
+
+/** Two passages are the same prose when each is nearly all of the other. */
+const SAME_PROSE_AT = 0.9;
+
+function foldDuplicates(items: EvidenceView[]): EvidenceView[] {
+  // One card per table. The rows every citation of it marked are merged, so
+  // two cited rows light up one table rather than drawing it twice.
+  //
+  // The merged entry is rebuilt rather than edited: `tables` is keyed by chunk
+  // and shared by every finding that cites that chunk, and marking a row on it
+  // in place would mark that row on another finding's evidence.
+  const folded: EvidenceView[] = [];
+  const byTable = new Map<string, EvidenceView>();
+  for (const item of items) {
+    if (!item.table) {
+      folded.push(item);
+      continue;
+    }
+    const key = `${item.documentId}\u0000${item.table.table.id}`;
+    const kept = byTable.get(key);
+    if (!kept || !kept.table) {
+      const copy = { ...item, table: { ...item.table, rows: [...item.table.rows] } };
+      byTable.set(key, copy);
+      folded.push(copy);
+      continue;
+    }
+    kept.table.rows = [...new Set([...kept.table.rows, ...item.table.rows])].sort(
+      (a, b) => a - b,
+    );
+  }
+
+  // The flattened twins. A passage with no table of its own goes only when the
+  // tables already on screen for its own document account for it — the same
+  // test the coverage gaps use, so a reviewer sees one rule applied in both
+  // places. Scoped per document: another design's table is not this passage.
+  const shown = new Map<string, TableView[]>();
+  for (const item of folded) {
+    if (!item.table) continue;
+    const list = shown.get(item.documentId) ?? [];
+    list.push(item.table.table);
+    shown.set(item.documentId, list);
+  }
+
+  const kept: EvidenceView[] = [];
+  for (const item of folded) {
+    // A figure carries an image that no table restates, and a passage that
+    // resolved to a table is a card in its own right.
+    if (item.table || item.figureId) {
+      kept.push(item);
+      continue;
+    }
+    if (quoteIsTable(item.excerpt, shown.get(item.documentId) ?? [])) continue;
+    // The run-on twins also duplicate each other: the `clause` chunk and the
+    // `section` chunk over one table differ only in where the flattening
+    // started. Where two are the same text, the longer one is the whole of it.
+    const twin = kept.find(
+      (other) =>
+        !other.table &&
+        !other.figureId &&
+        other.documentId === item.documentId &&
+        sameProse(other.excerpt, item.excerpt),
+    );
+    if (twin) {
+      if (contentWords(item.excerpt).length > contentWords(twin.excerpt).length) {
+        kept[kept.indexOf(twin)] = item;
+      }
+      continue;
+    }
+    kept.push(item);
+  }
+  return kept;
+}
+
+/** Each passage nearly all of the other's words, in both directions. */
+function sameProse(a: string, b: string): boolean {
+  const left = contentWords(a);
+  const right = contentWords(b);
+  if (left.length < MIN_QUOTE_WORDS || right.length < MIN_QUOTE_WORDS) return false;
+  return covered(left, right) >= SAME_PROSE_AT && covered(right, left) >= SAME_PROSE_AT;
+}
+
+/** What share of `words` appears in `within`. */
+function covered(words: string[], within: string[]): number {
+  const have = new Set(within);
+  if (have.size === 0 || words.length === 0) return 0;
+  return words.filter((word) => have.has(word)).length / words.length;
 }
 
 const TABLE_KINDS = ["table", "table_row"];
@@ -83,10 +186,17 @@ export async function tablesForEvidence(
     if (!table) continue;
     out.set(chunk.id, {
       table,
-      row: chunk.sourceKind === "table_row" ? citedRow(chunk.text, table.rows) : null,
+      rows: rowsCited(chunk.sourceKind, chunk.text, table.rows),
     });
   }
   return out;
+}
+
+/** The rows a chunk marks on its table: one for a row chunk, none for a whole. */
+function rowsCited(sourceKind: string, text: string, rows: unknown): number[] {
+  if (sourceKind !== "table_row") return [];
+  const row = citedRow(text, rows);
+  return row === null ? [] : [row];
 }
 
 /**
@@ -128,6 +238,32 @@ export function citedRow(chunkText: string, rows: unknown): number | null {
   });
 
   return !tied && bestScore > 0 ? best : null;
+}
+
+/**
+ * The cited rows of a table as one line, for a side-by-side comparison.
+ *
+ * A contradiction is settled by a row — "Application pattern | Modular
+ * monolith with catalogue, order, payment adapter" — and a reviewer holding
+ * that against the clause should not have to find it in the drawing first.
+ * Empty cells are dropped here, unlike the table itself, because this is a
+ * quotation and not the document's own grid.
+ */
+export function citedRowText(table: TableView, rows: number[]): string | null {
+  const all = Array.isArray(table.rows) ? table.rows : [];
+  const wanted = rows.length > 0 ? rows : [];
+  if (wanted.length === 0) return null;
+  const lines = wanted
+    .map((index) => all[index])
+    .filter((row) => row !== undefined)
+    .map((row) =>
+      cellValues(row)
+        .map((cell) => cell.trim())
+        .filter(Boolean)
+        .join(" — "),
+    )
+    .filter(Boolean);
+  return lines.length > 0 ? lines.join("; ") : null;
 }
 
 function cellValues(row: unknown): string[] {

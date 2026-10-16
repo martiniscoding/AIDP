@@ -338,7 +338,82 @@ def _in_one(
         )
         for r in rows
     ]
-    return with_figure(candidates, query, limit)
+    return with_figure(_fold_duplicates(candidates), query, limit)
+
+
+# What share of a passage's own words another passage must contain before the
+# first is a restatement of it rather than a second piece of evidence.
+COVERED_AT = 0.9
+
+# Below this a passage is too short for a near-total overlap to mean anything:
+# two one-line headings out of the same section will match each other.
+MIN_FOLD_WORDS = 20
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.split(r"[^a-z0-9.]+", text.lower()) if len(w) >= 3}
+
+
+def _fold_duplicates(candidates: list[Candidate]) -> list[Candidate]:
+    """One passage per thing the document says, highest-scoring first.
+
+    A table reaches the index up to four ways: as a ``table`` chunk, as one
+    ``table_row`` chunk per row, and again inside the ``clause`` and
+    ``section`` chunks that carry the same cells flattened into a line. Fusion
+    has no reason to prefer any of them, so a single table can take most of a
+    window that was meant to hold the document's best eight passages — and the
+    judge then reads the same rows three times and never sees what was pushed
+    out.
+
+    Two kinds of duplicate, folded in that order:
+
+    * Same table. A ``table`` chunk and its rows share the ``TableBlock`` id in
+      ``source_id``, so this is an exact link and not a guess. The whole table
+      wins over one of its rows: the judge is reading for what the design says,
+      and a row without its headers has lost half of that.
+    * Same words. The flattened twins carry a different ``source_id`` — the
+      clause's, the section's — so they are caught by what they say instead.
+      A passage goes only when one already kept contains nearly all of it.
+
+    Order is preserved, so the window is still filled by score; it is simply
+    filled with eight different things.
+    """
+    best_for_table: dict[tuple[str, str], Candidate] = {}
+    kept: list[Candidate] = []
+
+    for candidate in candidates:
+        if candidate.source_kind not in ("table", "table_row") or not candidate.source_id:
+            kept.append(candidate)
+            continue
+        key = (candidate.document_id, candidate.source_id)
+        held = best_for_table.get(key)
+        if held is None:
+            best_for_table[key] = candidate
+            kept.append(candidate)
+            continue
+        # The whole table displaces a row of it, wherever the two ranked.
+        if held.source_kind == "table_row" and candidate.source_kind == "table":
+            kept[kept.index(held)] = candidate
+            best_for_table[key] = candidate
+
+    folded: list[Candidate] = []
+    words: list[tuple[str, set[str]]] = []
+    for candidate in kept:
+        # A diagram's reading is not restated by the prose around it, and the
+        # finding renders the figure itself beside it.
+        if candidate.is_generated:
+            folded.append(candidate)
+            continue
+        mine = _content_words(candidate.text)
+        if len(mine) >= MIN_FOLD_WORDS and any(
+            doc == candidate.document_id
+            and len(mine & theirs) / len(mine) >= COVERED_AT
+            for doc, theirs in words
+        ):
+            continue
+        folded.append(candidate)
+        words.append((candidate.document_id, mine))
+    return folded
 
 
 # How far past the window to look for a diagram worth carrying into it.

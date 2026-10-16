@@ -13,6 +13,7 @@ import {
   emptyCounts,
   readEvidence,
   readObligation,
+  withoutExtractIds,
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
 import {
@@ -189,7 +190,7 @@ export default async function DocumentPage({
     clauseStatement: f.clauseStatement,
     verdict: f.verdict,
     confidence: f.confidence,
-    rationale: f.rationale,
+    rationale: withoutExtractIds(f.rationale),
     obligation: readObligation(f.obligation),
     obligationSource: f.obligationSource,
     evidence: withTables(readEvidence(f.evidence), evidenceTables),

@@ -19,6 +19,7 @@ import {
   VERDICTS,
   VERDICT_META,
   applyLens,
+  rationaleSections,
   severityOf,
   type EvidenceItem,
   type Lens,
@@ -141,71 +142,6 @@ export type RunView = {
   /** Whether the products the design names are still supported, from endoflife.date. Facts, not a verdict. */
   lifecycle: LifecycleView | null;
 } | null;
-
-/** The three parts of a rationale, in the order the engine writes them. */
-export const RATIONALE_PARTS = ["Gap", "Impact", "Fix"] as const;
-
-/**
- * The same three sentences, named for a clause that passed.
- *
- * A covered finding has no gap and nothing to fix, so labelling its three
- * sentences "Gap / Impact / Fix" tells the reader the opposite of the verdict
- * directly above them. The judge writes the same shape either way — what the
- * clause wanted, what the design does about it, why that satisfies it — so only
- * the labels change.
- */
-export const RATIONALE_PARTS_COVERED = ["Requirement", "Evidence", "Alignment"] as const;
-
-/** Labels for a verdict: a passing clause is described, not remediated. */
-export function rationaleLabels(verdict: string): readonly string[] {
-  return verdict === "covered" || verdict === "not_applicable"
-    ? RATIONALE_PARTS_COVERED
-    : RATIONALE_PARTS;
-}
-
-/**
- * A rationale split into gap, impact and fix.
- *
- * The judge is now told to write exactly those three, in that order, for any
- * verdict that is not "covered" (rules 8 and 11 in Workers/aidp/ai/llm.py). Run
- * together as one paragraph they read as the wall of text the whole change was
- * meant to remove — the three facts are there but the reader has to find the
- * boundaries, which is most of the work of skimming eighty findings.
- *
- * Split on sentence ends rather than on a delimiter the model was asked to
- * emit: a format token is one more instruction to disobey, and the sentences
- * are what the prompt actually constrains. Exactly three sentences is the
- * shape being labelled, so anything else — a one-line "covered", an older
- * finding written before the rule, a model that ignored it — is returned
- * unsplit and rendered as the paragraph it is. That is the honest fallback:
- * labelling two sentences "Gap" and "Impact" would promise a fix that was
- * never written.
- */
-export function rationaleParts(rationale: string): string[] | null {
-  const trimmed = rationale.trim();
-  // A decimal or an abbreviation would split a sentence in the wrong place, so
-  // require a space and a capital after the stop.
-  const sentences = trimmed
-    // A stop ends a sentence only when a space and a capital follow, which
-    // keeps "TLS 1.2", "1.0" and "section 4.2" intact.
-    //
-    // The lookbehind then excludes the abbreviations that *do* take a capital
-    // after them — "e.g. Kafka", "i.e. Apigee", "Acme Inc. Payments" — because
-    // the budget is now 600 characters rather than 280, and a sentence with
-    // room for an aside will contain one. Each is listed with its trailing dot,
-    // since the split point sits after that dot and that is what the lookbehind
-    // sees. A rationale that splits wrongly loses its labels and renders as a
-    // paragraph, so this is worth being exact about.
-    //
-    // "etc." is deliberately absent: it ends a sentence at least as often as it
-    // sits inside one, and guarding it broke the commoner case.
-    .split(
-      /(?<!\be\.g\.|\bi\.e\.|\bvs\.|\bcf\.|\bapprox\.|\bno\.|\bfig\.|\bincl\.|\bInc\.|\bLtd\.|\bDept\.)(?<=[.!?])\s+(?=[A-Z0-9"“'])/,
-    )
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return sentences.length === RATIONALE_PARTS.length ? sentences : null;
-}
 
 export const TONE: Record<string, string> = {
   bad: "border-danger-line bg-danger-tint text-danger",
@@ -959,7 +895,7 @@ export function Excerpt({ item }: { item: EvidenceItem }) {
 
   if (!isTable) {
     return (
-      <p className="text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink/78">
+      <p className="max-w-[68ch] text-[13px] leading-relaxed whitespace-pre-wrap text-ink/78">
         {item.excerpt}
       </p>
     );
@@ -1239,8 +1175,8 @@ function FindingRow({
    * before the rule — the whole of it is shown and clamped, which is what the
    * row did before. See `rationaleParts`.
    */
-  const parts = rationaleParts(finding.rationale);
-  const gap = parts ? parts[0] : finding.rationale;
+  const sections = rationaleSections(finding.rationale, finding.verdict);
+  const gap = sections ? sections[0].text : finding.rationale;
 
   /**
    * An accepted risk: the breach stands, allowed for this project alone.

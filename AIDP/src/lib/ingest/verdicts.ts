@@ -292,6 +292,234 @@ export type EvidenceItem = {
   documentTitle: string;
 };
 
+/**
+ * The rationale with the model's extract ids taken out of it.
+ *
+ * The clause prompt makes a verdict cite the extracts it rests on, and the ids
+ * it returns in `evidence` are what the finding's evidence cards are built
+ * from. The model writes them into its prose as well — "lacks documented or
+ * approved modular design exception (extracts cmvb8kzz94ba8da8bc2704870,
+ * cmvb8l0404df309f3719faaf6)" — and a reviewer can do nothing with that. It is
+ * an internal key, in the first sentence they read, on 58 of the 1,157
+ * findings in this workspace.
+ *
+ * Stripped at read rather than at write, so the reports already stored lose
+ * them too. The citation itself is not lost: it is the cards below the prose.
+ */
+export function withoutExtractIds(rationale: string): string {
+  return (
+    rationale
+      // A bracket holding ids and nothing else but the words joining them:
+      // "(extracts a, b)", "(extract a)", and the bare "(a, b)".
+      .replace(ID_BRACKET, "")
+      // An id the model ran into its own sentence, with the label it gave it.
+      .replace(LABELLED_ID, "")
+      // The phrase that introduced the reference, left pointing at nothing.
+      // "...to avoid point-to-point silos, as shown in extracts a, b and c."
+      // loses its object with the ids, and "as shown in." is not a sentence.
+      // Only ever immediately before the punctuation that ended it, so a
+      // "shown in" with something real after it is untouched.
+      .replace(
+        /[,;]?\s*\b(?:as\s+)?(?:shown|seen|described|evidenced|documented|listed)\s+(?:in|at|by)\s*(?=[.,;:)]|$)/gi,
+        "",
+      )
+      .replace(/[,;]?\s*\bsee\s*(?=[.,;:)]|$)/gi, "")
+      // Whatever the removal left behind: a doubled space, or a space pushed
+      // up against the punctuation that followed the bracket.
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+([.,;:)])/g, "$1")
+      .replace(/\(\s*\)/g, "")
+      .trim()
+  );
+}
+
+/**
+ * A cuid as Prisma writes one: `c` and 24 more, at least one of them a digit.
+ *
+ * The length is a range rather than the exact 25 every id in the database
+ * actually has, because the model does not always copy one correctly. It
+ * writes "cmuxvob4a36660c2633538f6" — 24 characters, an id that matches no
+ * chunk — beside three that are real. A miscopied id is still an internal key
+ * in a reviewer's sentence, and leaving it there because it is malformed
+ * would show them the one reference they definitely cannot follow.
+ *
+ * The digit is what keeps this off English. A 21-letter lowercase word is not
+ * something these rationales contain, but "c" plus twenty letters is a shape a
+ * regex can find in a long compound noun, and a rationale with a word silently
+ * removed is worse than one with an id left in.
+ */
+const EXTRACT_ID = String.raw`\bc(?=[a-z0-9]{20,28}\b)(?=[a-z0-9]*\d)[a-z0-9]{20,28}\b`;
+
+const ID_BRACKET = new RegExp(
+  String.raw`\s*\((?:\s*(?:extracts?|see|ids?)\b[:\s]*)?` +
+    EXTRACT_ID +
+    String.raw`(?:[\s,;]*(?:and\s+)?` +
+    EXTRACT_ID +
+    String.raw`)*\s*\)`,
+  "gi",
+);
+
+const LABELLED_ID = new RegExp(
+  String.raw`\s*\b(?:extracts?|ids?)\b[:\s]+` + EXTRACT_ID + String.raw`(?:[\s,;]*(?:and\s+)?` + EXTRACT_ID + String.raw`)*`,
+  "gi",
+);
+
+// ------------------------------------------------- the rationale's shape
+//
+// Pure, and about the vocabulary of a verdict, so it lives here rather
+// than in the component that used to own it — which also lets it be run
+// against the stored findings without a JSX toolchain.
+
+export const RATIONALE_PARTS = ["Gap", "Impact", "Fix"] as const;
+
+/**
+ * The same three sentences, named for a clause that passed.
+ *
+ * A covered finding has no gap and nothing to fix, so labelling its three
+ * sentences "Gap / Impact / Fix" tells the reader the opposite of the verdict
+ * directly above them. The judge writes the same shape either way — what the
+ * clause wanted, what the design does about it, why that satisfies it — so only
+ * the labels change.
+ */
+export const RATIONALE_PARTS_COVERED = ["Requirement", "Evidence", "Alignment"] as const;
+
+/** Labels for a verdict: a passing clause is described, not remediated. */
+export function rationaleLabels(verdict: string): readonly string[] {
+  return verdict === "covered" || verdict === "not_applicable"
+    ? RATIONALE_PARTS_COVERED
+    : RATIONALE_PARTS;
+}
+
+/**
+ * A rationale split into gap, impact and fix.
+ *
+ * The judge is now told to write exactly those three, in that order, for any
+ * verdict that is not "covered" (rules 8 and 11 in Workers/aidp/ai/llm.py). Run
+ * together as one paragraph they read as the wall of text the whole change was
+ * meant to remove — the three facts are there but the reader has to find the
+ * boundaries, which is most of the work of skimming eighty findings.
+ *
+ * Split on sentence ends rather than on a delimiter the model was asked to
+ * emit: a format token is one more instruction to disobey, and the sentences
+ * are what the prompt actually constrains. Exactly three sentences is the
+ * shape being labelled, so anything else — a one-line "covered", an older
+ * finding written before the rule, a model that ignored it — is returned
+ * unsplit and rendered as the paragraph it is. That is the honest fallback:
+ * labelling two sentences "Gap" and "Impact" would promise a fix that was
+ * never written.
+ */
+export function rationaleParts(rationale: string): string[] | null {
+  const trimmed = rationale.trim();
+  // A decimal or an abbreviation would split a sentence in the wrong place, so
+  // require a space and a capital after the stop.
+  const sentences = trimmed
+    // A stop ends a sentence only when a space and a capital follow, which
+    // keeps "TLS 1.2", "1.0" and "section 4.2" intact.
+    //
+    // The lookbehind then excludes the abbreviations that *do* take a capital
+    // after them — "e.g. Kafka", "i.e. Apigee", "Acme Inc. Payments" — because
+    // the budget is now 600 characters rather than 280, and a sentence with
+    // room for an aside will contain one. Each is listed with its trailing dot,
+    // since the split point sits after that dot and that is what the lookbehind
+    // sees. A rationale that splits wrongly loses its labels and renders as a
+    // paragraph, so this is worth being exact about.
+    //
+    // "etc." is deliberately absent: it ends a sentence at least as often as it
+    // sits inside one, and guarding it broke the commoner case.
+    .split(
+      /(?<!\be\.g\.|\bi\.e\.|\bvs\.|\bcf\.|\bapprox\.|\bno\.|\bfig\.|\bincl\.|\bInc\.|\bLtd\.|\bDept\.)(?<=[.!?])\s+(?=[A-Z0-9"“'])/,
+    )
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return sentences.length === RATIONALE_PARTS.length ? sentences : null;
+}
+
+/** The sentences of a rationale, by the rule `rationaleParts` splits on. */
+function splitSentences(rationale: string): string[] {
+  return (
+    rationale
+      .trim()
+      .split(
+        /(?<!\be\.g\.|\bi\.e\.|\bvs\.|\bcf\.|\bapprox\.|\bno\.|\bfig\.|\bincl\.|\bInc\.|\bLtd\.|\bDept\.)(?<=[.!?])\s+(?=[A-Z0-9"\u201C'])/,
+      )
+      .map((part) => part.trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * A sentence that tells the reviewer what to do, rather than what is wrong.
+ *
+ * Where the judge writes two sentences instead of three it is almost always
+ * the impact it dropped, not the fix: "No extract addresses naming
+ * conventions… The design must specify naming conventions for tables,
+ * columns, keys, indexes, and views as per the clause." Labelling that second
+ * sentence "Fix" is right, and labelling a second sentence that merely goes on
+ * describing the gap "Fix" is a lie about what the reviewer is reading — so
+ * the label is offered only to a sentence shaped like a remedy.
+ */
+const FIX_OPENING =
+  /^(?:to\s+(?:satisfy|comply|close|remediate|address)\b|(?:the\s+)?(?:design|document|team|project)\s+(?:must|should|needs\s+to|will\s+need)\b|(?:add|define|document|specify|implement|provide|establish|include|record|align|obtain|introduce|apply|create|update|replace|restrict|migrate|remediate|remove|enable|configure|capture|publish|approve|extend)\b)/i;
+
+function looksLikeFix(sentence: string): boolean {
+  return FIX_OPENING.test(sentence.trim());
+}
+
+/**
+ * The rationale as labelled sections, or null when it cannot be labelled.
+ *
+ * Rule 8 of the clause prompt asks for GAP, IMPACT and FIX as three sentences
+ * on a breach, and rule 7 asks for one sentence everywhere else — so a single
+ * sentence is usually the judge doing as it was told, not a failure. What the
+ * stored findings show is that the three-part shape mostly does not arrive:
+ * of 851 findings on verdicts that ask for it, 69 have three sentences. The
+ * rest are one or two, and no amount of splitting invents an impact the judge
+ * never wrote.
+ *
+ * So this labels what is genuinely there and refuses to guess at the rest.
+ * Nothing is dropped either way: a rationale with no labels is rendered as the
+ * paragraph it is.
+ */
+export function rationaleSections(
+  rationale: string,
+  verdict: string,
+): { label: string; text: string }[] | null {
+  const sentences = splitSentences(rationale);
+  const labels = rationaleLabels(verdict);
+  const [gap, impact, fix] = labels;
+
+  if (sentences.length === 3) {
+    return sentences.map((text, i) => ({ label: labels[i], text }));
+  }
+
+  // A passing clause is described rather than remediated, so its labels name
+  // parts of an argument that only reads in order. Two of those three, or five
+  // of them, is not that argument, and guessing which two would misdescribe it.
+  if (verdict === "covered" || verdict === "not_applicable") return null;
+
+  // More than three: the judge overran its sentence budget rather than
+  // changing shape. The first is still the gap and the last is still the fix,
+  // and what sits between them is the impact however many sentences it took.
+  if (sentences.length > 3 && looksLikeFix(sentences[sentences.length - 1])) {
+    return [
+      { label: gap, text: sentences[0] },
+      { label: impact, text: sentences.slice(1, -1).join(" ") },
+      { label: fix, text: sentences[sentences.length - 1] },
+    ];
+  }
+
+  // Two: the impact is the part that goes missing, so this is a gap and a
+  // remedy — but only when the second sentence actually reads as one.
+  if (sentences.length === 2 && looksLikeFix(sentences[1])) {
+    return [
+      { label: gap, text: sentences[0] },
+      { label: fix, text: sentences[1] },
+    ];
+  }
+
+  return null;
+}
+
 /** `evidence` is Json in the schema; narrow it before rendering. */
 export function readEvidence(value: unknown): EvidenceItem[] {
   if (!Array.isArray(value)) return [];

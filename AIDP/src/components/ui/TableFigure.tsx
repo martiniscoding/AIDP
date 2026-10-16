@@ -15,26 +15,30 @@ import { gridColumns, tableGrid } from "@/lib/ingest/parsed-tables";
  * V 11" — is the parser's reading transcript, and it drops a row's empty cells,
  * so a five-column row arrives with three columns missing and nothing saying so.
  *
- * `highlightRow` is for evidence: a chunk of kind `table_row` is one row, and
+ * `highlightRows` is for evidence: a chunk of kind `table_row` is one row, and
  * showing the whole table without saying which row was cited would answer a
- * question nobody asked. The row is marked, the rest is context.
+ * question nobody asked. The rows are marked, the rest is context. It takes
+ * several because one finding routinely cites two rows of the same table, and
+ * drawing that table twice to mark one row each time asks the reviewer to spot
+ * the difference between two pictures.
  */
 export function TableFigure({
   table,
   bare = false,
-  highlightRow = null,
+  highlightRows,
   caption,
 }: {
   table: TableView;
   /** Quieter border, for a table sitting inside another bordered block. */
   bare?: boolean;
-  /** The row this table was cited for, if it was cited for one. */
-  highlightRow?: number | null;
+  /** The rows this table was cited for. Empty when it was cited whole. */
+  highlightRows?: number[];
   /** Overrides the caption line. */
   caption?: string;
 }) {
   const columns = gridColumns(table.columns, table.rows);
   const body = tableGrid(columns, table.rows);
+  const highlighted = new Set(highlightRows ?? []);
   return (
     <figure
       className={cn(
@@ -77,7 +81,7 @@ export function TableFigure({
           )}
           <tbody>
             {body.map((row, rowIndex) => {
-              const cited = highlightRow === rowIndex;
+              const cited = highlighted.has(rowIndex);
               return (
                 <tr key={rowIndex} className={cn(cited && "bg-royal/10")}>
                   {row.map((cell, cellIndex) => (

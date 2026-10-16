@@ -13,26 +13,81 @@ import {
   type Verdict,
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, SCOPE_META, type DecisionScope } from "@/lib/ingest/decision-effects";
+import { rationaleSections } from "@/lib/ingest/verdicts";
+import { citedRowText, type EvidenceView } from "@/lib/ingest/evidence-tables";
 import { TableFigure } from "@/components/ui/TableFigure";
 import { makeStandard, reviewFinding } from "../actions";
 import {
   Excerpt,
   StandardProposal,
   TONE,
-  rationaleLabels,
-  rationaleParts,
   type FindingView,
   type ProjectRef,
 } from "./Assessment";
 import { SeverityTag } from "./SeverityTag";
 
+
+/** How much of a quotation fits opposite a clause before it stops being one. */
+const VOICE_CLAMP = 260;
+
 /**
- * Longer than this and the strip behind this dialog clamped the gap, so the
- * whole rationale is worth repeating here. Shorter and the strip showed all of
- * it, and repeating it would be the same sentence twice. Only reached when the
- * rationale is not the three sentences the judge is asked for.
+ * What each design actually says, for the comparison a contradiction is.
+ *
+ * One quote per design rather than per passage: 23 of the 51 contradictions
+ * in this workspace cite more than one design, and the reviewer's question is
+ * "what does each of them say", not "what were all nine passages".
+ *
+ * A cited table row is quoted as the row, because that is the sentence the
+ * document actually makes — the surrounding drawing is context the evidence
+ * below already supplies.
  */
-const RATIONALE_CLAMP = 160;
+function designVoices(
+  evidence: EvidenceView[],
+  assessed: string | null,
+): { title: string; text: string }[] {
+  // On a project run a contradiction belongs to one design, and the evidence
+  // beside it may be another design's passage cited as context. Quoting that
+  // under "what the design says", in a panel coloured like a breach, accuses
+  // a file the verdict was never about — so the comparison speaks only for
+  // the design the finding is on, and falls back to all of them when the run
+  // covered a single document and there is nothing to disambiguate.
+  const own = assessed ? evidence.filter((item) => item.documentTitle === assessed) : [];
+  const source = own.length > 0 ? own : assessed ? [] : evidence;
+
+  const out: { title: string; text: string }[] = [];
+  const seen = new Set<string>();
+  for (const item of source) {
+    if (seen.has(item.documentId)) continue;
+    const row = item.table ? citedRowText(item.table.table, item.table.rows) : null;
+    // The excerpt opens with the heading path it was stored under, which is
+    // already on the card above and is not the document speaking.
+    let text = row ?? item.excerpt.trim();
+    if (!row && item.headingPath && text.startsWith(item.headingPath)) {
+      text = text.slice(item.headingPath.length).trim();
+    }
+    text = text.replace(/\s+/g, " ");
+    if (!text) continue;
+    seen.add(item.documentId);
+    out.push({
+      title: item.documentTitle,
+      text: text.length > VOICE_CLAMP ? `${text.slice(0, VOICE_CLAMP).trimEnd()}…` : text,
+    });
+  }
+  return out;
+}
+
+/**
+ * The reading measure for prose in this dialog.
+ *
+ * The panel is `max-w-3xl` because a table needs the width. Prose does not:
+ * at 768px less its padding, a 13px line ran to about 112 characters, where
+ * comfortable reading is 45 to 75. The panel keeps its width for the evidence
+ * and the text inside it stops before the edge.
+ */
+const PROSE_MEASURE = "max-w-[68ch]";
+
+/** Past this, the clause is folded behind a control rather than printed. */
+const CLAUSE_CLAMP = 320;
 
 /**
  * One finding, in full, over the list.
@@ -86,6 +141,9 @@ export function FindingModal({
   const [note, setNote] = useState("");
   const [remember, setRemember] = useState(false);
   const [scope, setScope] = useState<DecisionScope>("organisation");
+  // Which finding's clause is unfolded, rather than a boolean that would
+  // have to be reset every time the dialog steps to another one.
+  const [clauseOpenFor, setClauseOpenFor] = useState<string | null>(null);
 
   const panel = useRef<HTMLDivElement | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -163,10 +221,18 @@ export function FindingModal({
           .filter(Boolean)
           .join(" · ");
   const decided = finding.reviewerState !== "pending";
-  const parts = rationaleParts(finding.rationale);
   // "Gap / Impact / Fix" on a clause that passed contradicts its own
   // verdict, so a covered finding is labelled as the description it is.
-  const labels = rationaleLabels(finding.verdict);
+  const clauseOpen = clauseOpenFor === finding.id;
+  const sections = rationaleSections(finding.rationale, finding.verdict);
+  // The clause against the design's own words, for the one verdict that is
+  // a comparison. Only when both halves exist — half of it is the paragraph
+  // it already was.
+  const voices =
+    finding.verdict === "contradicts"
+      ? designVoices(finding.evidence, finding.documentTitle)
+      : [];
+  const facing = voices.length > 0 && Boolean(finding.clauseStatement);
   const draft = finding.draft;
 
   /**
@@ -253,7 +319,7 @@ export function FindingModal({
         <div className="flex items-start gap-3 border-b border-line bg-card px-4 py-3 sm:px-5">
           <span
             className={cn(
-              "mt-0.5 inline-flex shrink-0 items-center rounded-md border px-2 py-1 text-[11px]",
+              "mt-0.5 inline-flex shrink-0 items-center rounded-md border px-2 py-1 text-[11.5px]",
               TONE[meta.tone],
             )}
           >
@@ -266,7 +332,7 @@ export function FindingModal({
             </p>
             <h2
               id="finding-modal-title"
-              className="mt-0.5 font-display text-[15px] font-semibold leading-snug tracking-[-0.01em] text-ink"
+              className="mt-0.5 font-display text-[13px] font-semibold leading-snug tracking-[-0.01em] text-ink/88"
             >
               {finding.clauseTitle}
             </h2>
@@ -318,34 +384,106 @@ export function FindingModal({
           // it. They were reading as clipped at the end of a long finding.
           className="min-h-0 flex-1 overflow-y-auto px-4 pt-3.5 pb-6 sm:px-5"
         >
-        {/* Gap, impact and fix on their own lines, where the engine wrote
-            three sentences. Labelled rather than run together: the reader is
-            asking "how bad, and what do I do?", and a three-clause paragraph
-            makes them parse it to find out. A rationale that is not three
-            sentences is shown as the paragraph it is — see rationaleParts. */}
-        {parts ? (
+        {/* Gap, impact and fix on their own lines, wherever the engine's
+            sentences can be told apart. Labelled rather than run together:
+            the reader is asking "how bad, and what do I do?", and a
+            three-clause paragraph makes them parse it to find out.
+            A rationale whose parts cannot be named is shown whole, as the
+            paragraph it is — never withheld. It used to be withheld below 160
+            characters, on the reasoning that the row behind had already shown
+            it in full; the dialog covers that row, so for 102 of the stored
+            findings the reviewer opened a finding and was told less than the
+            list had already told them. See rationaleSections. */}
+        {sections ? (
           <dl className="mb-3.5 grid gap-2">
-            {parts.map((text, i) => (
-              <div key={labels[i]} className="grid grid-cols-[66px_1fr] gap-x-3 gap-y-0.5 sm:grid-cols-[86px_1fr]">
-                <dt className="pt-px font-display text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink/52">
-                  {labels[i]}
+            {sections.map(({ label, text }) => (
+              <div key={label} className="grid grid-cols-[66px_1fr] gap-x-3 gap-y-0.5 sm:grid-cols-[92px_1fr]">
+                {/* The scanning aid was the faintest thing in the dialog at
+                    10.5px and ink/52 — under the body floor globals.css sets
+                    for itself, at the smallest size in the file. */}
+                <dt className="pt-0.5 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
+                  {label}
                 </dt>
-                <dd className="min-w-0 text-[13px] leading-relaxed text-ink/82">{text}</dd>
+                <dd className={cn(PROSE_MEASURE, "min-w-0 text-[15px] leading-relaxed text-ink/88")}>
+                  {text}
+                </dd>
               </div>
             ))}
           </dl>
         ) : (
-          finding.rationale.length > RATIONALE_CLAMP && (
-            <p className="mb-3 text-[13px] leading-relaxed text-ink/78">
+          finding.rationale && (
+            <p className={cn(PROSE_MEASURE, "mb-3 text-[15px] leading-relaxed text-ink/88")}>
               {finding.rationale}
             </p>
           )
         )}
-        {finding.clauseStatement && (
-          <p className="mb-3 text-[13px] leading-relaxed text-ink/72">
-            <span className="text-ink/62">Requires: </span>
-            {finding.clauseStatement}
-          </p>
+        {/* A contradiction is settled by holding two sentences against each
+            other. Printed one after the other, down a column 112 characters
+            wide, that comparison is something the reviewer assembles; side by
+            side it is something they see. */}
+        {facing && (
+          <div className="mb-3.5 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg border border-line bg-card px-3 py-2.5">
+              <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
+                The standard requires
+              </p>
+              <p className="text-[13px] leading-relaxed text-ink/82">
+                {finding.clauseStatement}
+              </p>
+            </div>
+            {/* Quoted, not accused. On a project-wide contradiction the
+                evidence spans several designs and nothing here identifies
+                which passage is the offending one — 23 of the 51 are that
+                shape. Colouring this panel like a breach would make that
+                claim about whichever passage happened to be first. The
+                verdict badge and the gap above carry the accusation. */}
+            <div className="rounded-lg border border-line bg-canvas-sunk px-3 py-2.5">
+              <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
+                {voices.length > 1 ? "What the designs say" : "What the design says"}
+              </p>
+              <ul className="space-y-1.5">
+                {voices.map((voice) => (
+                  <li key={voice.title || voice.text}>
+                    {/* Named only when there is more than one, so a single
+                        design is not labelled with what the header already
+                        says. */}
+                    {voices.length > 1 && voice.title && (
+                      <span className="mr-1.5 rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
+                        {voice.title}
+                      </span>
+                    )}
+                    <span className="text-[13px] leading-relaxed text-ink/82">{voice.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {finding.clauseStatement && !facing && (
+          <div className={cn(PROSE_MEASURE, "mb-3")}>
+            <p
+              className={cn(
+                "text-[13px] leading-relaxed text-ink/72",
+                // Median 25 words, but the longest clause in this workspace is
+                // 293 — a wall that arrives before the evidence and is where a
+                // reviewer stops reading. Only the long ones are folded.
+                !clauseOpen && "line-clamp-3",
+              )}
+            >
+              <span className="text-ink/62">Requires: </span>
+              {finding.clauseStatement}
+            </p>
+            {finding.clauseStatement.length > CLAUSE_CLAMP && (
+              <button
+                type="button"
+                onClick={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
+                className="mt-0.5 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/88"
+              >
+                {clauseOpen ? "Show less of the clause" : "Show the whole clause"}
+              </button>
+            )}
+          </div>
         )}
 
         {/* How strongly the clause binds, and how that was established.
@@ -353,7 +491,7 @@ export function FindingModal({
             severity needs to see this to know what to argue with — and where
             the standard never said, the honest answer is on the screen rather
             than a level the engine made up. */}
-        <p className="mb-3 text-[12px] text-ink/58">
+        <p className={cn(PROSE_MEASURE, "mb-3 text-[11.5px] text-ink/58")}>
           {/* The label is empty for an unstated obligation — see OBLIGATION_META
               — so the separator goes with it rather than leaving a leading
               "· " on the line. */}
@@ -376,7 +514,7 @@ export function FindingModal({
 
         {/* Severity explains priority; the uncalibrated model confidence stays
             internal and is not presented as a probability to reviewers. */}
-        <p className="mb-3 text-[12px] text-ink/58">
+        <p className={cn(PROSE_MEASURE, "mb-3 text-[11.5px] text-ink/58")}>
           {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
           Evidence basis: {evidenceBasis}.
         </p>
@@ -395,7 +533,7 @@ export function FindingModal({
                         across a project, and the reviewer has to know which
                         file to open. */}
                     {item.documentTitle && (
-                      <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/72">
+                      <span className="rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
                         {item.documentTitle}
                       </span>
                     )}
@@ -410,7 +548,7 @@ export function FindingModal({
                     {item.figureId && (
                       <span
                         title="A model's reading of a diagram, not text from the page"
-                        className="inline-flex items-center gap-1 rounded border border-warn-line px-1.5 py-px text-[10.5px] text-warn"
+                        className="inline-flex items-center gap-1 rounded border border-warn-line px-1.5 py-px text-[11.5px] text-warn"
                       >
                         <Sparkles size={9} />
                         model-described diagram
@@ -427,11 +565,13 @@ export function FindingModal({
                     <TableFigure
                       table={item.table.table}
                       bare
-                      highlightRow={item.table.row}
+                      highlightRows={item.table.rows}
                       caption={
-                        item.table.row === null
+                        item.table.rows.length === 0
                           ? "Quoted from this table"
-                          : "Quoted from the highlighted row"
+                          : item.table.rows.length === 1
+                            ? "Quoted from the highlighted row"
+                            : "Quoted from the highlighted rows"
                       }
                     />
                   ) : (
@@ -458,7 +598,7 @@ export function FindingModal({
             ))}
           </ul>
         ) : (
-          <p className="mb-3 text-[12.5px] text-ink/62">
+          <p className="mb-3 text-[13px] text-ink/62">
             No passage in the submitted document was cited for this finding.
           </p>
         )}
@@ -477,7 +617,7 @@ export function FindingModal({
               {finding.appliedDecisions.map((decision) => (
                 <li
                   key={decision.id}
-                  className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-ink/78"
+                  className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink/78"
                 >
                   <span className="text-ink/62">
                     {EFFECT_META[decision.effect].label}:
@@ -496,11 +636,11 @@ export function FindingModal({
         )}
 
         {finding.reviewerNote && (
-          <p className="mb-3 text-[12.5px] text-ink/68">
+          <p className={cn(PROSE_MEASURE, "mb-3 text-[13px] text-ink/68")}>
             <span className="text-ink/62">Note: </span>
             {finding.reviewerNote}
             {finding.promotedDecisionId && (
-              <span className="ml-2 rounded bg-royal/8 px-1.5 py-0.5 text-[11px] text-royal">
+              <span className="ml-2 rounded bg-royal/8 px-1.5 py-0.5 text-[11.5px] text-royal">
                 kept as a decision
               </span>
             )}
@@ -514,7 +654,7 @@ export function FindingModal({
             type="button"
             disabled={pending}
             onClick={() => decide(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/72 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink/72 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
           >
             <Check size={12} />
             Confirm issue
@@ -590,7 +730,7 @@ export function FindingModal({
                       ? "e.g. the legacy protocol stays until the gateway migration completes in Q3."
                       : "e.g. KMS-managed keys in eu-west-1 satisfy this clause."
                   }
-                  className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[12.5px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+                  className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
                 />
               </label>
 
@@ -610,7 +750,7 @@ export function FindingModal({
                   className="mt-0.5 size-3.5 shrink-0 accent-royal-mid disabled:opacity-40"
                 />
                 <span className="min-w-0">
-                  <span className="block text-[12.5px] text-ink/88">
+                  <span className="block text-[13px] text-ink/88">
                     Remember this for future assessments
                   </span>
                   <span className="block text-[11.5px] leading-relaxed text-ink/64">
@@ -667,7 +807,7 @@ export function FindingModal({
                   onClick={() =>
                     mode === "confirm" ? decide(true) : decide(false, chosen ?? undefined)
                   }
-                  className="rounded-full bg-royal px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
+                  className="rounded-full bg-royal px-3.5 py-1.5 text-[11.5px] font-medium text-white transition-colors hover:bg-royal-mid disabled:opacity-40"
                 >
                   {remember
                     ? scope === "project"
@@ -680,7 +820,7 @@ export function FindingModal({
                 <button
                   type="button"
                   onClick={close}
-                  className="text-[12px] text-ink/62 hover:text-ink/78"
+                  className="text-[11.5px] text-ink/62 hover:text-ink/78"
                 >
                   cancel
                 </button>
@@ -696,7 +836,7 @@ export function FindingModal({
                 type="button"
                 disabled={pending}
                 onClick={() => setMode("confirm")}
-                className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
+                className="rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
               >
                 Confirm issue with a reason…
               </button>
@@ -704,7 +844,7 @@ export function FindingModal({
                 type="button"
                 disabled={pending}
                 onClick={() => setMode("override")}
-                className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-warn-line hover:text-warn disabled:opacity-50"
+                className="rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink/68 transition-colors hover:border-warn-line hover:text-warn disabled:opacity-50"
               >
                 Override verdict&hellip;
               </button>
@@ -717,7 +857,7 @@ export function FindingModal({
                   type="button"
                   disabled={pending}
                   onClick={beginAllow}
-                  className="rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
+                  className="rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
                 >
                   Accept risk for this project…
                 </button>
@@ -736,7 +876,7 @@ export function FindingModal({
                       router.refresh();
                     })
                   }
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink/68 transition-colors hover:border-royal-mid/50 hover:text-royal disabled:opacity-50"
                 >
                   <Scale size={12} />
                   Make a standard…
