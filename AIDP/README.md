@@ -129,7 +129,21 @@ transaction mode and can't hold the session-level advisory lock
 
 **Production deploys.** Vercel runs `npm run db:deploy` before `npm run build`
 through `vercel.json`. Configure `DIRECT_DATABASE_URL` in the Vercel project
-environment for each environment that deploys the app. This applies pending
+environment for each environment that deploys the app — this is required, not
+optional, and the build refuses to start without it.
+
+`DIRECT_DATABASE_URL` is the same Neon connection string with `-pooler` removed
+from the host. Migrations take a session-level advisory lock; Neon's pooler runs
+PgBouncer in transaction mode and cannot hold one, so running them against the
+pooled host waits ten seconds and fails with
+
+```
+Error: P1002 ... Timed out trying to acquire a postgres advisory lock
+```
+
+which reads as a database outage when the database is perfectly healthy.
+`scripts/check-migrate-url.mts` runs first and says so in those words rather
+than letting the timeout happen. This applies pending
 Prisma migrations before the deployment is built and served; if a migration
 fails, the deployment fails instead of serving code against an old schema.
 Keep `DATABASE_URL` set to the pooled connection string for application

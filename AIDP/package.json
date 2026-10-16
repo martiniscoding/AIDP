@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "db:deploy": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-migrate-url.mts && prisma migrate deploy",
     "db:studio": "prisma studio"
   },
   "dependencies": {
