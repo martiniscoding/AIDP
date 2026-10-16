@@ -290,6 +290,14 @@ export type EvidenceItem = {
    */
   documentId: string;
   documentTitle: string;
+  /**
+   * The design's own words that a contradiction rests on, where the judge
+   * named them and the worker verified them against the text the model was
+   * shown. Null on every other passage, and on every finding assessed before
+   * the judge was asked for it — the comparison is simply not drawn then,
+   * rather than drawn around a guess.
+   */
+  conflictQuote: string | null;
 };
 
 /**
@@ -593,6 +601,10 @@ export function readEvidence(value: unknown): EvidenceItem[] {
         figureId: typeof row.figureId === "string" ? row.figureId : null,
         documentId: typeof row.documentId === "string" ? row.documentId : "",
         documentTitle: typeof row.documentTitle === "string" ? row.documentTitle : "",
+        conflictQuote:
+          typeof row.conflictQuote === "string" && row.conflictQuote.trim()
+            ? row.conflictQuote.trim()
+            : null,
       },
     ];
   });

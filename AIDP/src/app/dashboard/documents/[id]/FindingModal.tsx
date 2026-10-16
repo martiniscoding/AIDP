@@ -22,7 +22,6 @@ import {
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, SCOPE_META, type DecisionScope } from "@/lib/ingest/decision-effects";
 import { rationaleSections } from "@/lib/ingest/verdicts";
-import { citedRowText } from "@/lib/ingest/table-text";
 import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import { TableFigure } from "@/components/ui/TableFigure";
 import { makeStandard, reviewFinding } from "../actions";
@@ -36,51 +35,27 @@ import {
 import { SeverityTag } from "./SeverityTag";
 
 
-/** How much of a quotation fits opposite a clause before it stops being one. */
-const VOICE_CLAMP = 260;
-
 /**
  * What each design actually says, for the comparison a contradiction is.
  *
- * One quote per design rather than per passage: 23 of the 51 contradictions
- * in this workspace cite more than one design, and the reviewer's question is
- * "what does each of them say", not "what were all nine passages".
+ * Only the passages the judge named as the conflict and the worker verified
+ * word for word against the text the model was shown — see `_mark_conflict`
+ * in analyse.py. Nothing is inferred here and nothing is chosen here.
  *
- * A cited table row is quoted as the row, because that is the sentence the
- * document actually makes — the surrounding drawing is context the evidence
- * below already supplies.
+ * It used to take the first retrieved passage per design, which is a guess:
+ * retrieval ranks passages for the judge to read, not for being the sentence
+ * that breaks the clause. Over one project's fifteen contradictions that
+ * guess quoted a design the finding never mentions twenty times out of forty,
+ * and twice put a design's own remediation plan in its mouth as the breach.
+ * Where no quote was verified the comparison is not drawn at all.
  */
-function designVoices(
-  evidence: EvidenceView[],
-  assessed: string | null,
-): { title: string; text: string }[] {
-  // On a project run a contradiction belongs to one design, and the evidence
-  // beside it may be another design's passage cited as context. Quoting that
-  // under "what the design says", in a panel coloured like a breach, accuses
-  // a file the verdict was never about — so the comparison speaks only for
-  // the design the finding is on, and falls back to all of them when the run
-  // covered a single document and there is nothing to disambiguate.
-  const own = assessed ? evidence.filter((item) => item.documentTitle === assessed) : [];
-  const source = own.length > 0 ? own : assessed ? [] : evidence;
-
+function designVoices(evidence: EvidenceView[]): { title: string; text: string }[] {
   const out: { title: string; text: string }[] = [];
   const seen = new Set<string>();
-  for (const item of source) {
-    if (seen.has(item.documentId)) continue;
-    const row = item.table ? citedRowText(item.table.table, item.table.rows) : null;
-    // The excerpt opens with the heading path it was stored under, which is
-    // already on the card above and is not the document speaking.
-    let text = row ?? item.excerpt.trim();
-    if (!row && item.headingPath && text.startsWith(item.headingPath)) {
-      text = text.slice(item.headingPath.length).trim();
-    }
-    text = text.replace(/\s+/g, " ");
-    if (!text) continue;
+  for (const item of evidence) {
+    if (!item.conflictQuote || seen.has(item.documentId)) continue;
     seen.add(item.documentId);
-    out.push({
-      title: item.documentTitle,
-      text: text.length > VOICE_CLAMP ? `${text.slice(0, VOICE_CLAMP).trimEnd()}…` : text,
-    });
+    out.push({ title: item.documentTitle, text: item.conflictQuote });
   }
   return out;
 }
@@ -250,10 +225,7 @@ export function FindingModal({
   // The clause against the design's own words, for the one verdict that is
   // a comparison. Only when both halves exist — half of it is the paragraph
   // it already was.
-  const voices =
-    finding.verdict === "contradicts"
-      ? designVoices(finding.evidence, finding.documentTitle)
-      : [];
+  const voices = finding.verdict === "contradicts" ? designVoices(finding.evidence) : [];
   const facing = voices.length > 0 && Boolean(finding.clauseStatement);
   const draft = finding.draft;
 

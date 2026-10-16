@@ -319,6 +319,19 @@ Rules that matter:
    clouds and leaves its network interconnect outside the monitored estate.
    Move the compute and database tiers into the AWS landing zone, or record an
    Architecture Review Board exception before the build starts."
+8b. For "contradicts", and only for it, also return "conflict": the one extract
+   whose words the verdict rests on, and those words themselves.
+     {{"extract": "an id you listed in evidence",
+       "quote": "at most 200 characters, copied character for character from
+                 inside that extract"}}
+   The quote is what the design says, not your description of it and not the
+   clause it breaks. It is the sentence a reviewer would point at to agree with
+   you — and where the passage is a table row, it is that row. Copy it exactly:
+   a quote that is not inside the named extract word for word is discarded, and
+   the finding loses the comparison that makes it checkable at a glance.
+   Do not quote the design's own remediation plan, its self-assessment, or a
+   line saying it is aligned. Those are the design agreeing with the standard;
+   the conflict is where it does not.
 8a. Write as a principal enterprise architect states a finding on the record:
    authoritative, technical, and short. Banned outright — hedging ("it seems",
    "arguably", "one could argue", "may want to", "it would be good to"), filler
@@ -365,7 +378,8 @@ when not, three complete sentences - gap, impact, fix - up to 600 chars",
   "obligation": "must | should | may | unstated — how strongly THIS clause binds, \
 read from its own words; "unstated" if it never says, and do not supply one it does \
 not state",
-  "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...]}}"""
+  "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...],
+  "conflict": {{"extract": "extract id", "quote": "the design's own words"}}}}"""
 
 
 class QuotaExhausted(RuntimeError):

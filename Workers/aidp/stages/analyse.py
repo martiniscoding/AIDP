@@ -1037,6 +1037,13 @@ def _judge_by_search(
             c.excerpt for cid in cited_figures if (c := by_id.get(cid)) is not None
         ),
     )
+    # After the guard, not before: the guard can demote a contradiction to
+    # needs_review, and a quote presented as the conflict on a verdict that is
+    # no longer a conflict would be the UI asserting something nothing stands
+    # behind any more.
+    if verdict == "contradicts":
+        _mark_conflict(evidence, raw.get("conflict"), by_id)
+
     return _Judged(
         verdict, confidence, rationale, evidence, applied, best,
         obligation=str(raw.get("obligation") or ""),
@@ -2157,6 +2164,57 @@ def _render_clause(clause: dict) -> str:
     # rule exists and how to implement it, and including them tempts the model
     # to mark a design down for not following advice the clause never required.
     return "\n".join(parts)
+
+
+# The design's own words, as the comparison beside the clause prints them.
+MAX_CONFLICT_QUOTE = 240
+
+
+def _mark_conflict(
+    evidence: list[dict],
+    raw_conflict: object,
+    by_id: dict[str, retrieval.Candidate],
+) -> None:
+    """Mark the one passage a contradiction rests on, if the judge named it.
+
+    A finding cites several passages and says nothing about what each is for,
+    so a report showing "what the design says" beside the clause had to pick
+    one — and picking meant guessing. Measured over a project's fifteen
+    contradictions, the guess quoted a design the finding never mentions in
+    twenty of forty cases, and quoted a design's own remediation plan, or a row
+    reading "Aligned", as the breach.
+
+    So the judge names it instead, and this verifies the naming rather than
+    trusting it: the extract has to be one the finding actually cites, and the
+    quote has to appear inside the text the model was shown, word for word on
+    whitespace and case. Anything else is dropped and the report falls back to
+    its paragraph. A quote that is nearly right is the failure this guards
+    against — it would be put in the design's mouth, in quotation marks, in a
+    compliance record.
+    """
+    if not isinstance(raw_conflict, dict):
+        return
+    extract = str(raw_conflict.get("extract") or "").strip()
+    quote = " ".join(str(raw_conflict.get("quote") or "").split())
+    if not extract or not quote:
+        return
+
+    candidate = by_id.get(extract)
+    if candidate is None:
+        logs.info(log, "conflict quote names an extract this finding does not cite", extract=extract)
+        return
+
+    # Compared against `excerpt`, which is the text `_render_extracts` put in
+    # front of the model — not the stored chunk, which may differ from it.
+    haystack = " ".join(candidate.excerpt.split()).casefold()
+    if quote.casefold() not in haystack:
+        logs.info(log, "conflict quote is not inside its extract", extract=extract)
+        return
+
+    for item in evidence:
+        if item.get("chunkId") == extract:
+            item["conflictQuote"] = quote[:MAX_CONFLICT_QUOTE]
+            return
 
 
 def _render_extracts(candidates: list[retrieval.Candidate], *, named: bool = False) -> str:
