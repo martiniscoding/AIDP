@@ -131,8 +131,8 @@ for name, fn in (
 frame_src = inspect.getsource(analyse._framework_clauses)
 ok("the clause query is not capped", "LIMIT" not in frame_src.upper(), frame_src[-200:])
 ok(
-    "the loop iterates the pending list, not a fixed index",
-    "for index, clause in enumerate(pending, start=1)" in loop_src,
+    "the loop iterates pending design-clause units, not a fixed index",
+    "for index, (clause, design_id) in enumerate(pending, start=1)" in loop_src,
 )
 
 

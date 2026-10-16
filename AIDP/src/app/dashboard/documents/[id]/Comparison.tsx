@@ -139,7 +139,7 @@ function Side({
   bordered?: boolean;
 }) {
   const severity = finding
-    ? severityOf(finding.verdict, finding.confidence, finding.obligation)
+    ? severityOf(finding.verdict, finding.obligation)
     : null;
   return (
     <div className={cn("min-w-0 px-4 py-3", bordered && "border-t border-line md:border-l md:border-t-0")}>

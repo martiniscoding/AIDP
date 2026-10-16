@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { startProjectAssessment } from "../actions";
 
 export type ProjectRunSummary = {
+  designRelationship: string;
   state: string;
   totalClauses: number;
   completedClauses: number;
@@ -83,6 +84,7 @@ export function AssessProject({
   unready,
   archived,
   run,
+  relationship,
 }: {
   projectId: string;
   /** Designs that have finished processing, and so can be read. */
@@ -90,6 +92,7 @@ export function AssessProject({
   unready: number;
   archived: boolean;
   run: ProjectRunSummary | null;
+  relationship: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -114,12 +117,12 @@ export function AssessProject({
     >
       <div>
         <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
-          Assess the whole project
+          {relationship === "alternatives" ? "Assess each candidate" : "Assess the whole project"}
         </h2>
         <p className="mx-auto mt-1.5 max-w-xl text-[12.5px] text-ink/64">
-          Every clause judged once against all{" "}
-          {designs === 1 ? "of this project's designs" : `${designs} designs`} together, so what one
-          design leaves out another can answer.
+          {relationship === "alternatives"
+            ? `Each of the ${designs} alternative design${designs === 1 ? "" : "s"} is assessed independently. Evidence from one candidate cannot answer for another.`
+            : `Every clause is judged once against all ${designs === 1 ? "of this project's designs" : `${designs} designs`} together, so what one design leaves out another can answer.`}
           {unready > 0 && (
             <>
               {" "}
@@ -136,7 +139,7 @@ export function AssessProject({
           {live
             ? run.state === "queued"
               ? "Waiting for a worker to pick it up…"
-              : `Assessing — ${run.completedClauses} of ${run.totalClauses} clauses`
+              : `Assessing — ${run.completedClauses} of ${run.totalClauses} ${run.designRelationship === "alternatives" ? "design-specific requirement checks" : "clauses"}`
             : run.state === "complete"
               ? `Last run: ${run.reported} finding${run.reported === 1 ? "" : "s"} to read` +
                 (run.open > 0 ? `, ${run.open} contradicting a standard` : "")
@@ -170,7 +173,11 @@ export function AssessProject({
           ) : (
             <Layers size={15} aria-hidden="true" />
           )}
-          {run ? "Assess again" : "Assess all designs together"}
+          {run
+            ? "Assess again"
+            : relationship === "alternatives"
+              ? "Assess candidates separately"
+              : "Assess all designs together"}
         </button>
 
         {run && (

@@ -61,6 +61,7 @@ export default async function ProjectPage({
   const projectCounts = projectRun ? await verdictCounts(projectRun.id) : emptyCounts();
   const projectRunView: ProjectRunSummary | null = projectRun
     ? {
+        designRelationship: projectRun.designRelationship ?? "components",
         state: projectRun.state,
         totalClauses: projectRun.totalClauses,
         completedClauses: projectRun.completedClauses,
@@ -133,6 +134,7 @@ export default async function ProjectPage({
         designs={readyDesigns.length}
         unready={inScope.length - readyDesigns.length}
         archived={archived}
+        relationship={project.designRelationship}
         run={projectRunView}
       />
 

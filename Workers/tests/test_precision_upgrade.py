@@ -469,21 +469,23 @@ ok("within the cap", len(rationale) <= analyse.MAX_RATIONALE, len(rationale))
 # reach the report. It is reached with no database here, so the inner query
 # fails too, and both layers are exercised at once.
 raised = None
-try:
-    analyse._demote_unconfirmed({"id": "run-1"}, [], "the provider refused")
-except Exception as exc:  # noqa: BLE001 — that it raises at all is the failure
-    raised = exc
+with mock.patch.object(analyse.db, "connection", side_effect=RuntimeError("DB unavailable")):
+    try:
+        analyse._demote_unconfirmed({"id": "run-1"}, [], "the provider refused")
+    except Exception as exc:  # noqa: BLE001 — that it raises at all is the failure
+        raised = exc
 ok("and a failure inside it is still swallowed", raised is None, raised)
 
 raised = None
-try:
-    analyse._confirm_absents(
-        {"id": "run-1", "documentId": "doc-1"},
-        [],
-        designs.Scope([designs.Design("doc-1", "A design")], []),
-    )
-except Exception as exc:  # noqa: BLE001
-    raised = exc
+with mock.patch.object(analyse.db, "connection", side_effect=RuntimeError("DB unavailable")):
+    try:
+        analyse._confirm_absents(
+            {"id": "run-1", "documentId": "doc-1"},
+            [],
+            designs.Scope([designs.Design("doc-1", "A design")], []),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raised = exc
 ok("as it is for the pass as a whole", raised is None, raised)
 
 

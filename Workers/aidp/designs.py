@@ -39,6 +39,7 @@ SELECT "id", "title", "status"
  WHERE "projectId" = %(project)s
    AND "organisationId" = %(org)s
    AND "role" = %(role)s
+   AND (%(scope_ids)s::text[] IS NULL OR "id" = ANY(%(scope_ids)s::text[]))
  ORDER BY "createdAt", "id"
 """
 
@@ -60,6 +61,9 @@ class Scope:
     # None when the design belongs to no project, which is true of designs
     # uploaded before projects existed.
     project_id: str | None = None
+    # Explicit project setting: alternative designs must each get their own
+    # finding rows and evidence window. Never inferred from descriptions.
+    alternatives: bool = False
 
     @property
     def document_ids(self) -> list[str]:
@@ -85,7 +89,9 @@ def for_run(conn, run: dict) -> Scope:
     if not project_id:
         row = db.one(
             conn,
-            'SELECT "id", "title", "projectId" FROM "document" WHERE "id" = %s',
+            'SELECT d."id", d."title", d."projectId", p."designRelationship" '
+            'FROM "document" d LEFT JOIN "project" p ON p."id" = d."projectId" '
+            'WHERE d."id" = %s',
             (run["documentId"],),
         )
         if row is None:
@@ -94,16 +100,72 @@ def for_run(conn, run: dict) -> Scope:
             [Design(row["id"], row["title"] or "")],
             [],
             project_id=row["projectId"],
+            alternatives=(run.get("designRelationship") or row.get("designRelationship"))
+            == "alternatives",
         )
 
+    snapshot_ready = list(run.get("designIds") or [])
+    snapshot_unready = list(run.get("unreadyDesignIds") or [])
+    snapshot_ids = snapshot_ready + snapshot_unready
     rows = db.query(
         conn,
         _OF_PROJECT,
-        {"project": project_id, "org": run["organisationId"], "role": _ROLE},
+        {
+            "project": project_id,
+            "org": run["organisationId"],
+            "role": _ROLE,
+            # Empty means a historical run, which predates scope snapshots.
+            # New runs pin both ready candidates and candidates left out.
+            "scope_ids": snapshot_ids or None,
+        },
     )
-    designs = [Design(r["id"], r["title"] or "") for r in rows if r["status"] == _READY]
-    unready = [r["title"] or r["id"] for r in rows if r["status"] != _READY]
-    return Scope(designs, unready, project_id=project_id)
+    if snapshot_ids:
+        by_id = {r["id"]: r for r in rows}
+        designs = [
+            Design(by_id[document_id]["id"], by_id[document_id]["title"] or "")
+            for document_id in snapshot_ready
+            if document_id in by_id and by_id[document_id]["status"] == _READY
+        ]
+        unready_ids = [
+            document_id
+            for document_id in snapshot_ids
+            if document_id not in by_id
+            or document_id in snapshot_unready
+            or by_id[document_id]["status"] != _READY
+        ]
+        unready = [
+            (by_id[document_id].get("title") or document_id)
+            if document_id in by_id
+            else document_id
+            for document_id in unready_ids
+        ]
+    else:
+        designs = [Design(r["id"], r["title"] or "") for r in rows if r["status"] == _READY]
+        unready = [r["title"] or r["id"] for r in rows if r["status"] != _READY]
+    relationship = run.get("designRelationship")
+    if relationship is None:
+        row = db.one(
+            conn,
+            'SELECT "designRelationship" FROM "project" WHERE "id" = %s',
+            (project_id,),
+        )
+        relationship = row.get("designRelationship") if row else None
+    return Scope(
+        designs,
+        unready,
+        project_id=project_id,
+        alternatives=relationship == "alternatives",
+    )
+
+
+def only(scope: Scope, document_id: str) -> Scope:
+    """The same project run narrowed to one design, preserving its declared scope."""
+    return Scope(
+        [design for design in scope.designs if design.document_id == document_id],
+        [],
+        project_id=scope.project_id,
+        alternatives=scope.alternatives,
+    )
 
 
 def describe(scope: Scope) -> str:

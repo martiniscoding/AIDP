@@ -39,6 +39,10 @@ export async function newProject(form: FormData): Promise<ProjectResult> {
     const project = await createProject(access, {
       name: String(form.get("name") ?? ""),
       description: String(form.get("description") ?? ""),
+      designRelationship:
+        form.get("designRelationship") == null
+          ? undefined
+          : String(form.get("designRelationship")),
     });
     return { ok: true, message: `Opened “${project.name}”.`, id: project.id };
   });
@@ -49,6 +53,10 @@ export async function renameProject(id: string, form: FormData): Promise<Project
     await updateProject(access, id, {
       name: String(form.get("name") ?? ""),
       description: String(form.get("description") ?? ""),
+      designRelationship:
+        form.get("designRelationship") == null
+          ? undefined
+          : String(form.get("designRelationship")),
     });
     revalidatePath(`/dashboard/projects/${id}`);
     return { ok: true, message: "Saved." };

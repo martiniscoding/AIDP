@@ -86,6 +86,22 @@ export function NewProject({ defaultOpen = false }: { defaultOpen?: boolean }) {
             className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink/40 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
           />
         </label>
+        <label className="block sm:col-span-2">
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-ink/58">
+            How do the designs relate?
+          </span>
+          <select
+            name="designRelationship"
+            defaultValue="components"
+            className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+          >
+            <option value="components">Parts of one solution — assess together</option>
+            <option value="alternatives">Alternative candidates — assess separately</option>
+          </select>
+          <span className="mt-1 block text-[11.5px] leading-5 text-ink/55">
+            Choose alternatives when each design must stand on its own. This sets the scope for project assessments.
+          </span>
+        </label>
       </div>
 
       <div className="mt-3.5 flex flex-wrap items-center gap-3">

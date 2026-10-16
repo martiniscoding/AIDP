@@ -183,6 +183,7 @@ export default async function DocumentPage({
 
   const findingViews: FindingView[] = findings.map((f) => ({
     id: f.id,
+    documentTitle: null,
     clauseRef: f.clauseRef,
     clauseTitle: f.clauseTitle,
     clauseStatement: f.clauseStatement,

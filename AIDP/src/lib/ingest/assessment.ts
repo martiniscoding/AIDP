@@ -311,7 +311,10 @@ export async function listFindings(userId: string, runId: string) {
   if (!run) return [];
   await requireMembership(userId, run.organisationId);
 
-  const findings = await prisma.finding.findMany({ where: { runId } });
+  const findings = await prisma.finding.findMany({
+    where: { runId },
+    include: { document: { select: { title: true } } },
+  });
   const rank = new Map(VERDICTS.map((v, i) => [v as string, i]));
   return findings.sort(
     (a, b) =>

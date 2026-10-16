@@ -372,6 +372,10 @@ model Project {
   name        String
   description String @default("")
 
+  /// Whether submitted designs describe one system together or are independent
+  /// alternatives. This is explicit assessment scope, never inferred from prose.
+  designRelationship String @default("components")
+
   /// "active" | "archived"
   status String @default("active")
 
@@ -495,6 +499,7 @@ model Document {
   chunks   Chunk[]
   jobs     Job[]
   issues   IngestIssue[]
+  assessmentFindings Finding[]
 
   // A reference standard's text as numbered lines, and every model reading of
   // its rules. See Workers/aidp/parsing/rules.py.
@@ -1101,6 +1106,24 @@ model AssessmentRun {
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
+  /// "components" | "alternatives" — how this run read its designs.
+  ///
+  /// Copied from the project when the run is opened rather than read back off
+  /// it, for the same reason the framework is pinned: a project's owner can
+  /// change the relationship afterwards, and a report has to keep explaining
+  /// the verdicts it actually produced. A run judged as rival candidates says
+  /// so forever, even once the project has been switched to one solution.
+  ///
+  /// Single-design runs snapshot their project's setting too. Historical runs
+  /// default to components because that is how they were assessed.
+  designRelationship String @default("components")
+  /// Ready design IDs selected when this run was created. Resumes cannot absorb
+  /// a later upload or a document that was still indexing when the run began.
+  designIds String[] @default([])
+  /// IDs present but not ready at run creation, kept separate so later indexing
+  /// cannot silently add them to this run's assessed scope.
+  unreadyDesignIds String[] @default([])
+
   frameworkId String
   framework   Framework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
 
@@ -1158,6 +1181,15 @@ model Finding {
   runId String
   run   AssessmentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
+  /// Which design this result evaluates. Null is retained for historical
+  /// project-wide aggregate rows written before per-design assessment.
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  /// Stable upsert scope: the design id for a per-design result, and the empty
+  /// string for a legacy aggregate row.
+  designKey String @default("")
+
   /// The reference clause this answers. Not a foreign key to Clause: findings
   /// have to outlive a re-parse of the reference document, and cascading them
   /// away would silently erase a reviewer's decisions.
@@ -1180,9 +1212,8 @@ model Finding {
   /// Workers/aidp/stages/analyse.py.
   ///
   /// The model's own opinion of itself, so it is a heuristic and not a
-  /// calibrated probability. It gates demotions and severity; it is never shown
-  /// as a percentage beside a verdict, because 87% next to "Contradicts"
-  /// invites a reader to treat a breach as 13% fine.
+  /// calibrated probability. The worker uses it only in evidence-sufficiency
+  /// guards; it is not part of severity and is not shown as a percentage.
   confidence Float  @default(0)
   rationale  String @default("")
 
@@ -1228,7 +1259,8 @@ model Finding {
 
   createdAt DateTime @default(now())
 
-  @@unique([runId, clauseId])
+  @@unique([runId, clauseId, designKey])
+  @@index([runId, documentId])
   @@index([runId, verdict])
   @@map("finding")
 }

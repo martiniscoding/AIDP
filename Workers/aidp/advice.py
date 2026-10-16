@@ -79,7 +79,7 @@ from .coverage import (
 
 log = logs.get(__name__)
 
-VERSION = 1
+VERSION = 2
 
 # Kept from one reply, highest priority first. A reviewer handed forty
 # suggestions reads none of them.

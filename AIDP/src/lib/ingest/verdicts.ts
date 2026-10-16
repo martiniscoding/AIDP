@@ -184,26 +184,6 @@ export const SEVERITY_META: Record<
 };
 
 /**
- * The line above which an "absent" is treated as settled rather than as a
- * question.
- *
- * Not a number picked for this screen. It is `CONFIRM_CONFIDENCE` from
- * Workers/aidp/stages/analyse.py — the confidence the engine records for an
- * absent it has gone back and *confirmed* with a second read and a checked
- * quote. So the rule reads: anything at least as sure as a double-checked
- * finding is treated as settled.
- *
- * Picking the engine's other constant (0.85, "sure enough to need no second
- * opinion") would have been worse, because it sits above 0.7 and would file
- * every confirmed absent under "check" — the most thoroughly verified findings
- * in the report marked as the doubtful ones.
- *
- * Nothing weaker than 0.55 reaches here at all: the analyse stage demotes those
- * to `needs_review` before they are ever written.
- */
-export const SETTLED_CONFIDENCE = 0.7;
-
-/**
  * How serious this finding is, from what the finding already carries.
  *
  * Null for `covered` — there is nothing to act on, and a row that says
@@ -217,7 +197,6 @@ export const SETTLED_CONFIDENCE = 0.7;
  */
 export function severityOf(
   verdict: string,
-  confidence: number,
   obligation: Obligation = "unstated",
 ): Severity | null {
   // Nothing to act on. A row reading "Covered · Low" reads as a problem when it
@@ -243,9 +222,9 @@ export function severityOf(
     // the standard says it has to. Without a stated obligation the impact
     // cannot be established, so this says so rather than inventing a level —
     // which is also what stops a missing section from outranking a real breach.
-    if (obligation === "must") return confidence >= SETTLED_CONFIDENCE ? "critical" : "check";
+    if (obligation === "must") return "critical";
     if (obligation === "should" || obligation === "may") return "moderate";
-    return confidence >= SETTLED_CONFIDENCE ? "moderate" : "check";
+    return "check";
   }
 
   if (verdict === "partial") return obligation === "may" ? "check" : "moderate";

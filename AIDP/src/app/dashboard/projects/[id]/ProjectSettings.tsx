@@ -16,7 +16,13 @@ import { archiveProject, renameProject } from "../actions";
 export function ProjectSettings({
   project,
 }: {
-  project: { id: string; name: string; description: string; status: string };
+  project: {
+    id: string;
+    name: string;
+    description: string;
+    designRelationship: string;
+    status: string;
+  };
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -50,6 +56,19 @@ export function ProjectSettings({
             defaultValue={project.name}
             className="w-full rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
           />
+          <label className="block sm:col-span-2">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-ink/58">
+              How do the designs relate?
+            </span>
+            <select
+              name="designRelationship"
+              defaultValue={project.designRelationship}
+              className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
+            >
+              <option value="components">Parts of one solution — assess together</option>
+              <option value="alternatives">Alternative candidates — assess separately</option>
+            </select>
+          </label>
           <input
             name="description"
             defaultValue={project.description}

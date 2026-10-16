@@ -252,6 +252,7 @@ export async function startAssessment(
         title: true,
         role: true,
         status: true,
+        project: { select: { designRelationship: true } },
         _count: { select: { chunks: true } },
       },
     });
@@ -325,6 +326,7 @@ export async function startAssessment(
           organisationId: document.organisationId,
           documentId,
           frameworkId: framework.id,
+          designRelationship: document.project?.designRelationship ?? "components",
           totalClauses: framework.clauseCount,
           // "both" starts with search; the worker opens the whole-document run
           // when this one completes, since a document can have one live run.

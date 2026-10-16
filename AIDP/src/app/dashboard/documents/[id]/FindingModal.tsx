@@ -146,7 +146,22 @@ export function FindingModal({
   }, [finding.id]);
 
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
-  const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
+  const severity = severityOf(finding.verdict, finding.obligation);
+  const hasQuotedText = finding.evidence.some((item) => item.sourceKind === "quote");
+  const hasExtractedText = finding.evidence.some(
+    (item) => item.sourceKind !== "quote" && item.sourceKind !== "figure",
+  );
+  const hasDiagramDescription = finding.evidence.some((item) => item.sourceKind === "figure");
+  const evidenceBasis =
+    finding.evidence.length === 0
+      ? "No source passage cited"
+      : [
+          hasQuotedText && "Source quotation checked against the document",
+          hasExtractedText && "Extracted source text",
+          hasDiagramDescription && "Model-described diagram; inspect the original figure",
+        ]
+          .filter(Boolean)
+          .join(" · ");
   const decided = finding.reviewerState !== "pending";
   const parts = rationaleParts(finding.rationale);
   // "Gap / Impact / Fix" on a clause that passed contradicts its own
@@ -359,19 +374,11 @@ export function FindingModal({
           )}
         </p>
 
-        {/* Kept, and kept here. Somebody who thinks a verdict is wrong wants
-            to know how sure the engine was; somebody working down the list
-            does not, and it was taking up the one place on the row where the
-            priority belongs.
-
-            Called heuristic, not a probability: it is the model's opinion of
-            itself with no calibration dataset behind it, and presenting it as
-            a measured likelihood would be the same overclaim as a fabricated
-            citation. */}
+        {/* Severity explains priority; the uncalibrated model confidence stays
+            internal and is not presented as a probability to reviewers. */}
         <p className="mb-3 text-[12px] text-ink/58">
           {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
-          Heuristic confidence {Math.round(finding.confidence * 100)}% — the model&rsquo;s own
-          certainty in this verdict, not a calibrated probability.
+          Evidence basis: {evidenceBasis}.
         </p>
 
         {finding.evidence.length > 0 ? (

@@ -54,6 +54,7 @@ import { FindingModal } from "./FindingModal";
 
 export type FindingView = {
   id: string;
+  documentTitle: string | null;
   clauseRef: string;
   clauseTitle: string;
   clauseStatement: string;
@@ -1225,7 +1226,7 @@ function FindingRow({
   onOpen: () => void;
 }) {
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
-  const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
+  const severity = severityOf(finding.verdict, finding.obligation);
   const decided = finding.reviewerState !== "pending";
   const draft = finding.draft;
 
@@ -1295,6 +1296,11 @@ function FindingRow({
             lets the gap truncate rather than widening the row. */}
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2">
+            {finding.documentTitle && (
+              <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/65">
+                {finding.documentTitle}
+              </span>
+            )}
             <span className="font-mono text-[11.5px] text-ink/58">{finding.clauseRef}</span>
             <span
               className={cn(

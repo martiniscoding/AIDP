@@ -63,7 +63,15 @@ C = designs.Design("doc-c", "Data Model")
 print("\n1. What a run covers")
 
 DOC_RUN = {"id": "run-1", "organisationId": "org-1", "documentId": "doc-a", "projectId": None}
-PROJ_RUN = {"id": "run-2", "organisationId": "org-1", "documentId": None, "projectId": "proj-1"}
+PROJ_RUN = {
+    "id": "run-2",
+    "organisationId": "org-1",
+    "documentId": None,
+    "projectId": "proj-1",
+    "designRelationship": "components",
+    "designIds": [],
+    "unreadyDesignIds": [],
+}
 
 with mock.patch.object(
     designs.db,
@@ -112,7 +120,9 @@ ok(
 ok("in the order they were uploaded", 'ORDER BY "createdAt"' in _asked["sql"])
 ok(
     "asked for this project, this organisation, designs only",
-    _asked["args"] == {"project": "proj-1", "org": "org-1", "role": "assessed"},
+    _asked["args"] == {
+        "project": "proj-1", "org": "org-1", "role": "assessed", "scope_ids": None
+    },
     _asked["args"],
 )
 ok("it is a project run", project.is_project)
@@ -138,6 +148,26 @@ ok(
     untitled.unready == ["doc-c"],
     untitled.unready,
 )
+
+# A design that was still indexing when a run began remains out of scope after
+# it becomes ready, and a design uploaded later cannot enter a resumed run.
+SNAPSHOT_RUN = {
+    **PROJ_RUN,
+    "designIds": ["doc-a"],
+    "unreadyDesignIds": ["doc-b"],
+}
+_snapshot_rows = [
+    {"id": "doc-a", "title": "Customer Portal Proposal", "status": "ready"},
+    {"id": "doc-b", "title": "Target Architecture", "status": "ready"},
+]
+with mock.patch.object(
+    designs.db,
+    "query",
+    lambda conn, sql, args: _snapshot_rows,
+):
+    snapshot = designs.for_run(_Conn(), SNAPSHOT_RUN)
+ok("a resumed run keeps the ready design set it started with", snapshot.document_ids == ["doc-a"])
+ok("a design that finished later remains named as excluded", snapshot.unready == ["Target Architecture"])
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +539,12 @@ ok(
 )
 ok(
     "and says a weakness in one candidate is about that candidate",
-    "not a defect in the" in framed,
+    "not a defect in the"
+    in _ctx(
+        designs.Scope(project.designs[:1], [], project_id="proj-1", alternatives=True),
+        rows=SUMMARIES[:1],
+        project_row=BRIEF,
+    ),
 )
 
 one_framed = _ctx(scope, project_row=BRIEF)

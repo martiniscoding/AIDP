@@ -337,3 +337,74 @@ def controls(clause_text: str, evidence_text: str, rationale: str) -> Compound:
         addressed=addressed,
         missing=tuple(f for f in families if f not in shown),
     )
+
+
+# Subject synonyms used by the conservative alignment check below. This is a
+# review trigger, not a semantic classifier: it catches passages on an entirely
+# different topic while allowing common architecture vocabulary to line up.
+_SUBJECT_ALIASES = (
+    {"api", "interface", "endpoint"},
+    {"protocol", "rest", "http", "https"},
+    {"payload", "message", "schema", "format"},
+    {"identity", "authentication", "authorization", "access", "iam", "mfa"},
+    {"encryption", "cryptography", "tls", "cipher"},
+    {"logging", "audit", "trace", "tracing", "monitoring"},
+    {"privacy", "protection", "masking", "redaction"},
+    {"resilience", "resiliency", "availability", "recovery", "backup"},
+    {"performance", "latency", "throughput", "capacity"},
+    {"retention", "lifecycle", "archive", "deletion"},
+)
+_SUBJECT_CANONICAL = {
+    word: min(group) for group in _SUBJECT_ALIASES for word in group
+}
+_SUBJECT_DOMAINS = {
+    "integration": frozenset({"api", "http", "format", "integration", "endpoint"}),
+    "security": frozenset({"access", "cipher", "security", "authorization"}),
+    "data": frozenset({"masking", "archive", "database", "record"}),
+    "resilience": frozenset({"availability", "disaster", "continuity"}),
+    "operations": frozenset({"audit", "monitoring", "operations", "support"}),
+    "performance": frozenset({"capacity", "throughput", "performance"}),
+}
+_SUBJECT_STOP = frozenset(
+    "a an and are as at be by can for from in into is it of on or shall that the their "
+    "this to with must should may will system design requirement requirements support "
+    "appropriate ensure define provide implement use using".split()
+)
+
+
+def _subject_terms(text: str) -> set[str]:
+    return {
+        _SUBJECT_CANONICAL.get(word, word)
+        for word in re.findall(r"[a-z0-9]+", text.casefold())
+        if len(word) > 2 and word not in _SUBJECT_STOP
+    }
+
+
+def subject_mismatch(clause_text: str, evidence_text: str) -> str | None:
+    """Flag cited text with no recognizable subject overlap with the clause.
+
+    This deliberately errs on the side of asking for human review. It never
+    decides whether a requirement is satisfied and it permits semantic
+    paraphrases when they share a recognized architecture term.
+    """
+    required = _subject_terms(clause_text)
+    cited = _subject_terms(evidence_text)
+    if len(required) < 2 or len(cited) < 2 or required & cited:
+        return None
+    required_domains = {
+        domain for domain, words in _SUBJECT_DOMAINS.items() if required & words
+    }
+    cited_domains = {
+        domain for domain, words in _SUBJECT_DOMAINS.items() if cited & words
+    }
+    # Broad clauses and evidence can legitimately span several topics. Only
+    # flag a clear, single-topic collision where both sides identify exactly
+    # one different domain; otherwise leave the semantic reading to the judge.
+    if len(required_domains) != 1 or len(cited_domains) != 1:
+        return None
+    if required_domains == cited_domains:
+        return None
+    return (
+        "The cited passage has no recognizable subject terms in common with this clause; "
+        "check that the evidence answers this requirement."
+    )

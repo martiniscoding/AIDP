@@ -119,6 +119,7 @@ export default async function ProjectAssessmentPage({
 
   const findingViews: FindingView[] = findings.map((f) => ({
     id: f.id,
+    documentTitle: f.document?.title ?? null,
     clauseRef: f.clauseRef,
     clauseTitle: f.clauseTitle,
     clauseStatement: f.clauseStatement,

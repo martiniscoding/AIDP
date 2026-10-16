@@ -475,6 +475,7 @@ class LLM(Protocol):
         precedents: str = "",
         document: str = "",
         designs: int = 1,
+        alternatives: bool = False,
     ) -> dict: ...
     def structure(
         self, *, numbered: str, first_line: int, last_line: int, tags: str = ""
@@ -524,8 +525,56 @@ against all of them together, not one at a time:
 """
 
 
-def _scope_block(designs: int) -> str:
-    """The rule for reading several designs as one solution, or nothing."""
+#: Several designs that are CANDIDATES, not parts of one system.
+#:
+#: The counterpart to `_SCOPE_RULE`, and the reason this had to be split. That
+#: rule says "a requirement met in any one of these designs is met", which is
+#: correct and necessary when a proposal, an architecture deck and a data model
+#: describe one solution between them — a clause answered in the second file is
+#: not a gap in the first.
+#:
+#: It is exactly wrong when the project owner declares the designs to be
+#: alternatives. A control present in candidate A must not cover its absence in
+#: candidate B, and the report must say which candidate was judged.
+_ALTERNATIVES_RULE = """
+<the_designs_you_are_reading>
+These extracts come from several design documents that are ALTERNATIVE \
+candidates for the same problem, not parts of one system, and each is labelled \
+with the design it is from. Judge each candidate on its own evidence:
+
+- A requirement met in one candidate is NOT met in another. Never let evidence \
+  from one design answer the clause for a different one.
+- Where the candidates differ on this clause, say so plainly and name which \
+  candidate each piece of evidence came from: that difference is the most \
+  useful thing this assessment can tell a reviewer who has to choose between \
+  them.
+- "covered" needs every candidate to satisfy the clause. Where one does and \
+  another does not, the verdict is "partial" and the rationale names which \
+  candidate falls short and how.
+- "contradicts" holds if any candidate states what the clause forbids, and the \
+  rationale says which one.
+- "absent" means no candidate engages with the clause at all.
+</the_designs_you_are_reading>
+"""
+
+_ALTERNATIVE_SINGLE_RULE = """
+<the_design_you_are_reading>
+This is one alternative candidate in a project comparison. Judge only this
+candidate from the extracts shown. Evidence from any other candidate is outside
+scope and must not affect this finding.
+</the_design_you_are_reading>
+"""
+
+def _scope_block(designs: int, *, alternatives: bool = False) -> str:
+    """How to read several designs: one solution, rival candidates, or nothing.
+
+    `alternatives` comes from the project's explicit setting. It defaults false
+    so existing callers keep the one-solution rule, and a single-design run
+    keeps its original prompt unless the project is explicitly comparing
+    candidates.
+    """
+    if alternatives:
+        return _ALTERNATIVES_RULE if designs > 1 else _ALTERNATIVE_SINGLE_RULE
     return _SCOPE_RULE if designs > 1 else ""
 
 
@@ -1503,6 +1552,11 @@ suggestion that would not make sense for the system named here is dropped at ste
 (2) INVENTORY. List the components, technologies and flows this design actually names, \
 in its own words, so every suggestion is anchored to one of them and no product is \
 imported that the design does not already run.
+(2a) PLANNED WORK. Read the entire design for a roadmap, remediation plan, backlog, \
+planned control, or action already underway. Do not recommend the same work again as a \
+new gap. If the work is planned but not yet implemented, describe only the remaining \
+implementation risk when a finding establishes it; preserve the plan's stated status and \
+do not imply that planned work is complete.
 (3) QUOTES. Check that each quote you intend to give is the design's own words, inside \
 the section you will name.
 (4) GAP AND FIX MUST MATCH. For each suggestion, write the gap in one clause and the \
@@ -2084,6 +2138,7 @@ class GeminiLLM:
         precedents: str = "",
         document: str = "",
         designs: int = 1,
+        alternatives: bool = False,
     ) -> dict:
         text = self._generate(
             [
@@ -2093,7 +2148,7 @@ class GeminiLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
-                        scope_rule=_scope_block(designs),
+                        scope_rule=_scope_block(designs, alternatives=alternatives),
                         document_context=_document_block(document),
                     )
                 }
@@ -2348,6 +2403,7 @@ class AnthropicLLM:
         precedents: str = "",
         document: str = "",
         designs: int = 1,
+        alternatives: bool = False,
     ) -> dict:
         data = self._send(
             {
@@ -2362,7 +2418,7 @@ class AnthropicLLM:
                             clause=clause,
                             extracts=extracts,
                             precedents=_precedent_block(precedents),
-                            scope_rule=_scope_block(designs),
+                            scope_rule=_scope_block(designs, alternatives=alternatives),
                             document_context=_document_block(document),
                         ),
                     },
@@ -2770,6 +2826,7 @@ class OpenRouterLLM:
         precedents: str = "",
         document: str = "",
         designs: int = 1,
+        alternatives: bool = False,
     ) -> dict:
         text = self._chat(
             [
@@ -2780,7 +2837,7 @@ class OpenRouterLLM:
                         clause=clause,
                         extracts=extracts,
                         precedents=_precedent_block(precedents),
-                        scope_rule=_scope_block(designs),
+                        scope_rule=_scope_block(designs, alternatives=alternatives),
                         document_context=_document_block(document),
                     ),
                 }
@@ -3100,6 +3157,7 @@ def judge(
     precedents: str = "",
     document: str = "",
     designs: int = 1,
+    alternatives: bool = False,
 ) -> dict:
     # `document` and `designs` both have to be passed through here. Without
     # `document` the analyse stage's `document=` raised TypeError on every
@@ -3113,6 +3171,10 @@ def judge(
         precedents=precedents,
         document=document,
         designs=designs,
+        # Same trap the comment above describes: dropped here, a comparison
+        # project would be judged with the one-solution rule and a control in
+        # one candidate would answer the clause for the other.
+        alternatives=alternatives,
     )
 
 

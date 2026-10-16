@@ -109,12 +109,20 @@ for name, prompt in (
     ok(f"{name}: the gap must be a requirement of THIS clause", "of THIS clause" in flat)
     ok(f"{name}: and must be about the clause's own subject", "subject the clause is about" in flat or "clause's own subject" in flat)
 
-still_open(
-    "semantic requirement-to-finding validation",
-    "The prompts forbid answering a clause with a neighbouring concern, and nothing "
-    "checks it in code. Doing so means comparing the gap's subject with the clause's "
-    "subject, which needs either an embedding comparison per finding or a second model "
-    "call — a cost and design decision, not an oversight.",
+ok(
+    "a finding with cited evidence on a different subject is sent for review",
+    "subject_mismatch" in __import__("inspect").getsource(analyse._guard)
+    and analyse.fidelity.subject_mismatch(
+        "Interfaces shall define protocol, payload structure and data format.",
+        "The platform provides regional backups and disaster recovery.",
+    ) is not None,
+)
+ok(
+    "recognized architecture synonyms keep relevant evidence in scope",
+    analyse.fidelity.subject_mismatch(
+        "Interfaces shall define protocol, payload structure and data format.",
+        "The API accepts REST messages encoded as JSON.",
+    ) is None,
 )
 
 
@@ -166,18 +174,13 @@ ok(
 # ---------------------------------------------------------------------------
 print("\n4. Cross-design isolation")
 
-still_open(
-    "per-design verdicts",
-    "A clause gets one verdict for the whole project: `_assess_one` judges it against "
-    "every design's retrieved passages together and writes a single Finding row, and "
-    "`Finding` is keyed (runId, clauseId) with no documentId column. So a compliant "
-    "design genuinely can mask a non-compliant one, exactly as the review says. Fixing "
-    "it is a schema migration plus a judge call per design per clause — N times the "
-    "model spend — and both are decisions for the product owner, not something to "
-    "change quietly. Evidence already carries documentId, so a reviewer can see which "
-    "design each quote came from; what is missing is a verdict per design.",
+# Each alternative has its own row and a finding cannot borrow another
+# candidate's evidence. Component projects keep their aggregate behavior.
+ok(
+    "alternative projects schedule and persist a separate result per design",
+    "for design in scope.designs" in __import__("inspect").getsource(analyse.handle)
+    and 'ON CONFLICT ("runId","clauseId","designKey")' in __import__("inspect").getsource(analyse._write),
 )
-# What does hold today, and is worth keeping held:
 ok(
     "every passage still names the design it came from",
     "documentId" in __import__("inspect").getsource(analyse._judge_by_search),
@@ -209,28 +212,19 @@ ok(
 # ---------------------------------------------------------------------------
 print("\n6. Honest uncertainty")
 
-# The statement lives in the app, which is where a reader meets the number.
-# Read off the file rather than asserted about the engine, so deleting the
-# disclaimer fails here.
+# The reviewer sees the finding, not a numeric model self-rating.
 MODAL = (
     pathlib.Path(__file__).resolve().parents[2]
     / "AIDP" / "src" / "app" / "dashboard" / "documents" / "[id]" / "FindingModal.tsx"
 )
 ok(
-    "the number is disclosed as uncalibrated where it is shown",
-    MODAL.exists() and "not a calibrated probability" in MODAL.read_text(encoding="utf-8"),
+    "the uncalibrated confidence number is not rendered",
+    MODAL.exists() and "finding.confidence" not in MODAL.read_text(encoding="utf-8"),
     MODAL,
 )
 ok(
-    "and named a heuristic rather than a probability",
-    MODAL.exists() and "Heuristic confidence" in MODAL.read_text(encoding="utf-8"),
-)
-still_open(
-    "remove the numeric confidence from the report",
-    "The modal states in words that the figure is the model's own certainty and not a "
-    "calibrated probability, which is honest but still shows a number a reader will "
-    "treat as one. Removing it is a product call: it is also the only signal a reviewer "
-    "has for which verdicts to re-read first.",
+    "severity and evidence basis explain review priority instead",
+    "Evidence basis:" in MODAL.read_text(encoding="utf-8"),
 )
 
 
@@ -257,11 +251,9 @@ ok(
     "HARD RULE" in advice and "scoped that view" in advice,
 )
 ok("and generic checklist items are named", "centralised" in advice and "caching" in advice)
-still_open(
-    "cross-reference the document's own remediation plan",
-    "Where a design already carries a remediation section, the engine does not read it "
-    "to subtract what is already planned. Nothing stops a suggestion repeating the "
-    "document's own next step.",
+ok(
+    "advice checks the whole document for planned remediation before suggesting work",
+    "PLANNED WORK" in advice and "roadmap" in advice and "Do not recommend the same work again" in advice,
 )
 
 

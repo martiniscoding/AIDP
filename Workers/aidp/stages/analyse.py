@@ -314,10 +314,9 @@ def _purpose(conn, scope: designs.Scope) -> str:
         f"{description}\n\n"
         "Read it as the stated intent behind the work, not as a fact about the "
         "architecture, and never as evidence: every verdict still rests only on what "
-        "the designs themselves say. Use it to judge the right question — for "
-        "instance, where the purpose is to compare candidate solutions, a weakness in "
-        "one candidate is a finding about that candidate and not a defect in the "
-        "project, and the designs are alternatives rather than parts of one system.\n"
+        "the designs themselves say. The project owner explicitly selected whether "
+        "the designs are components of one solution or alternative candidates; follow "
+        "that assessment scope and do not infer it from this description.\n"
         "</what_this_project_is_for>"
     )
 
@@ -350,7 +349,14 @@ def _context(conn, scope: designs.Scope) -> str:
         return f"{purpose}\n\n{body}" if purpose and body else (purpose or body)
 
     if len(scope.designs) == 1:
-        return framed(summaries.get(scope.designs[0].document_id, ""))
+        body = summaries.get(scope.designs[0].document_id, "")
+        if scope.alternatives:
+            body = (
+                "This assessment covers this one alternative candidate only. Evidence "
+                "from other candidates is outside this finding's scope. A weakness in "
+                "this candidate is not a defect in the other candidates.\n\n" + body
+            ).rstrip()
+        return framed(body)
 
     blocks = [
         f'=== design: "{design.title}" ===\n{summaries[design.document_id]}'
@@ -359,10 +365,16 @@ def _context(conn, scope: designs.Scope) -> str:
     ]
     if not blocks:
         return framed("")
-    return framed(
-        "These designs describe one solution between them. Judge the clause against all "
-        "of them together: what one leaves out another may answer.\n\n" + "\n\n".join(blocks)
-    )
+    if scope.alternatives:
+        # Alternative candidates are assessed separately; this branch is retained
+        # for callers that build project context outside the per-design loop.
+        intro = "These are alternative candidates and must not share evidence."
+    else:
+        intro = (
+            "These designs describe one solution between them. Judge the clause against all "
+            "of them together: what one leaves out another may answer."
+        )
+    return framed(intro + "\n\n" + "\n\n".join(blocks))
 
 
 def _with_unready(note: str | None, scope: designs.Scope) -> str | None:
@@ -425,12 +437,35 @@ def handle(job: Job, heartbeat) -> None:
         # every clause, so fetching it inside the loop would be a hundred round
         # trips for one column.
         document_context = _context(conn, scope)
+        per_design = bool(run.get("projectId") and scope.alternatives)
+        tasks = (
+            [
+                (clause, design.document_id)
+                for design in scope.designs
+                for clause in clauses
+            ]
+            if per_design
+            else [
+                (clause, scope.designs[0].document_id if not run.get("projectId") else None)
+                for clause in clauses
+            ]
+        )
         done = {
-            r["clauseId"]
+            (r["clauseId"], r["designKey"])
             for r in db.query(
-                conn, 'SELECT "clauseId" FROM "finding" WHERE "runId" = %s', (run_id,)
+                conn,
+                'SELECT "clauseId", "designKey" FROM "finding" WHERE "runId" = %s',
+                (run_id,),
             )
         }
+        task_contexts = (
+            {
+                design.document_id: _context(conn, designs.only(scope, design.document_id))
+                for design in scope.designs
+            }
+            if per_design
+            else {}
+        )
 
     # Stopped, or failed elsewhere, before a worker reached it. Its job is closed
     # rather than retried: there is nothing left to advance.
@@ -474,11 +509,16 @@ def handle(job: Job, heartbeat) -> None:
     mode, note, whole = _resolve_mode(run, scope)
     note = _with_unready(note, scope)
 
-    pending = [c for c in clauses if c["id"] not in done]
+    pending = [
+        (clause, design_id)
+        for clause, design_id in tasks
+        if (clause["id"], design_id or "") not in done
+    ]
+    completed = len(tasks) - len(pending)
     _start(
         run_id,
-        total=len(clauses),
-        completed=len(done),
+        total=len(tasks),
+        completed=completed,
         model=llm.model_name()[1],
         mode=mode,
         note=note,
@@ -490,7 +530,8 @@ def handle(job: Job, heartbeat) -> None:
         mode=mode,
         designs=designs.describe(scope),
         clauses=len(clauses),
-        resuming=len(done),
+        designAssessments=len(tasks),
+        resuming=completed,
         pending=len(pending),
     )
     if note:
@@ -509,13 +550,15 @@ def handle(job: Job, heartbeat) -> None:
         else "Assessing clauses by search"
     )
     refused = 0
-    for index, clause in enumerate(pending, start=1):
-        progress.step(step_label, done=len(done) + index - 1, total=len(clauses))
+    for index, (clause, design_id) in enumerate(pending, start=1):
+        progress.step(step_label, done=completed + index - 1, total=len(tasks))
+        unit_scope = designs.only(scope, design_id) if design_id else scope
+        unit_context = task_contexts.get(design_id, document_context)
         try:
             if whole is not None:
-                _assess_document_one(run, clause, whole, scope, document_context)
+                _assess_document_one(run, clause, whole, unit_scope, unit_context)
             else:
-                _assess_one(run, clause, scope, document_context)
+                _assess_one(run, clause, unit_scope, unit_context, design_id=design_id)
         except llm.QuotaExhausted:
             # Not this clause's problem and not survivable: every clause after
             # it would fail the same way, and the run is worth retrying once
@@ -561,6 +604,7 @@ def handle(job: Job, heartbeat) -> None:
                     evidence=[],
                     retrieval_score=0.0,
                     applied=[],
+                    design_id=design_id,
                 )
             except Exception as write_exc:  # noqa: BLE001 — the database is the one thing worth stopping for
                 logs.warn(
@@ -577,12 +621,12 @@ def handle(job: Job, heartbeat) -> None:
         # which is what a progress bar exists to rule out. The cost is one small
         # UPDATE per clause against a row already in cache, spaced fifteen
         # seconds apart; the model call beside it dwarfs it.
-        if _progress(run_id, len(done) + index) == 0:
+        if _progress(run_id, completed + index) == 0:
             logs.info(
                 log,
                 "run is no longer running, abandoning it",
                 runId=run_id,
-                clausesDone=len(done) + index,
+                clausesDone=completed + index,
             )
             with db.transaction() as conn:
                 queue.complete(conn, job, chain=False)
@@ -782,7 +826,14 @@ class _Judged:
     obligation: str = ""
 
 
-def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "") -> None:
+def _assess_one(
+    run: dict,
+    clause: dict,
+    scope: designs.Scope,
+    document: str = "",
+    *,
+    design_id: str | None = None,
+) -> None:
     """Retrieve, judge, guard, commit — one clause, one transaction."""
     query = retrieval.clause_query(
         clause["statement"], clause["requirements"] or [], clause["title"]
@@ -812,6 +863,7 @@ def _assess_one(run: dict, clause: dict, scope: designs.Scope, document: str = "
         retrieval_score=judged.best,
         applied=judged.applied,
         judged_obligation=judged.obligation,
+        design_id=design_id,
     )
 
 
@@ -899,10 +951,28 @@ def _judge_by_search(
         raw = llm.judge(
             reference=reference,
             clause=_render_clause(clause),
-            extracts=_render_extracts(candidates, named=len(scope.designs) > 1),
-            # How the clause is to be read: one design, or several that describe
-            # one solution between them. See llm._SCOPE_RULE.
+            extracts=_render_extracts(
+                candidates, named=len(scope.designs) > 1 or scope.alternatives
+            ),
+            # How the clause is to be read: one design, several that describe
+            # one solution between them, or several that are rival candidates.
+            # See llm._SCOPE_RULE and llm._ALTERNATIVES_RULE.
+            #
+            # The third case is why this is not just a count. A reviewer
+            # comparing two candidate solutions was getting one verdict over
+            # both, so a control in candidate A covered its absence in B and the
+            # report could not say which candidate was better on anything — and
+            # the prompt was contradicting itself, since `_purpose` already told
+            # the judge the designs were alternatives while the scope rule told
+            # it a requirement met in any one of them was met.
             designs=len(scope.designs),
+            # Read from the project's own `designRelationship`, which the owner
+            # sets on the project form — not inferred from the description.
+            # Inference was the first attempt here and it is the weaker answer:
+            # a reviewer who writes "comparing our options for the portal" in a
+            # one-solution project would have had every clause judged as a
+            # contest between its own documents.
+            alternatives=scope.alternatives,
             precedents=decisions.render(precedents),
             document=document,
         )
@@ -1070,6 +1140,7 @@ def _assess_document_one(
             evidence=[],
             retrieval_score=0.0,
             applied=[],
+            design_id=scope.designs[0].document_id if not run.get("projectId") else None,
         )
         return
 
@@ -1119,6 +1190,7 @@ def _assess_document_one(
         retrieval_score=score,
         applied=applied,
         judged_obligation=str(raw.get("obligation") or ""),
+        design_id=scope.designs[0].document_id if not run.get("projectId") else None,
     )
 
 
@@ -1190,7 +1262,7 @@ def _demote_unconfirmed(run: dict, clauses: list[dict], why: str) -> int:
         with db.connection() as conn:
             rows = db.query(
                 conn,
-                'SELECT "clauseId", "confidence", "rationale" FROM "finding" '
+                'SELECT "clauseId", "designKey", "confidence", "rationale" FROM "finding" '
                 'WHERE "runId" = %s AND "verdict" = %s AND "confidence" < %s',
                 (run["id"], "absent", CONFIRM_REQUIRED_CONFIDENCE),
             )
@@ -1216,6 +1288,7 @@ def _demote_unconfirmed(run: dict, clauses: list[dict], why: str) -> int:
                 evidence=[],
                 retrieval_score=0.0,
                 applied=[],
+                design_id=row.get("designKey") or None,
             )
         except Exception as exc:  # noqa: BLE001 — one clause must not sink the rest
             logs.warn(
@@ -1256,7 +1329,7 @@ def _confirm(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
         # is.
         rows = db.query(
             conn,
-            'SELECT "clauseId", "verdict", "rationale" FROM "finding" '
+            'SELECT "clauseId", "documentId", "verdict", "rationale" FROM "finding" '
             'WHERE "runId" = %s AND "verdict" = ANY(%s)',
             (run["id"], ["absent", "partial", "not_assessable"]),
         )
@@ -1269,6 +1342,41 @@ def _confirm(run: dict, clauses: list[dict], scope: designs.Scope) -> None:
         return
 
     by_id = {clause["id"]: clause for clause in clauses}
+    if scope.alternatives:
+        # Every alternative owns a separate result row. Re-read omissions only
+        # against the document that row belongs to; another candidate cannot
+        # confirm or overturn it.
+        for design in scope.designs:
+            outstanding = [
+                by_id[row["clauseId"]]
+                for row in candidates
+                if row.get("documentId") == design.document_id
+                and row["clauseId"] in by_id
+            ]
+            if not outstanding:
+                continue
+            with db.connection() as conn:
+                whole = whole_document.load(conn, design.document_id, design.title)
+            if whole is None or whole.tokens > get_config().whole_document_max_tokens:
+                continue
+            unit_scope = designs.only(scope, design.document_id)
+            for start_at in range(0, len(outstanding), CONFIRM_BATCH):
+                batch = outstanding[start_at : start_at + CONFIRM_BATCH]
+                raw = llm.confirm_absent(
+                    document=whole.text,
+                    clauses=_render_absent(batch),
+                )
+                _adopt_confirmations(
+                    run,
+                    batch,
+                    raw,
+                    whole,
+                    design,
+                    unit_scope,
+                    design_id=design.document_id,
+                )
+        return
+
     outstanding = [by_id[row["clauseId"]] for row in candidates if row["clauseId"] in by_id]
     absent_count = len(outstanding)
     limit = get_config().whole_document_max_tokens
@@ -1338,6 +1446,8 @@ def _adopt_confirmations(
     whole: whole_document.WholeDocument,
     design: designs.Design,
     scope: designs.Scope,
+    *,
+    design_id: str | None = None,
 ) -> set[str]:
     """Rewrite the findings this design's re-read overturned, and only those.
 
@@ -1410,6 +1520,7 @@ def _adopt_confirmations(
             ],
             retrieval_score=0.0,
             applied=[],
+            design_id=design_id,
         )
         answered.add(clause["id"])
     return answered
@@ -1568,8 +1679,8 @@ def _complete_and_follow(job: Job, run: dict, total: int, follow: str) -> str:
             """
             INSERT INTO "assessment_run"
                 ("id","organisationId","documentId","frameworkId","state","totalClauses",
-                 "mode","comparedWithId")
-            VALUES (%s,%s,%s,%s,'queued',%s,%s,%s)
+                 "mode","comparedWithId","designRelationship")
+            VALUES (%s,%s,%s,%s,'queued',%s,%s,%s,%s)
             """,
             (
                 next_id,
@@ -1579,6 +1690,7 @@ def _complete_and_follow(job: Job, run: dict, total: int, follow: str) -> str:
                 total,
                 follow,
                 run["id"],
+                run.get("designRelationship") or "components",
             ),
         )
         db.execute(
@@ -1693,6 +1805,11 @@ def _guard(
                 f"this clause names; nothing addresses {', '.join(compound.missing)}.",
                 rationale,
             )
+
+    if verdict in CITING_VERDICTS:
+        mismatch = fidelity.subject_mismatch(clause_text, evidence_text)
+        if mismatch:
+            return _demoted(mismatch, rationale)
 
     if verdict == "absent" and best_score < WEAK_RETRIEVAL:
         return _demoted(
@@ -2065,6 +2182,7 @@ def _write(
     retrieval_score: float,
     applied: list[dict],
     judged_obligation: str = "",
+    design_id: str | None = None,
 ) -> None:
     """One finding, committed on its own so a crash costs at most one clause."""
     reference = clause["numberText"] or clause["headingPath"]
@@ -2077,11 +2195,13 @@ def _write(
             conn,
             """
             INSERT INTO "finding"
-                ("id","runId","clauseId","clauseRef","clauseTitle","clauseStatement",
+                ("id","runId","clauseId","documentId","designKey",
+                 "clauseRef","clauseTitle","clauseStatement",
                  "verdict","confidence","rationale","evidence","retrievalScore",
                  "appliedDecisions","obligation","obligationSource")
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT ("runId","clauseId") DO UPDATE SET
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT ("runId","clauseId","designKey") DO UPDATE SET
+                "documentId" = EXCLUDED."documentId",
                 "verdict"    = EXCLUDED."verdict",
                 "confidence" = EXCLUDED."confidence",
                 "rationale"  = EXCLUDED."rationale",
@@ -2095,6 +2215,8 @@ def _write(
                 db.new_id(),
                 run_id,
                 clause["id"],
+                design_id,
+                design_id or "",
                 str(reference)[:300],
                 (clause["title"] or "")[:500],
                 (clause["statement"] or "")[:2000],

@@ -26,7 +26,6 @@
  */
 import {
   OBLIGATIONS,
-  SETTLED_CONFIDENCE,
   VERDICTS,
   VERDICT_META,
   applyLens,
@@ -48,41 +47,38 @@ const ok = (name: string, condition: boolean, extra: unknown = "") => {
   }
 };
 
-const SURE = SETTLED_CONFIDENCE; // what a confirmed absent is recorded at
-const UNSURE = 0.6;
-
 console.log("\nCase B — approval evidence missing is not a violation");
 for (const obligation of OBLIGATIONS) {
   ok(
     `not_assessable is never critical (obligation: ${obligation})`,
-    severityOf("not_assessable", 1, obligation) !== "critical",
-    severityOf("not_assessable", 1, obligation),
+    severityOf("not_assessable", obligation) !== "critical",
+    severityOf("not_assessable", obligation),
   );
 }
 ok(
   "a mandatory clause's evidence gap still outranks an advisory one",
-  severityOf("not_assessable", SURE, "must") === "moderate" &&
-    severityOf("not_assessable", SURE, "should") === "check",
+  severityOf("not_assessable", "must") === "moderate" &&
+    severityOf("not_assessable", "should") === "check",
 );
 ok(
   "and it is not softened to nothing — an evidence gap is still a finding",
-  severityOf("not_assessable", SURE, "must") !== null,
+  severityOf("not_assessable", "must") !== null,
 );
 
 console.log("\nCase C — an actual mandatory violation is still Critical");
-ok("a breach of a must is critical", severityOf("contradicts", SURE, "must") === "critical");
+ok("a breach of a must is critical", severityOf("contradicts", "must") === "critical");
 ok(
   "and stays critical however unsure the model was, because the conflict is stated",
-  severityOf("contradicts", 0.1, "must") === "critical",
+  severityOf("contradicts", "must") === "critical",
 );
 ok(
   "a breach of an explicitly advisory rule is moderate, not critical",
-  severityOf("contradicts", SURE, "should") === "moderate" &&
-    severityOf("contradicts", SURE, "may") === "moderate",
+  severityOf("contradicts", "should") === "moderate" &&
+    severityOf("contradicts", "may") === "moderate",
 );
 ok(
   "an unstated obligation does not become permission to breach",
-  severityOf("contradicts", SURE, "unstated") === "critical",
+  severityOf("contradicts", "unstated") === "critical",
 );
 
 console.log("\nCase A — technology chosen, rationale missing");
@@ -91,37 +87,32 @@ console.log("\nCase A — technology chosen, rationale missing");
 // report must not outrank a real breach.
 ok(
   "an unaddressed mandatory mechanism is critical",
-  severityOf("absent", SURE, "must") === "critical",
+  severityOf("absent", "must") === "critical",
 );
 ok(
   "but an unaddressed clause whose obligation was never stated is not",
-  severityOf("absent", SURE, "unstated") === "moderate",
-);
-ok(
-  "and a low-confidence absent is still only worth a look",
-  severityOf("absent", UNSURE, "must") === "check" &&
-    severityOf("absent", UNSURE, "unstated") === "check",
+  severityOf("absent", "unstated") === "check",
 );
 ok(
   "an advisory clause the design ignores is moderate",
-  severityOf("absent", SURE, "should") === "moderate",
+  severityOf("absent", "should") === "moderate",
 );
 
 console.log("\nCase D — partial compliance sits below a breach");
-ok("a partly met must is moderate", severityOf("partial", SURE, "must") === "moderate");
+ok("a partly met must is moderate", severityOf("partial", "must") === "moderate");
 ok(
   "a partly met optional rule only needs a look",
-  severityOf("partial", SURE, "may") === "check",
+  severityOf("partial", "may") === "check",
 );
 
 console.log("\nCase J — not applicable is not a failure");
 for (const obligation of OBLIGATIONS) {
   ok(
     `not_applicable carries no severity (obligation: ${obligation})`,
-    severityOf("not_applicable", 1, obligation) === null,
+    severityOf("not_applicable", obligation) === null,
   );
 }
-ok("and neither does covered", severityOf("covered", 1, "must") === null);
+ok("and neither does covered", severityOf("covered", "must") === null);
 ok(
   "a clause that does not apply is not in the review queue",
   applyLens(
@@ -142,15 +133,15 @@ ok(
 console.log("\nCase H — confidence cannot stand in for evidence");
 ok(
   "a certain not_assessable is still not a violation",
-  severityOf("not_assessable", 1, "must") !== "critical",
+  severityOf("not_assessable", "must") !== "critical",
 );
 ok(
   "needs_review is never promoted by confidence",
-  severityOf("needs_review", 1, "must") === "check",
+  severityOf("needs_review", "must") === "check",
 );
 ok(
   "and a verdict this code has never been taught is treated as a question",
-  severityOf("something_new", 1, "must") === "check",
+  severityOf("something_new", "must") === "check",
 );
 
 console.log("\nThe vocabulary holds together");
@@ -170,9 +161,9 @@ ok(
 );
 ok(
   "only the two 'nothing to do' verdicts carry no severity",
-  VERDICTS.filter((v: Verdict) => severityOf(v, SURE, "must") === null).join(",") ===
+  VERDICTS.filter((v: Verdict) => severityOf(v, "must") === null).join(",") ===
     "covered,not_applicable",
-  VERDICTS.filter((v: Verdict) => severityOf(v, SURE, "must") === null),
+  VERDICTS.filter((v: Verdict) => severityOf(v, "must") === null),
 );
 
 console.log("\nAn obligation off the wire is never trusted blindly");
@@ -186,7 +177,7 @@ for (const value of [null, undefined, 7, "", "critical", {}]) {
 }
 ok(
   "and unstated is the default, so a finding from before this existed is not called mandatory",
-  (severityOf("absent", SURE) as string) === "moderate",
+  (severityOf("absent") as string) === "check",
 );
 
 console.log(`\n${pass} passed, ${fail} failed`);

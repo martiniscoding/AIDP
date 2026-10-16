@@ -30,6 +30,7 @@ export type ProjectSummary = {
   id: string;
   name: string;
   description: string;
+  designRelationship: string;
   status: string;
   createdByName: string;
   createdById: string | null;
@@ -74,6 +75,7 @@ export async function listProjects(organisationId: string): Promise<ProjectSumma
       id: true,
       name: true,
       description: true,
+      designRelationship: true,
       status: true,
       createdById: true,
       createdByName: true,
@@ -124,6 +126,7 @@ export async function listProjects(organisationId: string): Promise<ProjectSumma
       id: project.id,
       name: project.name,
       description: project.description,
+      designRelationship: project.designRelationship,
       status: project.status,
       createdById: project.createdById,
       createdByName: project.createdByName,
@@ -147,6 +150,7 @@ export async function getProject(organisationId: string, projectId: string) {
       id: true,
       name: true,
       description: true,
+      designRelationship: true,
       status: true,
       createdById: true,
       createdByName: true,
@@ -157,7 +161,7 @@ export async function getProject(organisationId: string, projectId: string) {
 
 export async function createProject(
   access: Access,
-  input: { name: string; description?: string },
+  input: { name: string; description?: string; designRelationship?: string },
 ): Promise<{ id: string; name: string }> {
   const name = normalise(input.name);
   if (!name) throw new ProjectRefused("Give the project a name.");
@@ -174,6 +178,7 @@ export async function createProject(
       organisationId: access.organisation.id,
       name,
       description: (input.description ?? "").trim().slice(0, 2000),
+      designRelationship: input.designRelationship === "alternatives" ? "alternatives" : "components",
       createdById: access.user.id,
       createdByName: access.user.name || access.user.email,
     },
@@ -184,7 +189,7 @@ export async function createProject(
 export async function updateProject(
   access: Access,
   projectId: string,
-  input: { name: string; description?: string },
+  input: { name: string; description?: string; designRelationship?: string },
 ): Promise<void> {
   const project = await getProject(access.organisation.id, projectId);
   if (!project) throw new ProjectRefused("That project no longer exists.");
@@ -203,7 +208,16 @@ export async function updateProject(
 
   await prisma.project.update({
     where: { id: projectId },
-    data: { name, description: (input.description ?? "").trim().slice(0, 2000) },
+    data: {
+      name,
+      description: (input.description ?? "").trim().slice(0, 2000),
+      ...(input.designRelationship == null
+        ? {}
+        : {
+            designRelationship:
+              input.designRelationship === "alternatives" ? "alternatives" : "components",
+          }),
+    },
   });
 }
 
@@ -490,6 +504,9 @@ export async function startProjectRun(
     );
   }
 
+  const findingsToAssess = framework.clauseCount * (
+    project.designRelationship === "alternatives" ? ready.length : 1
+  );
   const runId = await prisma.$transaction(async (tx) => {
     // A live run with no live job will never move: its job was removed before a
     // worker took it, and it holds the one live-run slot. Cleared here rather
@@ -532,7 +549,12 @@ export async function startProjectRun(
         organisationId: access.organisation.id,
         projectId,
         frameworkId: framework.id,
-        totalClauses: framework.clauseCount,
+        designRelationship: project.designRelationship,
+        designIds: ready.map((design) => design.id),
+        unreadyDesignIds: all
+          .filter((design) => !ready.some((candidate) => candidate.id === design.id))
+          .map((design) => design.id),
+        totalClauses: findingsToAssess,
         mode: "retrieval",
       },
       select: { id: true },
