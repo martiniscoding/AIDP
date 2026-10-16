@@ -30,6 +30,7 @@ import { currentUser } from "@/lib/access/gate";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Comparison } from "./Comparison";
 import { compareModes } from "@/lib/ingest/comparison";
+import { ClauseYield } from "./ClauseYield";
 import { Understanding } from "./Understanding";
 import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
@@ -74,6 +75,18 @@ export default async function DocumentPage({
   // things needing a look is worth carrying here, because a reader with no
   // reason to open that page still has to know there is one.
   const toReview = document.issues.filter((i) => i.severity === "high").length;
+
+  /**
+   * A reference standard that extracted no rules, or implausibly few for its
+   * size, as the parse recorded it (Workers/aidp/stages/parse.py).
+   *
+   * Surfaced here rather than only on the parsed-content page, because the
+   * repair is on this screen: a reviewer who never opens that page was being
+   * told the clause count on every report and never told it was wrong.
+   */
+  const clauseYield = document.issues.find(
+    (issue) => issue.kind === "no_clauses" || issue.kind === "few_clauses",
+  );
 
   // Only a submitted design gets assessed; a reference standard is what it is
   // assessed against.
@@ -278,6 +291,18 @@ export default async function DocumentPage({
         <p className="mb-6 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[13px] text-warn">
           {document.failureReason}
         </p>
+      )}
+
+      {/* A standard that measures less than it should, and the one click that
+          re-reads it. Above Understanding because it changes what every report
+          using this standard is worth. */}
+      {clauseYield && (
+        <ClauseYield
+          documentId={document.id}
+          kind={clauseYield.kind as "no_clauses" | "few_clauses"}
+          detail={clauseYield.detail}
+          canRerun={mayChange}
+        />
       )}
 
       {/* Before everything, because it is the premise the rest rests on: a

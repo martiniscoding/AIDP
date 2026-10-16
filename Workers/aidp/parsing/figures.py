@@ -125,6 +125,56 @@ def _caption_for(page: fitz.Page, rect: fitz.Rect) -> str | None:
     return best[1] if best else None
 
 
+#: A numbered section heading: "7 Acknowledgements", "6.2.3 Rationale". A
+#: figure never continues past one, so it is where a crop stops.
+_HEADING = re.compile(r"^\s*\d+(?:\.\d+)*\s+\S")
+
+
+def _stop_at_next_heading(page: fitz.Page, rect: fitz.Rect) -> fitz.Rect:
+    """Trim a cluster that ran on past the end of its own figure.
+
+    Vector clusters grow by proximity, and `_CLUSTER_GAP` is wide enough to
+    chain the rules and underlines of body text together. On page 26 of a
+    customer's document that produced a single "figure" spanning the whole page
+    — y 72 to 792 — whose crop carried the next section's prose and the page
+    number into the review panel, where a reviewer saw the Acknowledgements
+    section presented as a diagram.
+
+    So a cluster is cut at the first numbered heading that starts below its top.
+    A heading is the one landmark that reliably means the figure is over; a
+    caption is not, since plenty of figures have none, and a blank band is not,
+    since a diagram may contain several.
+
+    The trim only ever shrinks a box, and only when real content remains above
+    the heading. A figure that genuinely reaches the bottom of the page has no
+    heading under it and is left alone.
+    """
+    try:
+        blocks = page.get_text("blocks")
+    except Exception:  # noqa: BLE001
+        return rect
+
+    cut: float | None = None
+    for block in blocks:
+        if len(block) < 5:
+            continue
+        top = float(block[1])
+        text = str(block[4] or "")
+        first = next((ln for ln in text.splitlines() if ln.strip()), "")
+        if not _HEADING.match(first):
+            continue
+        # Below the cluster's top, and leaving something worth keeping above it.
+        if top > rect.y0 + 24 and top < rect.y1:
+            cut = top if cut is None else min(cut, top)
+
+    if cut is None:
+        return rect
+    trimmed = fitz.Rect(rect)
+    # A small gap, so the figure's own lowest stroke is not clipped.
+    trimmed.y1 = max(rect.y0 + 24, cut - 4)
+    return trimmed
+
+
 def extract_page(
     page: fitz.Page, exclude: list[tuple[float, float, float, float]] | None = None
 ) -> list[Figure]:
@@ -217,7 +267,10 @@ def extract_page(
         if area > 120 and area / page_area < 0.95:
             primitives.append(rect)
     for cluster in _cluster(primitives):
-        render(cluster, "vector")
+        # Cut at the next numbered heading: a cluster that chained body-text
+        # rules together would otherwise crop the following section as though
+        # it were part of the diagram.
+        render(_stop_at_next_heading(page, cluster), "vector")
 
     found.sort(key=lambda f: f.bbox[1])
     return found
