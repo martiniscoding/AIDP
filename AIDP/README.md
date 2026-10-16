@@ -127,6 +127,15 @@ open.
 transaction mode and can't hold the session-level advisory lock
 `prisma migrate` takes. That preference lives in `prisma.config.ts`.
 
+**Production deploys.** Vercel runs `npm run db:deploy` before `npm run build`
+through `vercel.json`. Configure `DIRECT_DATABASE_URL` in the Vercel project
+environment for each environment that deploys the app. This applies pending
+Prisma migrations before the deployment is built and served; if a migration
+fails, the deployment fails instead of serving code against an old schema.
+Keep `DATABASE_URL` set to the pooled connection string for application
+traffic. If you override Vercel's Build Command in project settings, preserve
+the `npm run db:deploy && npm run build` sequence.
+
 **Schema.** `prisma/schema.prisma` owns the four Better Auth tables (`user`,
 `session`, `account`, `verification`). The column names are not arbitrary —
 Better Auth addresses them directly, so they have to match `getAuthTables()` in
