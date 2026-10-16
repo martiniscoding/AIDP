@@ -145,6 +145,24 @@ export type RunView = {
 export const RATIONALE_PARTS = ["Gap", "Impact", "Fix"] as const;
 
 /**
+ * The same three sentences, named for a clause that passed.
+ *
+ * A covered finding has no gap and nothing to fix, so labelling its three
+ * sentences "Gap / Impact / Fix" tells the reader the opposite of the verdict
+ * directly above them. The judge writes the same shape either way — what the
+ * clause wanted, what the design does about it, why that satisfies it — so only
+ * the labels change.
+ */
+export const RATIONALE_PARTS_COVERED = ["Requirement", "Evidence", "Alignment"] as const;
+
+/** Labels for a verdict: a passing clause is described, not remediated. */
+export function rationaleLabels(verdict: string): readonly string[] {
+  return verdict === "covered" || verdict === "not_applicable"
+    ? RATIONALE_PARTS_COVERED
+    : RATIONALE_PARTS;
+}
+
+/**
  * A rationale split into gap, impact and fix.
  *
  * The judge is now told to write exactly those three, in that order, for any

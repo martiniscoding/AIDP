@@ -27,6 +27,53 @@ from .config import get_config
 RRF_K = 60
 
 
+#: The second half of a hyphenated technical compound. When a line break falls
+#: inside one of these the hyphen is the author's and has to survive; anywhere
+#: else a hyphen at a line end belongs to the typesetting and goes.
+#:
+#: A list rather than a dictionary check, because the alternative is guessing:
+#: "imple-mented" and "service-oriented" are the same shape to a regex, and
+#: only the vocabulary tells them apart. Every entry here is a word that appears
+#: as the tail of a compound in architecture documents.
+_COMPOUND_TAILS = frozenset(
+    """
+    oriented server controller response layered op based driven tier end side
+    premise prem time only party specific level wide aware free safe in out off
+    on up down to facing critical bound ready heavy light scoped owned backed
+    """.split()
+)
+
+#: "imple-\nmented" or "service-\noriented": a word broken at the margin.
+_WRAPPED = re.compile(r"([a-z]{2,})-\s*\n\s*([a-z]+)")
+
+#: A break before a capital or a digit is always a compound the author wrote —
+#: "Shibboleth-\nBased", "ISO-\n27001" — so the hyphen stays and the newline goes.
+_WRAPPED_COMPOUND = re.compile(r"-\s*\n\s*(?=[A-Z0-9])")
+
+
+def _rejoin_wraps(text: str) -> str:
+    """Put a word back together across a line wrap, keeping real compounds.
+
+    A PDF breaks a long word at the right margin and leaves the hyphen behind.
+    Read back with the newline collapsed to a space that becomes "imple-
+    mented", which is what a reviewer saw in the evidence panel and reads as the
+    tool having mangled their document.
+
+    Dropping every hyphen at a line end would be the same bug wearing the other
+    face: this corpus is full of compounds that genuinely carry one, and
+    "serviceoriented" or "clientserver" in a citation is just as wrong. So the
+    tail decides. A word in `_COMPOUND_TAILS` keeps the hyphen; anything else is
+    treated as a wrapped word and joined. A capital or digit after the break
+    always keeps it.
+    """
+
+    def join(match: re.Match[str]) -> str:
+        head, tail = match.group(1), match.group(2)
+        return f"{head}-{tail}" if tail.lower() in _COMPOUND_TAILS else f"{head}{tail}"
+
+    return _WRAPPED_COMPOUND.sub("-", _WRAPPED.sub(join, text))
+
+
 @dataclass
 class Candidate:
     chunk_id: str
@@ -71,7 +118,7 @@ class Candidate:
                 " ".join(line.split()) for line in self.text.splitlines() if line.strip()
             )
         else:
-            body = " ".join(self.text.split())
+            body = " ".join(_rejoin_wraps(self.text).split())
         return body if len(body) <= 700 else body[:700] + "…"
 
 

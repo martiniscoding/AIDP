@@ -292,6 +292,17 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
         found = clause_parser.from_prose(section)
         for table in out.tables.get(index, []):
             found.extend(clause_parser.from_table(section, table.rows))
+        # A grid that reached us already flattened into one run-on string, which
+        # the structured paths above cannot see as a table at all. Seen in a
+        # customer's database as a single clause titled with its own column
+        # header and carrying every rule in the standard glued together. Tried
+        # only when the structured readers came back with at most one clause,
+        # since they are the better answer whenever they work.
+        if len(found) <= 1:
+            split = clause_parser.split_flattened_grid(section)
+            if len(split) > len(found):
+                found = split
+                inferred.add(index)
         if not found:
             found = clause_parser.from_normative_prose(section)
             if found:
@@ -301,6 +312,14 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
             # one and a section can now hold both.
             for ordinal, clause in enumerate(found, start=1):
                 clause.ordinal = ordinal
+                # "# | Principle Name | Statement and Rationale | Implications"
+                # names the table's columns, not a rule, and it was reaching
+                # reports as the title of every finding from that standard. The
+                # section's own heading is wrong just as often here, so fall
+                # back to the rule's first words instead.
+                if clause.title and clause_parser.is_header_row(clause.title):
+                    opening = " ".join((clause.statement or "").split())[:70].rstrip(" .,;:")
+                    clause.title = opening or f"Rule {ordinal}"
             out.clauses[index] = found
 
     source = rules.pdf_source(
@@ -642,6 +661,17 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
         found = clause_parser.from_prose(section)
         for table in out.tables.get(index, []):
             found.extend(clause_parser.from_table(section, table.rows))
+        # A grid that reached us already flattened into one run-on string, which
+        # the structured paths above cannot see as a table at all. Seen in a
+        # customer's database as a single clause titled with its own column
+        # header and carrying every rule in the standard glued together. Tried
+        # only when the structured readers came back with at most one clause,
+        # since they are the better answer whenever they work.
+        if len(found) <= 1:
+            split = clause_parser.split_flattened_grid(section)
+            if len(split) > len(found):
+                found = split
+                inferred.add(index)
         if not found:
             found = clause_parser.from_normative_prose(section)
             if found:
@@ -651,6 +681,14 @@ def _parse_word(raw: bytes, document: dict, heartbeat) -> _Result:
             # one and a section can now hold both.
             for ordinal, clause in enumerate(found, start=1):
                 clause.ordinal = ordinal
+                # "# | Principle Name | Statement and Rationale | Implications"
+                # names the table's columns, not a rule, and it was reaching
+                # reports as the title of every finding from that standard. The
+                # section's own heading is wrong just as often here, so fall
+                # back to the rule's first words instead.
+                if clause.title and clause_parser.is_header_row(clause.title):
+                    opening = " ".join((clause.statement or "").split())[:70].rstrip(" .,;:")
+                    clause.title = opening or f"Rule {ordinal}"
             out.clauses[index] = found
 
     if read.undecodable_images:

@@ -1330,6 +1330,46 @@ invalidation
 confirmed
 - cost
 
+Work these four lenses in order. The first two are where a reviewer's time is \
+actually worth spending, and the engine has been spending it on the fourth.
+
+LENS 1 - WHERE THE DOCUMENT CONTRADICTS ITSELF. Highest priority, every time. \
+Cross-read the sections and the diagrams against each other and report where the \
+design says two incompatible things, quoting both. These are the findings only a \
+reader of the whole document can produce, they are never generic, and the author \
+cannot dismiss them. Look for: an availability claim in one section against a \
+failure description in another - one part saying the system stops when a server \
+fails while another claims active redundancy with sub-second recovery and a third \
+admits a single point of failure; two diagrams describing different stacks for the \
+same tier, such as a single-page client in one figure and server-rendered pages in \
+another, with no boundary defined between them; a scope statement denying external \
+integration while other sections and figures define external APIs, an identity \
+provider, feeds and mail; a stated technology in prose that the diagram does not \
+carry. Name both passages and both pages, and say which one a build would follow.
+
+LENS 2 - NUMBERS THAT THE TOPOLOGY CANNOT SUPPORT. A stated figure the described \
+architecture cannot deliver is a real finding: a concurrency or throughput target \
+against a single application instance, a recovery objective against a single \
+database with no standby or clustering, a retention period with no stated store. \
+Quote the figure and name the component that bounds it.
+
+LENS 3 - WHAT THE DOCUMENT SAYS IT IS NOT. Before writing any suggestion that \
+something is missing, find what this document declares out of scope or deferred \
+to another artefact, and quote it. A high-level logical and process architecture \
+that states its physical and deployment views are covered elsewhere has not \
+omitted them - it has scoped them out, and a finding saying otherwise tells the \
+author the tool did not read section 5. HARD RULE: never raise a missing backup \
+strategy, deployment pipeline, environment separation, firewall, centralised \
+logging, metrics, tracing or caching against a document that has scoped that view \
+out. An omission is only a finding when it breaks a view this document claims to \
+provide.
+
+LENS 4 - DEFECTS INSIDE THE VIEWS ACTUALLY GIVEN. Only now, and only within what \
+the document does describe: plain HTTP for authenticated traffic while reserving \
+HTTPS for 'secure' operations, serialised language objects crossing a REST \
+boundary, data access exposed with no transaction owner, a layer reaching past \
+the one below it, a component with two reasons to change.
+
 Proportionate to this system, and native to its stack. This matters more than \
 finding something to say about every item above.
 

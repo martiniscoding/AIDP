@@ -321,6 +321,142 @@ def _sentences(text: str) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------------ #
+# A grid that arrived flattened into prose
+# ------------------------------------------------------------------ #
+
+#: A table header rendered as one line: "# | Principle Name | Statement ...".
+#: Never a clause title — it names the columns, not a rule.
+_HEADER_ROW = re.compile(
+    r"^\s*(?:#|no\.?|s\.?\s*no\.?|sr\.?)?\s*\|(?:[^|\n]{0,60}\|){1,8}[^|\n]{0,60}\s*$",
+    re.IGNORECASE,
+)
+
+#: One flattened record: "#: 2 | Principle Name: Design for Reuse | ...".
+#: The number restarts each record, which is what lets them be told apart after
+#: the rows have been glued into a single string.
+_RECORD_START = re.compile(r"(?:^|\s)(?:#|No\.?|Sr\.?)\s*:\s*(\d{1,3})\s*\|")
+
+#: "Principle Name: Fit-for-Purpose Pattern Selection" inside a flattened row.
+_CELL = re.compile(r"([A-Z][A-Za-z /&()-]{2,40}?)\s*:\s*", re.MULTILINE)
+
+#: Columns whose value names the rule, best first.
+_NAME_COLUMNS = ("principle name", "principle", "rule name", "rule", "name", "standard", "topic")
+#: Columns carrying the rule itself.
+_BODY_COLUMNS = ("statement and rationale", "statement", "description", "requirement", "guideline")
+#: Columns carrying what it obliges.
+_OBLIGATION_COLUMNS = ("implications", "implication", "requirements", "obligations", "controls")
+
+
+def is_header_row(text: str) -> bool:
+    """Whether a line is a table's column header rather than a rule.
+
+    Used to keep "# | Principle Name | Statement and Rationale | Implications"
+    out of a clause title. A standard whose every finding is titled with its own
+    column names is one nobody can read, and that title was reaching reports.
+    """
+    line = " ".join(text.split())
+    if "|" not in line or len(line) > 200:
+        return False
+    cells = [cell.strip() for cell in line.split("|")]
+    if len(cells) < 2:
+        return False
+    # A header names columns: short, no sentence punctuation, no obligation.
+    return all(
+        len(cell) <= 60 and not cell.endswith(".") and not _NORMATIVE.search(cell)
+        for cell in cells
+        if cell
+    )
+
+
+def _cells_of(record: str) -> dict[str, str]:
+    """The "Column: value" pairs inside one flattened row, in order."""
+    bounds = [(m.start(), m.end(), m.group(1).strip().lower()) for m in _CELL.finditer(record)]
+    cells: dict[str, str] = {}
+    for index, (_start, end, column) in enumerate(bounds):
+        stop = bounds[index + 1][0] if index + 1 < len(bounds) else len(record)
+        value = record[end:stop].strip().strip("|").strip()
+        if value:
+            cells.setdefault(column, value)
+    return cells
+
+
+def _pick(cells: dict[str, str], wanted: tuple[str, ...]) -> str:
+    for key in wanted:
+        for column, value in cells.items():
+            if key in column:
+                return value
+    return ""
+
+
+def split_flattened_grid(section: Section) -> list[Clause]:
+    """Clauses from a rules table that reached us as one run-on string.
+
+    The failure this exists for, seen in a customer's database: a standard whose
+    whole table had been serialised into a single clause —
+
+        title:    "# | Principle Name | Statement and Rationale | Implications"
+        requires: "#: 1 | Principle Name: Fit-for-Purpose Pattern Selection |
+                   Statement and Rationale: ... #: 2 | Principle Name: Design
+                   for Reuse | Statement and Rationale: ..."
+
+    Every rule in the standard was in there, and the engine measured designs
+    against the lot as one clause. Worse, because the string mentioned
+    "approved", the judge answered the whole table as a governance question.
+
+    The structured paths (`from_table`, and the model reading in rules.py) are
+    still preferred and run first; this is for text that has already lost its
+    structure — a parser fallback, a `.docx` table flattened on export, or a
+    row-per-line PDF. It is deliberately conservative: two or more numbered
+    records, each with recognisable columns, or nothing is returned and the
+    other extractors are left to do their work.
+    """
+    text = section.text
+    if not text or "|" not in text:
+        return []
+
+    starts = [m.start() for m in _RECORD_START.finditer(text)]
+    if len(starts) < 2:
+        return []
+
+    out: list[Clause] = []
+    for index, start in enumerate(starts):
+        stop = starts[index + 1] if index + 1 < len(starts) else len(text)
+        record = " ".join(text[start:stop].split())
+        number = _RECORD_START.search(record)
+        ordinal = number.group(1) if number else str(index + 1)
+
+        cells = _cells_of(record)
+        if not cells:
+            continue
+        name = _pick(cells, _NAME_COLUMNS)
+        body = _pick(cells, _BODY_COLUMNS)
+        obliges = _pick(cells, _OBLIGATION_COLUMNS)
+        if not (body or obliges):
+            continue
+        # The same guard `from_table` applies: a row that neither obliges
+        # anything nor carries implications is a catalogue entry, not a rule.
+        if not obliges and not _NORMATIVE.search(body):
+            continue
+
+        statement, rationale = _split_statement_rationale(body)
+        clause = Clause(
+            ordinal=index + 1,
+            # Numbered from the table's own first column, so a finding cites
+            # the row a reader can find: "2 — Design for Reuse".
+            title=f"{ordinal} — {name}" if name else f"{section.title} — rule {ordinal}",
+            statement=statement,
+            rationale=rationale,
+            requirements=_items(obliges),
+            page_start=section.page_start,
+            page_end=section.page_end,
+        )
+        if not clause.is_empty:
+            out.append(clause)
+
+    return out if len(out) >= 2 else []
+
+
 def from_normative_prose(section: Section) -> list[Clause]:
     """Last resort: a section that states obligations without labelling them.
 

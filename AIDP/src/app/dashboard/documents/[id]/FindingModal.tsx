@@ -19,7 +19,7 @@ import {
   Excerpt,
   StandardProposal,
   TONE,
-  RATIONALE_PARTS,
+  rationaleLabels,
   rationaleParts,
   type FindingView,
   type ProjectRef,
@@ -149,6 +149,9 @@ export function FindingModal({
   const severity = severityOf(finding.verdict, finding.confidence, finding.obligation);
   const decided = finding.reviewerState !== "pending";
   const parts = rationaleParts(finding.rationale);
+  // "Gap / Impact / Fix" on a clause that passed contradicts its own
+  // verdict, so a covered finding is labelled as the description it is.
+  const labels = rationaleLabels(finding.verdict);
   const draft = finding.draft;
 
   /**
@@ -295,7 +298,10 @@ export function FindingModal({
         {/* The detail scrolls inside the dialog rather than moving the page. */}
         <div
           ref={scroller}
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5"
+          // pb-6 so the decision buttons, which are the last thing in here,
+          // clear the keyboard-hint bar below instead of sitting flush against
+          // it. They were reading as clipped at the end of a long finding.
+          className="min-h-0 flex-1 overflow-y-auto px-4 pt-3.5 pb-6 sm:px-5"
         >
         {/* Gap, impact and fix on their own lines, where the engine wrote
             three sentences. Labelled rather than run together: the reader is
@@ -305,9 +311,9 @@ export function FindingModal({
         {parts ? (
           <dl className="mb-3.5 grid gap-2">
             {parts.map((text, i) => (
-              <div key={RATIONALE_PARTS[i]} className="grid grid-cols-[56px_1fr] gap-x-3 gap-y-0.5 sm:grid-cols-[62px_1fr]">
+              <div key={labels[i]} className="grid grid-cols-[66px_1fr] gap-x-3 gap-y-0.5 sm:grid-cols-[86px_1fr]">
                 <dt className="pt-px font-display text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink/52">
-                  {RATIONALE_PARTS[i]}
+                  {labels[i]}
                 </dt>
                 <dd className="min-w-0 text-[13px] leading-relaxed text-ink/82">{text}</dd>
               </div>

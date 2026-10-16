@@ -918,7 +918,7 @@ def _judge_by_search(
             best,
         )
 
-    verdict, confidence, rationale, cited, claimed = _normalise(raw)
+    verdict, confidence, rationale, cited, claimed = _normalise(raw, clause)
     by_id = {c.chunk_id: c for c in candidates}
     generated = {c.chunk_id for c in candidates if c.is_generated}
     evidence = [
@@ -1073,7 +1073,7 @@ def _assess_document_one(
         )
         return
 
-    verdict, confidence, rationale, _, claimed = _normalise(raw)
+    verdict, confidence, rationale, _, claimed = _normalise(raw, clause)
     evidence, unverified = _checked_quotes(raw, whole)
     applied, fabricated = _applied(precedents, claimed)
     verdict, rationale = _guard_document(
@@ -1687,7 +1687,127 @@ def _reclassified(verdict: str, reason: str, rationale: str) -> tuple[str, str]:
     return verdict, f"{reason} {tail}".strip()
 
 
-def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
+#: A remediation opens with an instruction. Checked on the rationale's last
+#: sentence, which the prompts reserve for the fix.
+_IMPERATIVE = re.compile(
+    r"^\s*(?:Add|Replace|Remove|Define|Document|Specify|Route|Decouple|Split|Move|Set|"
+    r"Enforce|Introduce|Restrict|Encrypt|Bound|Configure|Record|Obtain|Migrate|Separate|"
+    r"Apply|Limit|Rename|Publish|Retire|Isolate|Pin|Scope|Require|Capture|Store|Rotate|"
+    r"Terminate|Upgrade|Patch|Index|Partition|Cache|Throttle|Version|Validate|Review|"
+    r"Confirm|Raise|Agree|Ask)\b",
+    re.IGNORECASE,
+)
+
+#: The shape of a sentence that says the design is fine. On a verdict that is
+#: not "covered" this is the contradiction worth catching: the model has graded
+#: the clause as unmet and then written that it is met.
+_COMPLIANT_PROSE = re.compile(
+    r"\b(?:aligning with|aligns with|in alignment with|complies with|is compliant|"
+    r"are compliant|satisfies the|meets the|is appropriate for|are appropriate for|"
+    r"is consistent with|adheres to|conforms to|fulfils the|fulfills the)\b",
+    re.IGNORECASE,
+)
+
+#: A clause asking for an architectural property rather than a record. Used to
+#: refuse a governance-shaped answer to a technical question.
+_ARCHITECTURAL_CLAUSE = re.compile(
+    r"\b(?:pattern|reuse|encrypt|layer|interface|coupling|cohesion|redundan|failover|"
+    r"replicat|segment|least privilege|authenticat|authoris|authoriz|timeout|retry|"
+    r"idempoten|scalab|latency|throughput|backup|restore|retention|logging|monitor|"
+    r"index|partition|cache|queue|broker|gateway|protocol|tls|ssl|api|schema|"
+    r"transaction|session|secret|key management)\b",
+    re.IGNORECASE,
+)
+
+#: The paperwork words a false `not_assessable` leans on.
+_PAPERWORK = re.compile(
+    r"\b(?:approval|approved|certification|certified|waiver|sign-?off|authoris\w+|"
+    r"authoriz\w+|exception record|governance record)\b",
+    re.IGNORECASE,
+)
+
+#: Verdicts whose rationale must end in an instruction, not a compliance claim.
+_NEEDS_REMEDIATION = ("contradicts", "partial", "absent", "not_assessable", "needs_review")
+
+
+def _last_sentence(rationale: str) -> str:
+    """The fix, which the prompts put last. Falls back to the whole string."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", rationale.strip()) if p.strip()]
+    return parts[-1] if parts else rationale.strip()
+
+
+def _fix_is_a_compliance_claim(verdict: str, rationale: str) -> bool:
+    """Whether the remediation sentence says the design already complies.
+
+    The failure this catches, from a live run on gpt-4.1-mini:
+
+        verdict: not_assessable
+        gap:     "The clause governs what is 'approved', and nothing quoted
+                  records an approval, certification or waiver."
+        fix:     "The design uses service-oriented, client-server, MVC, and
+                  layered patterns appropriate for the system's business and
+                  operational needs, aligning with the clause's fit-for-purpose
+                  integration principle."
+
+    The fix states compliance with the clause the verdict says was not met.
+    Nothing in that finding is actionable and a reviewer reading it loses
+    confidence in every other finding on the page.
+
+    A cheap model will do this whatever the prompt says, so it is checked in
+    code: the last sentence of a non-covered rationale has to read as an
+    instruction. Compliance prose with no imperative verb is the signal.
+    """
+    if verdict not in _NEEDS_REMEDIATION:
+        return False
+    fix = _last_sentence(rationale)
+    if not fix:
+        return False
+    return bool(_COMPLIANT_PROSE.search(fix)) and not _IMPERATIVE.match(fix)
+
+
+def _clause_text(clause: dict | None) -> str:
+    """A clause's own words, for deciding what it is asking for."""
+    if not clause:
+        return ""
+    parts = [
+        str(clause.get("title") or ""),
+        str(clause.get("statement") or ""),
+        " ".join(str(r) for r in (clause.get("requirements") or [])),
+    ]
+    return " ".join(" ".join(parts).split())
+
+
+def _paperwork_answer_to_a_technical_clause(verdict: str, rationale: str, clause: dict | None) -> bool:
+    """Whether a technical clause was answered as a governance question.
+
+    The live failure: a clause on fit-for-purpose pattern selection came back
+    `not_assessable` because "nothing quoted records an approval, certification
+    or waiver". The clause had not asked for one. The design's patterns were
+    right there in the document, and the reviewer was handed a paperwork
+    complaint instead of a verdict on their architecture.
+
+    Both judge prompts now forbid this, and a cheap model will still do it, so
+    it is checked here as well: `not_assessable` whose reason leans on approval
+    language, against a clause whose own words are about an architectural
+    property. The verdict is sent to `needs_review` rather than guessed at —
+    the engine knows the answer is wrong but not what the right one is, and a
+    person reading the clause will settle it in seconds.
+    """
+    if verdict != "not_assessable":
+        return False
+    if not _PAPERWORK.search(rationale):
+        return False
+    text = _clause_text(clause)
+    if not text:
+        return False
+    # Asking for a record is legitimate grounds; asking for a property is not.
+    # Both can appear, so the architectural signal has to be the stronger one.
+    return bool(_ARCHITECTURAL_CLAUSE.search(text)) and not _PAPERWORK.search(text)
+
+
+def _normalise(
+    raw: dict, clause: dict | None = None
+) -> tuple[str, float, str, list[str], list[str]]:
     verdict = str(raw.get("verdict", "")).strip().lower()
     if verdict not in VERDICTS:
         verdict = "needs_review"
@@ -1714,6 +1834,37 @@ def _normalise(raw: dict) -> tuple[str, float, str, list[str], list[str]]:
     # make one unfounded.
     if verdict == "partial" and _BREACH.search(rationale):
         verdict = "contradicts"
+
+    # The model graded the clause as unmet and then wrote that the design meets
+    # it. Trusting the prose here, as the rule above does: a remediation
+    # sentence that argues compliance *is* the model's real answer, and the
+    # verdict label is what it picked before writing it out.
+    #
+    # Promoted to "covered" rather than left contradicting itself, because the
+    # alternative — a finding whose fix says there is nothing to fix — is
+    # unusable, and `_guard` still runs afterwards. That guard demotes any
+    # promoted verdict with no verified quote behind it, so this cannot invent
+    # a pass: it can only let one the model already argued for stand or be
+    # demoted on the evidence.
+    if _fix_is_a_compliance_claim(verdict, rationale):
+        logs.info(
+            log,
+            "remediation sentence argued compliance; trusting the prose",
+            was=verdict,
+        )
+        verdict = "covered"
+
+    # A technical clause answered with a complaint about paperwork. Sent to
+    # needs_review rather than guessed: the engine can tell the answer is wrong
+    # without knowing the right one, and a person reading the clause settles it.
+    if _paperwork_answer_to_a_technical_clause(verdict, rationale, clause):
+        logs.info(log, "governance answer to a technical clause; sending for review")
+        verdict = "needs_review"
+        rationale = (
+            "This clause asks for an architectural property, and the assessment answered it "
+            "with a missing approval record instead. A reviewer should read the clause against "
+            "the design. " + rationale
+        )[:MAX_RATIONALE]
 
     cited = raw.get("evidence") or []
     if isinstance(cited, str):
