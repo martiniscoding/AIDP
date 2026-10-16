@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Scale, Sparkles, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Scale,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   OBLIGATION_META,
@@ -145,12 +153,25 @@ export function FindingModal({
   // Which finding's clause is unfolded, rather than a boolean that would
   // have to be reset every time the dialog steps to another one.
   const [clauseOpenFor, setClauseOpenFor] = useState<string | null>(null);
+  // Key disclosure state to the finding itself. As soon as navigation changes
+  // the finding id, the new finding renders collapsed without waiting for an
+  // effect (including when navigation comes from the keyboard).
+  const [evidenceOpenFor, setEvidenceOpenFor] = useState<string | null>(null);
 
   const panel = useRef<HTMLDivElement | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
 
   const hasPrev = position.index > 0;
   const hasNext = position.index < position.total - 1;
+  const isEvidenceExpanded = evidenceOpenFor === finding.id;
+
+  const navigate = useCallback((delta: number) => {
+    // Clear even if the reviewer later returns to this same finding; the
+    // evidence accordion is reset by each navigation action, not just when a
+    // different id happens to render.
+    setEvidenceOpenFor(null);
+    onNavigate(delta);
+  }, [onNavigate]);
 
   // Escape closes, and the page behind does not scroll while this is up.
   useEffect(() => {
@@ -178,10 +199,10 @@ export function FindingModal({
 
       if (event.key === "ArrowLeft" || event.key === "k") {
         event.preventDefault();
-        onNavigate(-1);
+        navigate(-1);
       } else if (event.key === "ArrowRight" || event.key === "j") {
         event.preventDefault();
-        onNavigate(1);
+        navigate(1);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -192,7 +213,7 @@ export function FindingModal({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onClose, onNavigate]);
+  }, [onClose, navigate]);
 
   /**
    * Scroll back to the top when the dialog moves to another finding.
@@ -348,7 +369,7 @@ export function FindingModal({
             </span>
             <button
               type="button"
-              onClick={() => onNavigate(-1)}
+              onClick={() => navigate(-1)}
               disabled={!hasPrev}
               aria-label="Previous finding"
               title="Previous finding (← or k)"
@@ -358,7 +379,7 @@ export function FindingModal({
             </button>
             <button
               type="button"
-              onClick={() => onNavigate(1)}
+              onClick={() => navigate(1)}
               disabled={!hasNext}
               aria-label="Next finding"
               title="Next finding (→ or j)"
@@ -418,46 +439,16 @@ export function FindingModal({
             </p>
           )
         )}
-        {/* A contradiction is settled by holding two sentences against each
-            other. Printed one after the other, down a column 112 characters
-            wide, that comparison is something the reviewer assembles; side by
-            side it is something they see. */}
+        {/* Keep the governing requirement visible in the clean view. The
+            design's quoted response belongs with source evidence below. */}
         {facing && (
-          <div className="mb-3.5 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg border border-line bg-card px-3 py-2.5">
-              <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
-                The standard requires
-              </p>
-              <p className="text-[13px] leading-relaxed text-ink/82">
-                {finding.clauseStatement}
-              </p>
-            </div>
-            {/* Quoted, not accused. On a project-wide contradiction the
-                evidence spans several designs and nothing here identifies
-                which passage is the offending one — 23 of the 51 are that
-                shape. Colouring this panel like a breach would make that
-                claim about whichever passage happened to be first. The
-                verdict badge and the gap above carry the accusation. */}
-            <div className="rounded-lg border border-line bg-canvas-sunk px-3 py-2.5">
-              <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
-                {voices.length > 1 ? "What the designs say" : "What the design says"}
-              </p>
-              <ul className="space-y-1.5">
-                {voices.map((voice) => (
-                  <li key={voice.title || voice.text}>
-                    {/* Named only when there is more than one, so a single
-                        design is not labelled with what the header already
-                        says. */}
-                    {voices.length > 1 && voice.title && (
-                      <span className="mr-1.5 rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
-                        {voice.title}
-                      </span>
-                    )}
-                    <span className="text-[13px] leading-relaxed text-ink/82">{voice.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          <div className="mb-3.5 rounded-lg border border-line bg-card px-3 py-2.5">
+            <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
+              The standard requires
+            </p>
+            <p className="max-w-[68ch] text-[13px] leading-relaxed text-ink/82">
+              {finding.clauseStatement}
+            </p>
           </div>
         )}
 
@@ -486,6 +477,136 @@ export function FindingModal({
             )}
           </div>
         )}
+
+        {/* The source starts closed so reviewers can read the finding before
+            opening excerpts, table rows, or diagram images. */}
+        <section className="mb-3.5 overflow-hidden rounded-xl border border-line bg-card">
+          <button
+            type="button"
+            aria-expanded={isEvidenceExpanded}
+            aria-controls={`finding-evidence-${finding.id}`}
+            onClick={() => setEvidenceOpenFor(isEvidenceExpanded ? null : finding.id)}
+            className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left text-[13px] font-medium text-ink/78 transition-colors hover:bg-canvas-sunk focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-royal-mid"
+          >
+            <span>
+              {isEvidenceExpanded
+                ? "[-] Hide Source Evidence"
+                : `[+] View Source Evidence (${finding.evidence.length} ${finding.evidence.length === 1 ? "excerpt" : "excerpts"})`}
+            </span>
+            <ChevronDown
+              size={15}
+              aria-hidden="true"
+              className={cn(
+                "shrink-0 text-ink/52 transition-transform duration-200 motion-reduce:transition-none",
+                isEvidenceExpanded && "rotate-180",
+              )}
+            />
+          </button>
+
+          <div
+            id={`finding-evidence-${finding.id}`}
+            aria-hidden={!isEvidenceExpanded}
+            className={cn(
+              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
+              isEvidenceExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              {isEvidenceExpanded && (
+                <div className="space-y-2.5 border-t border-line p-3.5">
+                  {facing && voices.length > 0 && (
+                    <div className="rounded-lg border border-line bg-canvas-sunk px-3 py-2.5">
+                      <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
+                        {voices.length > 1 ? "What the designs say" : "What the design says"}
+                      </p>
+                      <ul className="space-y-1.5">
+                        {voices.map((voice) => (
+                          <li key={voice.title || voice.text}>
+                            {voices.length > 1 && voice.title && (
+                              <span className="mr-1.5 rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
+                                {voice.title}
+                              </span>
+                            )}
+                            <span className="text-[13px] leading-relaxed text-ink/82">
+                              {voice.text}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {finding.evidence.length > 0 ? (
+                    <ul className="space-y-2">
+                      {finding.evidence.map((item) => (
+                        <li
+                          key={item.chunkId}
+                          className="overflow-hidden rounded-lg border border-line bg-canvas-sunk"
+                        >
+                          <div className="px-3 py-2.5">
+                            <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-ink/62">
+                              {item.documentTitle && (
+                                <span className="rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
+                                  {item.documentTitle}
+                                </span>
+                              )}
+                              <span>
+                                {item.sourceKind === "quote"
+                                  ? "Quoted from the design, checked word for word"
+                                  : item.headingPath}
+                              </span>
+                              {item.page != null && <span>· page {item.page}</span>}
+                              {item.figureId && (
+                                <span
+                                  title="A model's reading of a diagram, not text from the page"
+                                  className="inline-flex items-center gap-1 rounded border border-warn-line px-1.5 py-px text-[11.5px] text-warn"
+                                >
+                                  <Sparkles size={9} />
+                                  model-described diagram
+                                </span>
+                              )}
+                            </p>
+                            {item.table ? (
+                              <TableFigure
+                                table={item.table.table}
+                                bare
+                                highlightRows={item.table.rows}
+                                caption={
+                                  item.table.rows.length === 0
+                                    ? "Quoted from this table"
+                                    : item.table.rows.length === 1
+                                      ? "Quoted from the highlighted row"
+                                      : "Quoted from the highlighted rows"
+                                }
+                              />
+                            ) : (
+                              <Excerpt item={item} />
+                            )}
+                          </div>
+
+                          {item.figureId && (
+                            <div className="border-t border-line bg-white p-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/figures/${item.figureId}`}
+                                alt="The figure this description was written from"
+                                className="h-auto w-full rounded"
+                              />
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[13px] text-ink/62">
+                      No passage in the submitted document was cited for this finding.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
 
         {/* How strongly the clause binds, and how that was established.
             Severity is a function of it, so a reviewer who disagrees with a
@@ -519,90 +640,6 @@ export function FindingModal({
           {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
           Evidence basis: {evidenceBasis}.
         </p>
-
-        {finding.evidence.length > 0 ? (
-          <ul className="mb-3 space-y-2">
-            {finding.evidence.map((item) => (
-              <li
-                key={item.chunkId}
-                className="overflow-hidden rounded-lg border border-line bg-card"
-              >
-                <div className="px-3 py-2.5">
-                  <p className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] text-ink/62">
-                    {/* Which design, when the run covered several. A heading
-                        and a page number are not an address on their own
-                        across a project, and the reviewer has to know which
-                        file to open. */}
-                    {item.documentTitle && (
-                      <span className="rounded border border-line px-1.5 py-px text-[11.5px] text-ink/72">
-                        {item.documentTitle}
-                      </span>
-                    )}
-                    {/* A quote from a whole-document reading has no heading;
-                        what a reviewer needs to know is that it was checked. */}
-                    <span>
-                      {item.sourceKind === "quote"
-                        ? "Quoted from the design, checked word for word"
-                        : item.headingPath}
-                    </span>
-                    {item.page != null && <span>· page {item.page}</span>}
-                    {item.figureId && (
-                      <span
-                        title="A model's reading of a diagram, not text from the page"
-                        className="inline-flex items-center gap-1 rounded border border-warn-line px-1.5 py-px text-[11.5px] text-warn"
-                      >
-                        <Sparkles size={9} />
-                        model-described diagram
-                      </span>
-                    )}
-                  </p>
-                  {/* A fifth of the evidence in these reports is table cells
-                      printed as a run-on line — "Category: Programming
-                      Languages | Comments: V 11" is a five-column row with
-                      its three empty columns dropped. Where the passage came
-                      out of a table, the table is what the reviewer is shown,
-                      with the cited row marked. */}
-                  {item.table ? (
-                    <TableFigure
-                      table={item.table.table}
-                      bare
-                      highlightRows={item.table.rows}
-                      caption={
-                        item.table.rows.length === 0
-                          ? "Quoted from this table"
-                          : item.table.rows.length === 1
-                            ? "Quoted from the highlighted row"
-                            : "Quoted from the highlighted rows"
-                      }
-                    />
-                  ) : (
-                    <Excerpt item={item} />
-                  )}
-                </div>
-
-                {/*
-                  The diagram, beside the claim made about it. Checking here —
-                  when a verdict actually depends on it — is worth more than
-                  reviewing every figure speculatively at ingest.
-                */}
-                {item.figureId && (
-                  <div className="border-t border-line bg-white p-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/api/figures/${item.figureId}`}
-                      alt="The figure this description was written from"
-                      className="h-auto w-full rounded"
-                    />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mb-3 text-[13px] text-ink/62">
-            No passage in the submitted document was cited for this finding.
-          </p>
-        )}
 
         {/* What the verdict rested on besides the document. Shown before the
             review controls, because whether a standing decision was applied
