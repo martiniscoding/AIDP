@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -259,6 +259,82 @@ export function Box({
         {label}
       </h3>
       {children}
+    </section>
+  );
+}
+
+/**
+ * Raw source, behind a toggle that starts closed.
+ *
+ * The analysis is three sentences; the evidence under it is quoted passages,
+ * whole table rows and sometimes a rendered diagram. Shown by default, the
+ * evidence pushed the gap and the fix off the first screen, so a reviewer
+ * scrolled past the document to reach the finding about it — the clutter this
+ * exists to remove.
+ *
+ * `openFor` is keyed to the item rather than held as a boolean, which is what
+ * makes the reset free: when navigation changes the id, the next item renders
+ * collapsed on the same frame. A boolean plus an effect would show the previous
+ * item's expanded state for a frame first, which reads as a flicker and is the
+ * usual way this pattern goes wrong. The same keying is used by the compliance
+ * dialog; this is that implementation, shared rather than copied a third time.
+ *
+ * The open/close itself is a grid-rows transition, so the panel animates to its
+ * own height without anyone measuring it, and `motion-reduce` turns it off for
+ * a reader who has asked for that.
+ */
+export function Disclosure({
+  id,
+  itemId,
+  openFor,
+  setOpenFor,
+  label,
+  children,
+}: {
+  /** Ties the button to the region it controls, for a screen reader. */
+  id: string;
+  /** The item this evidence belongs to; opening is remembered against it. */
+  itemId: string;
+  openFor: string | null;
+  setOpenFor: (next: string | null) => void;
+  /** What is inside, counted: "2 excerpts", "this table". */
+  label: string;
+  children: ReactNode;
+}) {
+  const open = openFor === itemId;
+
+  return (
+    <section className="mb-3.5 overflow-hidden rounded-xl border border-line bg-card">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpenFor(open ? null : itemId)}
+        className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left text-[13px] font-medium text-ink/78 transition-colors hover:bg-canvas-sunk focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-royal-mid"
+      >
+        <span>{open ? "[-] Hide Source Evidence" : `[+] View Source Evidence (${label})`}</span>
+        <ChevronDown
+          size={15}
+          aria-hidden="true"
+          className={cn(
+            "shrink-0 text-ink/52 transition-transform duration-200 motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      <div
+        id={id}
+        aria-hidden={!open}
+        className={cn(
+          "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          {open && <div className="border-t border-line p-3.5">{children}</div>}
+        </div>
+      </div>
     </section>
   );
 }

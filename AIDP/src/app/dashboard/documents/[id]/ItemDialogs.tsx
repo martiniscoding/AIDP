@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Check, Plus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CATEGORY_LABEL, type AdvicePriority, type Suggestion } from "@/lib/ingest/advice";
@@ -7,7 +8,7 @@ import type { CoverageGap, StandardSuggestion } from "@/lib/ingest/coverage";
 import type { TableView } from "@/lib/ingest/documents";
 import { TableFigure } from "@/components/ui/TableFigure";
 import type { Mark } from "@/lib/ingest/review-marks";
-import { Actions, Box, ReviewDialog } from "./ReviewDialog";
+import { Actions, Box, Disclosure, ReviewDialog } from "./ReviewDialog";
 
 /**
  * The improvement and design-gap dialogs.
@@ -150,10 +151,22 @@ export function ImprovementDialog({
   onNavigate: (delta: number) => void;
   onClose: () => void;
 }) {
+  // Identifies this suggestion for the evidence toggle. The section and title
+  // together are stable for as long as the suggestion is on screen, which is
+  // all this needs — the marks store has the content key for persistence.
+  const key = `${suggestion.section}-${suggestion.title}`;
+  const [openFor, setOpenFor] = useState<string | null>(null);
+
+  // Evidence closes on every step, so the next suggestion starts clean.
+  const navigate = (delta: number) => {
+    setOpenFor(null);
+    onNavigate(delta);
+  };
+
   return (
     <ReviewDialog
       position={position}
-      onNavigate={onNavigate}
+      onNavigate={navigate}
       onClose={onClose}
       title={suggestion.title}
       badges={
@@ -171,16 +184,31 @@ export function ImprovementDialog({
       }
       subtitle={where(suggestion.headingPath, suggestion.sectionTitle, suggestion.page)}
     >
-      <Box label="Context in design">
+      <Box label="Why it matters">
+        <p className="text-[13px] leading-relaxed text-ink/82">{suggestion.why}</p>
+      </Box>
+
+      <Box label="Suggested action">
+        <p className="text-[13px] leading-relaxed text-ink/82">{suggestion.recommendation}</p>
+      </Box>
+
+      {/* The design's own words, after the analysis and closed by default: a
+          reviewer reads what to do first and checks the passage only if they
+          doubt it. An "add" suggestion has nothing to quote, so it says that
+          in place of an empty panel. */}
+      <Disclosure
+        id={`improvement-evidence-${key}`}
+        itemId={key}
+        openFor={openFor}
+        setOpenFor={setOpenFor}
+        label={suggestion.quote ? "1 excerpt" : "where it applies"}
+      >
         {suggestion.quote ? (
           <Quote
             text={suggestion.quote}
             cite={where(suggestion.headingPath, suggestion.sectionTitle, suggestion.page)}
           />
         ) : (
-          /* An "add" suggestion is about something the design does not say, so
-             there is nothing to quote. Saying that is better than an empty box
-             a reader takes for a failed render. */
           <p className="text-[13px] leading-relaxed text-ink/66">
             This is about something the design does not state, so there is no passage to
             quote. It concerns{" "}
@@ -190,15 +218,7 @@ export function ImprovementDialog({
             .
           </p>
         )}
-      </Box>
-
-      <Box label="Why it matters">
-        <p className="text-[13px] leading-relaxed text-ink/82">{suggestion.why}</p>
-      </Box>
-
-      <Box label="Suggested action">
-        <p className="text-[13px] leading-relaxed text-ink/82">{suggestion.recommendation}</p>
-      </Box>
+      </Disclosure>
 
       {suggestion.clauses.length > 0 && (
         <Box label="Related findings">
@@ -248,10 +268,19 @@ export function GapDialog({
   onNavigate: (delta: number) => void;
   onClose: () => void;
 }) {
+  const key = `${gap.section}-${gap.headingPath}`;
+  const [openFor, setOpenFor] = useState<string | null>(null);
+
+  // Evidence closes on every step, so the next gap starts clean.
+  const navigate = (delta: number) => {
+    setOpenFor(null);
+    onNavigate(delta);
+  };
+
   return (
     <ReviewDialog
       position={position}
-      onNavigate={onNavigate}
+      onNavigate={navigate}
       onClose={onClose}
       title={gap.title || gap.headingPath}
       badges={
@@ -266,18 +295,6 @@ export function GapDialog({
       }
       subtitle="A part of the design no clause in your framework governs, so nothing in this assessment checked it."
     >
-      <Box label="Design evidence">
-        {tables && tables.length > 0 ? (
-          <div className="space-y-2">
-            {tables.map((table) => (
-              <TableFigure key={table.id} table={table} caption="Quoted from this table" />
-            ))}
-          </div>
-        ) : (
-          <Quote text={gap.quote} cite={where(gap.headingPath, gap.title, gap.page)} />
-        )}
-      </Box>
-
       <Box label="Governance gap">
         <p className="text-[13px] leading-relaxed text-ink/82">{gap.what}</p>
         <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink/64">
@@ -304,6 +321,30 @@ export function GapDialog({
           </p>
         </Box>
       )}
+
+      {/* Closed by default, as on the other two tabs. A gap's evidence is
+          often a whole table, which is the largest block in any dialog. */}
+      <Disclosure
+        id={`gap-evidence-${key}`}
+        itemId={key}
+        openFor={openFor}
+        setOpenFor={setOpenFor}
+        label={
+          tables && tables.length > 0
+            ? `${tables.length} ${tables.length === 1 ? "table" : "tables"}`
+            : "1 excerpt"
+        }
+      >
+        {tables && tables.length > 0 ? (
+          <div className="space-y-2">
+            {tables.map((table) => (
+              <TableFigure key={table.id} table={table} caption="Quoted from this table" />
+            ))}
+          </div>
+        ) : (
+          <Quote text={gap.quote} cite={where(gap.headingPath, gap.title, gap.page)} />
+        )}
+      </Disclosure>
 
       <Decide
         mark={mark}
