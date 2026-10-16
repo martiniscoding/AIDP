@@ -228,6 +228,21 @@ Rules that matter:
    breach: read the clause first and decide whether it mandates a platform,
    states a preference, or sets conditions for choosing one. Only an actual
    conflict with what the clause mandates is "contradicts".
+3c-i. Decide first what the clause is asking for, because that decides which
+   verdicts are available at all. A clause asking for an architectural property —
+   encryption in transit, segmentation, least privilege, a standby, a retention
+   mechanism, an interface contract — is judged on the design. Answer "covered",
+   "partial", "contradicts" or "absent" on what the extracts show the design
+   doing. You may NOT answer "not_assessable" on such a clause because no approval
+   signature, waiver, sign-off or governance record appears: that is not what the
+   clause asked for, and answering a technical question with a paperwork complaint
+   tells the reviewer nothing about their architecture. A design that encrypts its
+   traffic satisfies a clause requiring encryption whether or not anyone
+   countersigned it.
+3c-ii. Rule 3c governs the other case and only that case: a clause whose own
+   subject is the record — it asks whether something was approved, certified,
+   authorised, designated or formally accepted, or whether a figure such as an RTO
+   was stated — and the extracts do not carry it.
 3d. Keep "absent" for a clause whose mechanism the design never engages, and
    "not_assessable" for one it engages without the evidence to settle it. If the
    extracts show the design doing the thing the clause is about but not to the
@@ -324,8 +339,16 @@ a report. Use it to do the three things that decide whether the verdict is right
      neighbouring subject. Drop any that does not survive this.
   3. OBLIGATION AND SEVERITY. Read the clause's own force - must, should, may, or it
      never says - and argue the verdict against the strongest rival reading before
-     choosing. Where the clause turns on a record the design would not carry, say so
-     here and answer "not_assessable".
+     choosing. Decide whether the clause asks for an architectural property or for a
+     record; only the second may end in "not_assessable" (rules 3c-i and 3c-ii).
+  4. DOES THE FIX ANSWER THE GAP? Write the gap in one clause and the fix in one
+     clause, then say plainly whether that fix resolves that gap. They must be about
+     the same thing. A gap that is a missing record is fixed by obtaining the record
+     from whoever holds it, never by describing the architecture. A gap that is a
+     technical weakness is fixed by changing the component the gap names, not a
+     different one. A gap about a missing certification answered by a fix about MVC
+     patterns is the failure this step exists to catch: rewrite it so the halves
+     agree before you write the rationale.
 
 Then reply with JSON only, no prose around it:
 {{"internal_architect_reasoning": "your working, as above",
@@ -955,6 +978,22 @@ not. Selecting a platform the clause does not list is not by itself a breach: re
 whether the clause mandates a platform, states a preference, or sets conditions for \
 choosing one, and answer "contradicts" only on an actual conflict with what it \
 mandates.
+5a-i. First decide what the clause is asking for, because that decides which \
+verdict is even available. A clause asking for an architectural property - \
+encryption in transit, segmentation, least privilege, a standby, a stated \
+retention mechanism, an interface contract - is judged on the design. Read the \
+design and answer "covered", "partial", "contradicts" or "absent" on what it does. You may NOT \
+answer "not_assessable" on such a clause because the document carries no approval \
+signature, no waiver, no sign-off and no governance record: those are not what \
+the clause asked for, and answering a technical question with a paperwork \
+complaint tells a reviewer nothing about their architecture. A design that \
+encrypts its traffic is compliant with a clause requiring encryption whether or \
+not anybody countersigned it.
+5a-ii. "not_assessable" is for a clause whose OWN subject is a record the design would \
+not carry - it asks whether something was approved, certified, authorised, \
+designated, formally accepted, or whether a figure such as an RTO was stated - \
+and the document does not carry it. Then say which record is missing and who \
+would hold it. Rule 5a governs that case and that case only.
 5b. "not_applicable" needs a reason from the clause, not from the document's \
 silence. Quote the passage establishing what this architecture is, and name the \
 stated condition of the clause that excludes it. Where the clause states no such \
@@ -1050,8 +1089,13 @@ this before you may answer "absent". (2) CITATION - for each quote you intend to
 confirm it is in the document character for character, on the page you will give, and \
 that it bears on what the clause requires; drop any that does not. (3) OBLIGATION AND \
 SEVERITY - read the clause's own force, argue the verdict against the strongest rival \
-reading, and where the clause turns on a record a design would not carry, say so here \
-and answer "not_assessable".
+reading, and decide whether the clause asks for an architectural property or for a \
+record; only the second may end in "not_assessable" (rules 5a-i and 5a-ii). (4) DOES THE \
+FIX ANSWER THE GAP? - write the gap in one clause and the fix in one clause and say \
+plainly whether that fix resolves that gap. A missing record is fixed by obtaining \
+the record, never by describing the architecture; a technical weakness is fixed by \
+changing the component the gap names. A gap about a certification answered by a fix \
+about MVC patterns is what this step exists to catch.
 
 Then reply with JSON only, no prose around it:
 {{"internal_architect_reasoning": "your working, as above", \
@@ -1263,7 +1307,14 @@ Already reported against the standards. Do not suggest these again:
 {findings}
 </findings>
 
-{lifecycle}Review the design the way a design review board would, for example:
+{lifecycle}Before any of this, read what kind of system this is and when it was \
+built. The stack, the era and the topology the document describes decide which \
+questions below are even applicable. A monolith on Tomcat and Oracle, a \
+client-server application, a batch ETL job and a distributed microservice estate \
+fail in different ways, and the review has to be the one this system can act on.
+
+Review the design the way a design review board would, taking only the items that \
+apply to the architecture in front of you:
 - single points of failure, high availability, backup and disaster recovery for the \
 components it names
 - failure handling between its components and with external systems: timeouts, \
@@ -1278,6 +1329,33 @@ invalidation
 - technology choices: lock-in, fit, and components whose support status should be \
 confirmed
 - cost
+
+Proportionate to this system, and native to its stack. This matters more than \
+finding something to say about every item above.
+
+Never recommend a distributed-systems mechanism for an architecture that is not \
+distributed. Dead-letter queues, back-pressure, distributed tracing, service \
+meshes, circuit breakers, event sourcing, sidecars, saga orchestration, \
+idempotency keys across services and cross-service correlation ids all presuppose \
+independently deployed services exchanging messages. A monolith serving HTTP \
+requests from one process against one database has nowhere to put them, so a \
+suggestion naming one is advice about a different system and a reviewer will read \
+it as the tool not having understood theirs. Propose one only where the document \
+itself describes the thing it would attach to — a broker, a queue, several \
+services, an async flow — or states a scaling requirement that demands it, and \
+say which passage that is.
+
+The same discipline applies to the era. A design from the early 2010s on Tomcat, \
+Oracle and a load balancer is reviewed on what that architecture can do well: \
+connection pool sizing, transaction boundaries, session replication, scheduled job \
+overlap, index and query plans, a standby database, log file retention, patching \
+and backup restore drills. Those are the findings its owner can act on this \
+quarter. Telling them to adopt a service mesh is not a review.
+
+Where the right answer genuinely is a larger change — the design states a load it \
+cannot serve, or a failure mode its topology cannot contain — say so plainly as \
+that, naming the requirement in the document that forces it. What is forbidden is \
+reaching for a modern pattern because it is good practice in general.
 
 Rules that matter more than finding many suggestions:
 
@@ -1361,12 +1439,29 @@ or cost it prevents. Never a restatement of the recommendation.
 design may need few.
 12. Before writing any suggestion, work in "internal_architect_reasoning" - the first \
 key, and one nobody ever reads, so it is working space rather than prose for a report. \
-Use it to: (1) list the components, technologies and flows this design actually names, \
+Work these five steps in order:
+(1) NAME THE ARCHITECTURE. In one line: what kind of system is this, on what stack, \
+from roughly when, and is it one deployable or several communicating ones? Quote \
+the passage that tells you. Every later step is judged against this answer, and a \
+suggestion that would not make sense for the system named here is dropped at step 5.
+(2) INVENTORY. List the components, technologies and flows this design actually names, \
 in its own words, so every suggestion is anchored to one of them and no product is \
-imported that the design does not already run; (2) check that each quote you intend to \
-give is the design's own words, inside the section you will name; and (3) rank what you \
-have by what would actually hurt - breach, data loss, outage first - and drop anything \
-that would fit any design. Then write only the suggestions that survive.
+imported that the design does not already run.
+(3) QUOTES. Check that each quote you intend to give is the design's own words, inside \
+the section you will name.
+(4) GAP AND FIX MUST MATCH. For each suggestion, write the gap in one clause and the \
+fix in one clause, then state plainly whether that fix resolves that gap. They have \
+to be about the same thing. If the gap is a missing record - an approval, a waiver, \
+a stated figure, a signed exception - the fix is to obtain or produce that record \
+from whoever holds it, never a description of the technical architecture. If the gap \
+is a technical weakness, the fix is a change to the component named in the gap and \
+not to a different one. A gap about a certification answered by a fix about MVC \
+patterns is the failure this step exists to catch: drop that suggestion or rewrite \
+it so the two halves agree.
+(5) RANK AND CUT. Order what survives by what would actually hurt - breach, data loss, \
+outage first - and drop anything that would fit any design, anything that fails \
+step 1's test of fitting this architecture, and anything whose fix does not resolve \
+its own gap. Then write only the suggestions that survive.
 """
 
 _ADVICE_USER = "Suggest improvements to this design."
