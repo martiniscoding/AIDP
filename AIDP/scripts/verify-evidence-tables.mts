@@ -20,6 +20,7 @@
  * Run with:  npx tsx --env-file=.env.local scripts/verify-evidence-tables.mts
  */
 import { citedRow, quoteIsTable } from "../src/lib/ingest/evidence-tables";
+import { readEvidence, readableExcerpt } from "../src/lib/ingest/verdicts";
 import type { TableView } from "../src/lib/ingest/documents";
 
 let pass = 0;
@@ -199,6 +200,66 @@ ok(
   quoteIsTable(flattened, [TABLE], flattened) === quoteIsTable(flattened, [TABLE]),
 );
 ok("an empty address changes nothing", quoteIsTable(realQuote, [TABLE], "") === quoteIsTable(realQuote, [TABLE]));
+
+console.log("\nA card does not print its own address twice");
+// The chunk's text begins with its heading path, because that is what gets
+// embedded. The card prints the design and the heading above the excerpt, so
+// the reviewer is given the address and then the address again as the opening
+// words of the evidence — on this workspace, 6,068 of 6,099 cards.
+const PATH = "Workforce Analytics Hub (WAH) › 5 Integration design";
+ok(
+  "the path is taken off the front",
+  readableExcerpt(`${PATH} Timekeeping DB → Dashboard Direct SQL`, PATH) ===
+    "Timekeeping DB → Dashboard Direct SQL",
+  readableExcerpt(`${PATH} Timekeeping DB → Dashboard Direct SQL`, PATH),
+);
+ok(
+  "and so is the section title where it follows a second time",
+  readableExcerpt(`${PATH}\n\n5 Integration design\nDirect SQL`, PATH) === "Direct SQL",
+  readableExcerpt(`${PATH}\n\n5 Integration design\nDirect SQL`, PATH),
+);
+ok(
+  "a passage that does not begin with its path is untouched",
+  readableExcerpt("Credentials are stored in a configuration file.", PATH) ===
+    "Credentials are stored in a configuration file.",
+);
+ok("no path, nothing removed", readableExcerpt("Direct SQL", "") === "Direct SQL");
+ok(
+  "a path that is the whole passage leaves nothing rather than breaking",
+  readableExcerpt(PATH, PATH) === "",
+);
+
+console.log("\nA half word left by an old cut is trimmed off");
+// `body[:700]` ended half the stored excerpts inside a word. The worker now
+// cuts at a space; this is for the ones already written.
+ok(
+  "the stump goes",
+  readableExcerpt(`${"x".repeat(60)} replace with gov…`, "") ===
+    `${"x".repeat(60)} replace with…`,
+  readableExcerpt(`${"x".repeat(60)} replace with gov…`, ""),
+);
+ok(
+  "a passage that was not cut keeps its last word",
+  readableExcerpt("Backups run nightly.", "") === "Backups run nightly.",
+);
+ok(
+  "a short passage is not reduced to an ellipsis",
+  readableExcerpt("gov…", "") === "gov…",
+);
+
+console.log("\nreadEvidence applies both, so stored reports are fixed by being opened");
+const read = readEvidence([
+  {
+    chunkId: "c1",
+    headingPath: PATH,
+    page: 2,
+    excerpt: `${PATH} ${"word ".repeat(40)}replace with gov…`,
+    sourceKind: "section",
+  },
+]);
+ok("the address is gone", !read[0].excerpt.startsWith(PATH), read[0].excerpt.slice(0, 40));
+ok("the stump is gone", read[0].excerpt.endsWith("replace with…"), read[0].excerpt.slice(-24));
+ok("and the heading itself is still on the item", read[0].headingPath === PATH);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

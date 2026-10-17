@@ -119,8 +119,33 @@ class Candidate:
             )
         else:
             body = " ".join(_rejoin_wraps(self.text).split())
-        return body if len(body) <= 700 else body[:700] + "…"
+        return _shorten(body)
 
+
+
+# What a cited passage is cut to. Long enough to carry a table row or a
+# paragraph whole, short enough that eight of them are still a thing a person
+# reads rather than scrolls past.
+_EXCERPT = 700
+
+
+def _shorten(body: str) -> str:
+    """Cut a passage to length at a space, never inside a word.
+
+    `body[:700]` ended half of the stored excerpts mid-word — "replace with
+    gov…", "without demonstrated gatew…", "It lists four specific da…". The
+    reader is left guessing at a word the cut destroyed, and the guess is
+    usually wrong in the direction that matters: "gov" could be governance,
+    governed or government.
+
+    Falls back to the hard cut only where there is no space to cut at, which is
+    a single token longer than the limit and not prose at all.
+    """
+    if len(body) <= _EXCERPT:
+        return body
+    head = body[:_EXCERPT]
+    space = head.rfind(" ")
+    return (head[:space].rstrip() if space > _EXCERPT // 2 else head) + "…"
 
 _SEARCH = """
 WITH dense AS (

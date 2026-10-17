@@ -521,18 +521,74 @@ export function rationaleSections(
 }
 
 /** `evidence` is Json in the schema; narrow it before rendering. */
+/**
+ * A quoted passage with the parts that are not the quote taken off it.
+ *
+ * Two things were printed on every evidence card that the card already said.
+ *
+ * A chunk's text begins with its own heading path, because that is what gets
+ * embedded — "Workforce Analytics Hub (WAH) › 5 Integration design ILLUSTRATIVE
+ * DESIGN | Based on…". The card prints the design and the heading above the
+ * excerpt, so the reader is given the address, and then the address again as
+ * the opening words of the evidence. On this workspace that is 6,068 of 6,099
+ * cards and 462,000 characters of repetition, and it is the first thing a
+ * reviewer's eye hits on every finding.
+ *
+ * And a passage cut to length was cut at the character — `body[:700]` — so half
+ * of them end inside a word: "replace with gov…", "without demonstrated
+ * gatew…". The worker now cuts at a space (see `Candidate.excerpt` in
+ * retrieval.py); this trims the stump off the ones already stored, which is
+ * every finding written before today.
+ *
+ * Done at read, like `withoutExtractIds`, so reports already written are fixed
+ * by being opened rather than by being run again. Nothing is lost that was
+ * information: the heading is still on the card, and the half-word was never
+ * readable.
+ */
+export function readableExcerpt(excerpt: string, headingPath: string): string {
+  let text = excerpt;
+
+  const path = headingPath.trim();
+  if (path && text.startsWith(path)) {
+    text = text.slice(path.length).replace(/^[\s›|:–—-]+/, "");
+    // The last part of the path often follows it a second time, on its own
+    // line, because the chunk carries the section's title as well as its path.
+    const leaf = path.split("›").pop()?.trim();
+    if (leaf && text.startsWith(leaf)) {
+      text = text.slice(leaf.length).replace(/^[\s›|:–—-]+/, "");
+    }
+  }
+
+  // A trailing partial word, left by a cut at the character. Only where the
+  // ellipsis says the passage was cut — a document may legitimately end mid
+  // word if that is what it says.
+  if (text.endsWith("…")) {
+    const body = text.slice(0, -1).trimEnd();
+    const lastSpace = body.lastIndexOf(" ");
+    // Not if it would leave almost nothing: a short passage that is one long
+    // token is better shown whole than reduced to an ellipsis.
+    if (lastSpace > 40) text = `${body.slice(0, lastSpace).trimEnd()}…`;
+  }
+
+  return text.trim();
+}
+
 export function readEvidence(value: unknown): EvidenceItem[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const row = item as Record<string, unknown>;
     if (typeof row.chunkId !== "string") return [];
+    const headingPath = typeof row.headingPath === "string" ? row.headingPath : "";
     return [
       {
         chunkId: row.chunkId,
-        headingPath: typeof row.headingPath === "string" ? row.headingPath : "",
+        headingPath,
         page: typeof row.page === "number" ? row.page : null,
-        excerpt: typeof row.excerpt === "string" ? row.excerpt : "",
+        excerpt: readableExcerpt(
+          typeof row.excerpt === "string" ? row.excerpt : "",
+          headingPath,
+        ),
         sourceKind: typeof row.sourceKind === "string" ? row.sourceKind : "clause",
         figureId: typeof row.figureId === "string" ? row.figureId : null,
         documentId: typeof row.documentId === "string" ? row.documentId : "",

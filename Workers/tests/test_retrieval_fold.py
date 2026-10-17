@@ -20,10 +20,12 @@ evidence, so the cases below are as much about what survives as what goes.
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from aidp import retrieval  # noqa: E402
 from aidp.retrieval import Candidate, _fold_duplicates  # noqa: E402
 
 passed = failed = 0
@@ -108,6 +110,39 @@ ordered = _fold_duplicates(
 )
 ok("order is preserved", [c.chunk_id for c in ordered] == ["a", "b"], [c.chunk_id for c in ordered])
 ok("nothing is invented", all(isinstance(c, Candidate) for c in ordered))
+
+print("\nA passage is cut at a space, never inside a word")
+# `body[:700]` ended half of this workspace's 6,099 stored excerpts mid-word:
+# "replace with gov…", "without demonstrated gatew…", "It lists four specific
+# da…". The reader is left guessing at a word the cut destroyed, and "gov"
+# could be governance, governed or government.
+long = ("word " * 200) + "governance"
+cut = retrieval._shorten(long)
+ok("it is cut", cut.endswith("…"))
+ok("within the limit", len(cut) <= retrieval._EXCERPT + 1, len(cut))
+# The real test of a clean cut is not what the last character is — a whole word
+# also ends in a letter — but that the source continues with a space where the
+# cut was made. That is what "no word was broken" means.
+kept = cut[:-1]
+ok(
+    "the cut is where the source has a space",
+    long.startswith(kept) and long[len(kept)] == " ",
+    repr(cut[-28:]),
+)
+ok("so no word was broken by it", kept.split()[-1] == "word", kept.split()[-1])
+ok("a short passage is untouched", retrieval._shorten("hello world") == "hello world")
+ok(
+    "one exactly at the limit is untouched",
+    retrieval._shorten("a" * retrieval._EXCERPT) == "a" * retrieval._EXCERPT,
+)
+ok(
+    "a single token longer than the limit is still cut, having no space to cut at",
+    retrieval._shorten("x" * 900) == "x" * retrieval._EXCERPT + "…",
+)
+ok(
+    "a space too near the start does not shorten it to nothing",
+    len(retrieval._shorten("a" * 690 + " " + "b" * 200)) > retrieval._EXCERPT // 2,
+)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
