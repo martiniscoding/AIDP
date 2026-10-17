@@ -1163,6 +1163,17 @@ model AssessmentRun {
   /// existed have none.
   lifecycle    Json?
 
+  /// Which of this run's findings come from one fact about the design, worked
+  /// out after every clause is judged — see Workers/aidp/rootcause.py and
+  /// src/lib/ingest/root-causes.ts.
+  ///
+  /// A lens over the findings, never a replacement: each one keeps its clause
+  /// reference, its verdict and its own review decision, because a breached
+  /// clause has to stay answerable as that clause. Twelve contradictions on one
+  /// real run came from five facts, and the report counted twelve pieces of
+  /// work. Null on runs from before it existed, which read exactly as they did.
+  rootCauses   Json?
+
   startedAt   DateTime  @default(now())
   completedAt DateTime?
 

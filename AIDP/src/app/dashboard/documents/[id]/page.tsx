@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { getDocument, isTerminal, STATUS_LABEL } from "@/lib/ingest/documents";
 import { formatDuration } from "@/lib/ingest/pipeline";
 import { readCoverage } from "@/lib/ingest/coverage";
+import { readRootCauses } from "@/lib/ingest/root-causes";
 import { readAdvice } from "@/lib/ingest/advice";
 import { readLifecycle } from "@/lib/ingest/lifecycle";
 import { latestRun, listFindings, verdictCounts } from "@/lib/ingest/assessment";
@@ -127,6 +128,7 @@ export default async function DocumentPage({
         note: run.note,
         orphaned: run.orphaned,
         job: run.job,
+        rootCauses: readRootCauses(run.rootCauses),
         coverage: readCoverage(run.coverage),
         coverageTables,
         advice: readAdvice(run.advice),

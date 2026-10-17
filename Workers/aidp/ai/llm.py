@@ -493,6 +493,7 @@ class LLM(Protocol):
     def sharpen_clause(self, *, clause: str, finding: str, evidence: str) -> dict: ...
     def find_technologies(self, *, design: str, products: str, title: str) -> dict: ...
     def confirm_absent(self, *, document: str, clauses: str) -> dict: ...
+    def group_findings(self, *, findings: str) -> dict: ...
 
 
 # Verdict shape, enforced by the API rather than requested in the prompt.
@@ -2003,6 +2004,84 @@ _CONFIRM_SCHEMA = {
 _CONFIRM_MAX_TOKENS = 8192
 
 
+# ---------------------------------------------------------------- root causes
+
+_GROUP_SYSTEM = """\
+You are reading the findings of one architecture compliance assessment and \
+grouping the ones that come from the SAME underlying fact about the design.
+
+One decision in a design breaks several rules at once. A design that lets one \
+application read another's database directly breaks the rule against \
+database-to-database integration, the rule about accessing a System of Record \
+through governed interfaces, and the rule about obtaining data from the source \
+of truth. That is ONE thing to fix and three findings. A reviewer who sees three \
+unrelated problems will plan three pieces of work.
+
+Your job is to say which findings share one cause. Not to re-judge them, not to \
+merge them, not to change a verdict. Each finding keeps its own clause and its \
+own answer.
+
+Rules that matter:
+
+1. Group only findings a single change to the design would resolve together. If \
+fixing one would leave the other still true, they are not one cause.
+2. The same subject area is NOT the same cause. Two findings about security are \
+two causes unless the same sentence of the design produced both — credentials in \
+a config file and an unprotected ingress are both security and are different work.
+3. A finding belongs to at most one group. Pick the cause that most directly \
+produces it.
+4. When you are unsure, leave it out. A finding shown on its own is a small \
+annoyance; a finding hidden under a cause that did not produce it is a mistake \
+the reviewer cannot see.
+5. A group needs at least two findings. Do not invent a group for a lone finding.
+6. Not everything is in a group, and that is the normal case. Report only the \
+groups you are sure of.
+
+For each group give:
+  - "label": a short noun phrase naming the fact in the DESIGN, not the rule. \
+"Cross-application database coupling", not "Integration standards breached". \
+Under 60 characters.
+  - "summary": one sentence saying what the design does or does not do, naming \
+the components involved. Under 200 characters.
+  - "fix": one sentence saying the single change that resolves the group. Under \
+200 characters.
+  - "findings": the index numbers of its members, from the list given."""
+
+_GROUP_USER = """\
+These are the findings of one assessment. Group the ones that share a cause.
+
+{findings}
+
+Reply with JSON only."""
+
+_GROUP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "fix": {"type": "string"},
+                    "findings": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["label", "summary", "fix", "findings"],
+                "propertyOrdering": ["label", "summary", "fix", "findings"],
+            },
+        }
+    },
+    "required": ["groups"],
+    "propertyOrdering": ["groups"],
+}
+
+# One call for a whole run. A report of sixty findings is a long list in and a
+# short list of groups out, so the ceiling is for the input being understood,
+# not for the answer being long.
+_GROUP_MAX_TOKENS = 4096
+
+
 def _confirm_system(*, document: str) -> str:
     return _CONFIRM_SYSTEM.format(document=document)
 
@@ -2278,6 +2357,17 @@ class GeminiLLM:
         )
         if not text:
             raise RuntimeError("gemini returned nothing on the absent clauses")
+        return _parse_json(text)
+
+    def group_findings(self, *, findings: str) -> dict:
+        text = self._generate(
+            [{"text": _GROUP_USER.format(findings=findings)}],
+            system=_GROUP_SYSTEM,
+            max_tokens=_GROUP_MAX_TOKENS,
+            schema=_GROUP_SCHEMA,
+        )
+        if not text:
+            raise RuntimeError("gemini returned nothing on the finding groups")
         return _parse_json(text)
 
 
@@ -2587,6 +2677,21 @@ class AnthropicLLM:
                 ],
                 "messages": [
                     {"role": "user", "content": _CONFIRM_USER.format(clauses=clauses)},
+                    {"role": "assistant", "content": "{"},
+                ],
+            },
+        )
+        return _parse_json("{" + self._text_of(data))
+
+    def group_findings(self, *, findings: str) -> dict:
+        data = self._send(
+            {
+                "model": self.model,
+                "max_tokens": _GROUP_MAX_TOKENS,
+                "temperature": 0,
+                "system": [{"type": "text", "text": _GROUP_SYSTEM}],
+                "messages": [
+                    {"role": "user", "content": _GROUP_USER.format(findings=findings)},
                     {"role": "assistant", "content": "{"},
                 ],
             },
@@ -2998,6 +3103,20 @@ class OpenRouterLLM:
             raise RuntimeError("openrouter returned nothing on the absent clauses")
         return _parse_json(text)
 
+    def group_findings(self, *, findings: str) -> dict:
+        text = self._chat(
+            [
+                {"role": "system", "content": _GROUP_SYSTEM},
+                {"role": "user", "content": _GROUP_USER.format(findings=findings)},
+            ],
+            max_tokens=_GROUP_MAX_TOKENS,
+            schema=_GROUP_SCHEMA,
+            name="groups",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned nothing on the finding groups")
+        return _parse_json(text)
+
 
 # Clients, keyed by the credential that built them rather than held as one
 # global.
@@ -3239,6 +3358,21 @@ def confirm_absent(*, document: str, clauses: str) -> dict:
     word for word.
     """
     return client().confirm_absent(document=document, clauses=clauses)
+
+
+def group_findings(*, findings: str) -> dict:
+    """Which findings of a run come from one fact about the design.
+
+    One call for the whole run, after every clause has been judged. A design
+    that lets one application read another's database directly breaks three
+    separate integration rules; a reviewer reading three findings plans three
+    pieces of work. The grouping says which of them are one.
+
+    It never re-judges anything. Verdicts, rationales and evidence are already
+    settled and are not in its gift to change — see rootcause.py, which throws
+    away any group that names a finding this run does not have.
+    """
+    return client().group_findings(findings=findings)
 
 
 def summarise(document_text: str, *, title: str) -> str:

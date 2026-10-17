@@ -191,8 +191,17 @@ def for_job(organisation_id: str) -> Credential:
             res.raise_for_status()
             payload = res.json()
     except Exception as exc:  # noqa: BLE001 — see the class docstring
+        # Name the address. "[Errno 111] Connection refused" on its own sends
+        # people to look at the app, which is usually running perfectly well —
+        # the worker was simply pointed somewhere else. The whole question is
+        # which host it tried, and only this line knows.
+        #
+        # The secret is never printed, only whether one was sent: a refused
+        # connection and a rejected secret are different faults and the message
+        # has to tell them apart without putting the secret in a log.
         raise CredentialUnavailable(
-            f"could not read the organisation's model key: {str(exc)[:200]}"
+            f"could not read the organisation's model key from {endpoint} "
+            f"(secret {'sent' if cfg.worker_shared_secret else 'missing'}): {str(exc)[:200]}"
         ) from exc
 
     found = payload.get("credential")

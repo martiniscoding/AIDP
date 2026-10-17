@@ -39,6 +39,7 @@ from .. import (
     progress,
     queue,
     retrieval,
+    rootcause,
     standards,
     usage,
     whole_document,
@@ -694,6 +695,17 @@ def handle(job: Job, heartbeat) -> None:
             support, scope.designs, document_id=run.get("documentId")
         ),
     )
+
+    # Which of the findings come from one fact about the design. Last, because
+    # it reads the findings against each other and every one of them has to be
+    # settled first — including the ones the absent re-read changed.
+    #
+    # It groups and never merges: each finding keeps its clause, its verdict and
+    # its own review decision, so a breached clause stays answerable as that
+    # clause. Never fails the run; see rootcause.py.
+    progress.step("Grouping findings that share a cause")
+    heartbeat()
+    rootcause.record(run)
 
     # "Compare both": this run is done, and the other mode's run is opened in
     # the same transaction and carried on by this same job. See

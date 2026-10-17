@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   CircleSlash,
@@ -33,6 +34,12 @@ import {
 } from "@/lib/ingest/decision-effects";
 import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import type { TableView } from "@/lib/ingest/documents";
+import {
+  causeByFinding,
+  workItems,
+  type RootCause,
+  type RootCauseView,
+} from "@/lib/ingest/root-causes";
 import type { CoverageView } from "@/lib/ingest/coverage";
 import type { AdviceView } from "@/lib/ingest/advice";
 import type { LifecycleView } from "@/lib/ingest/lifecycle";
@@ -129,6 +136,12 @@ export type RunView = {
   orphaned: boolean;
   /** The live run's job: picked up yet, preparing, retrying, or stalled. */
   job: JobView | null;
+  /**
+   * Which of this run's findings come from one fact about the design. A lens
+   * over them, never a replacement — every finding keeps its clause, its
+   * verdict and its own decision.
+   */
+  rootCauses: RootCauseView | null;
   /** Parts of the design no clause governs, and standards to add. The "Absent" section. */
   coverage: CoverageView | null;
   /**
@@ -510,6 +523,9 @@ export function Assessment({
   const assessing = run?.state === "running" && !orphaned;
   const inFlight = queued || assessing;
   const shown = applyLens(findings, lens);
+  // Built once rather than searched per row: eighty findings would otherwise
+  // walk every group eighty times.
+  const causes = causeByFinding(run?.rootCauses ?? null);
   const reviewed = findings.filter((finding) => finding.reviewerState !== "pending").length;
   /**
    * Every clause the run judged, including the ones this view never lists.
@@ -813,16 +829,20 @@ export function Assessment({
               )}
             </p>
           ) : (
+            <>
+            <RootCauses causes={run?.rootCauses ?? null} shown={shown} />
             <ul className="space-y-2">
               <PipelineWatcher active={drafting} />
               {shown.map((finding) => (
                 <FindingRow
                   key={finding.id}
                   finding={finding}
+                  cause={causes.get(finding.id) ?? null}
                   onOpen={() => setOpenId(finding.id)}
                 />
               ))}
             </ul>
+            </>
           )}
           </>
         </>
@@ -1154,11 +1174,112 @@ export function StandardProposal({
  * rather than removed, because the evidence that a clause was reviewed is the
  * thing an audit asks for.
  */
+/**
+ * The causes behind this report, above the list of findings.
+ *
+ * A standard is separate rules, so one mistake in a design arrives as several
+ * findings. On one real run twelve contradictions came from five facts, five of
+ * them from a single application reading another's database directly, and three
+ * of the findings carried the same remediation sentence word for word. A
+ * reviewer reading the list planned twelve pieces of work.
+ *
+ * This says how many there actually are, and what each one is. The findings
+ * below are unchanged and still answer their own clauses — the point is to be
+ * read first, not instead.
+ */
+function RootCauses({
+  causes,
+  shown,
+}: {
+  causes: RootCauseView | null;
+  shown: FindingView[];
+}) {
+  const [open, setOpen] = useState(false);
+  const counts = workItems(
+    shown.map((finding) => finding.id),
+    causes,
+  );
+  // Nothing to say when nothing grouped. A heading reading "5 causes, 5
+  // findings" is a row of furniture telling the reviewer what they can see.
+  if (counts.causes === 0 || counts.work >= counts.findings) return null;
+
+  const grouped = (causes?.causes ?? []).filter((cause) =>
+    cause.findingIds.some((id) => shown.some((finding) => finding.id === id)),
+  );
+
+  return (
+    <section className="mb-3 overflow-hidden rounded-xl border border-royal-mid/30 bg-royal/5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[12.5px] text-ink/80 transition-colors hover:bg-royal/8"
+      >
+        <span className="font-medium text-ink/92">
+          {counts.findings} findings, {counts.work} things to fix
+        </span>
+        <span className="min-w-0 flex-1 truncate text-ink/62">
+          {grouped.length === 1
+            ? grouped[0].label
+            : grouped.map((cause) => cause.label).join(" · ")}
+        </span>
+        <ChevronDown
+          size={14}
+          className={cn("shrink-0 transition-transform duration-200", open && "rotate-180")}
+        />
+      </button>
+
+      {open && (
+        <ul className="divide-y divide-line-soft border-t border-line-soft">
+          {grouped.map((cause) => {
+            const here = shown.filter((finding) => cause.findingIds.includes(finding.id));
+            return (
+              <li key={cause.label} className="px-4 py-3">
+                <p className="text-[13px] font-medium text-ink/92">{cause.label}</p>
+                {cause.summary && (
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-ink/74">
+                    {cause.summary}
+                  </p>
+                )}
+                {cause.fix && (
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-ink/66">
+                    <span className="text-ink/55">One fix: </span>
+                    {cause.fix}
+                  </p>
+                )}
+                {/* The clauses it broke, still named. A cause that hid which
+                    rules it answers for would be no use in an audit. */}
+                <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11.5px]">
+                  {here.map((finding) => (
+                    <span
+                      key={finding.id}
+                      className="rounded border border-line bg-card px-1.5 py-0.5 text-ink/70"
+                    >
+                      {finding.clauseTitle || finding.clauseRef}
+                    </span>
+                  ))}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function FindingRow({
   finding,
+  cause,
   onOpen,
 }: {
   finding: FindingView;
+  /**
+   * The shared fact this finding came from, where it shares one. Named on the
+   * row so a reviewer working down the list can see that the one above was the
+   * same problem, rather than discovering it at the fifth finding.
+   */
+  cause: RootCause | null;
   /** Opens the shared dialog on this finding. See `openId` in Assessment. */
   onOpen: () => void;
 }) {
@@ -1233,6 +1354,18 @@ function FindingRow({
             lets the gap truncate rather than widening the row. */}
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2">
+            {/* Named on the row, not only in the summary above it. A reviewer
+                working down the list should see that this is the same problem
+                as the one three rows up, rather than finding that out after
+                planning both. */}
+            {cause && (
+              <span
+                title={cause.fix || cause.summary}
+                className="rounded border border-royal-mid/35 bg-royal/8 px-1.5 py-px text-[10.5px] text-royal-deep"
+              >
+                {cause.label}
+              </span>
+            )}
             {finding.documentTitle && (
               <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/65">
                 {finding.documentTitle}

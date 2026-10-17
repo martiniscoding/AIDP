@@ -1,0 +1,15 @@
+-- Which of a run's findings come from one fact about the design.
+--
+-- A standard is a list of separate rules, so a design is judged against each of
+-- them separately. That is right, and it is why one mistake arrives as several
+-- findings: on one real 61-clause run, twelve contradictions came from five
+-- facts, and three of them carried the same remediation sentence word for word.
+-- The reviewer saw twelve problems and planned twelve pieces of work.
+--
+-- Stored on the run rather than on the finding, for the same reason "coverage"
+-- and "advice" are: it is worked out in one pass over the whole run, rewritten
+-- whole by the next one, and has no meaning for a single finding on its own.
+--
+-- Nullable, and the report reads exactly as it did without it. Runs from before
+-- this have no groups and are not wrong for that.
+ALTER TABLE "assessment_run" ADD COLUMN "rootCauses" JSONB;

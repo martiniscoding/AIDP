@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, FileStack } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { readCoverage } from "@/lib/ingest/coverage";
+import { readRootCauses } from "@/lib/ingest/root-causes";
 import { readAdvice } from "@/lib/ingest/advice";
 import { readLifecycle } from "@/lib/ingest/lifecycle";
 import { listFindings, verdictCounts } from "@/lib/ingest/assessment";
@@ -102,6 +103,7 @@ export default async function ProjectAssessmentPage({
         note: run.note,
         orphaned: run.orphaned,
         job: run.job,
+        rootCauses: readRootCauses(run.rootCauses),
         coverage: readCoverage(run.coverage),
         coverageTables,
         advice: readAdvice(run.advice),
