@@ -335,5 +335,41 @@ for verdict_in, clause, ev in (
     )
     ok(f"{verdict_in} at 100% confidence is still corrected to {got}", got != verdict_in, got)
 
+print("\nA breach reported over a missing record is a silence, not a breach")
+# Three of eighteen contradictions on run cmvccny2z. Both judge prompts forbid
+# this (rule 3c) and a cheap model does it anyway.
+for gap in (
+    "The designs mention scaling mechanisms and pending governance approval but do not "
+    "confirm capacity expansion decisions are triggered by capacity utilization.",
+    "Operational readiness is not confirmed before final approval for COP and WAH.",
+    "The design includes correlation IDs but does not confirm failure alerts routed to "
+    "operational queues or PII masking in logs.",
+):
+    ok(f"“{gap[:44]}…” is a silence", fidelity.hedged_breach(gap) is not None)
+
+print("\nBut a design that does something is breaching, missing paperwork or not")
+for gap in (
+    "The Rapid Campaign Launch Portal uses one undifferentiated code unit and lacks "
+    "documented or approved modular design exception.",
+    "The Workforce Analytics Hub uses direct SQL access to the Timekeeping DB.",
+    "RCLP stores credentials in configuration files with no documented secret manager.",
+    "The design runs a single VM with no resilience or failover.",
+):
+    ok(f"“{gap[:44]}…” stands", fidelity.hedged_breach(gap) is None)
+
+ok(
+    "only the gap sentence is read, never the fix",
+    fidelity.hedged_breach(
+        "WAH uses direct SQL against the Timekeeping DB. This risks exposure. "
+        "The fix is to document and approve a governed interface, which is not documented."
+    )
+    is None,
+)
+ok(
+    "a rationale with no hedge at all is untouched",
+    fidelity.hedged_breach("Uses direct SQL.") is None,
+)
+ok("empty is harmless", fidelity.hedged_breach("") is None)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

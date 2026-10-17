@@ -44,11 +44,15 @@ cases, bad = [], 0
 
 ev, by = setup()
 _mark_conflict(ev, {"extract": "c1", "quote": "One undifferentiated code unit"}, by)
-cases.append(("a verbatim quote is marked", ev[0].get("conflictQuote") == "One undifferentiated code unit"))
+cases.append(
+    ("a verbatim quote is marked", ev[0].get("conflictQuote") == "One undifferentiated code unit")
+)
 
 ev, by = setup()
 _mark_conflict(ev, {"extract": "c1", "quote": "one   UNDIFFERENTIATED\ncode unit"}, by)
-cases.append(("whitespace and case differences still match", ev[0].get("conflictQuote") is not None))
+cases.append(
+    ("whitespace and case differences still match", ev[0].get("conflictQuote") is not None)
+)
 
 ev, by = setup()
 _mark_conflict(ev, {"extract": "c1", "quote": "a single undifferentiated code unit"}, by)

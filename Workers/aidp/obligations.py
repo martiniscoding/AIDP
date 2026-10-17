@@ -176,20 +176,29 @@ def of(clause: dict) -> Obligation:
         if strongest is not None:
             return Obligation(strongest, PARSED)
 
-    # Requirements first, then the statement. A statement introduces the subject
-    # and the requirements bind — "Data retention" as a statement over "Records
-    # shall be kept for seven years" is a mandatory clause, and reading only the
-    # statement would call it unstated.
+    # The statement governs, and only where it is silent do the requirements
+    # speak for the clause.
+    #
+    # This was the other way round, taking the strongest word found anywhere.
+    # "Respect Platform Ecosystem Boundaries" opens "Integration designs
+    # *should* leverage platform-native capabilities" and says "should" four
+    # more times; one subordinate "must" buried in a requirement made the whole
+    # clause mandatory, and a design that chose differently was reported as a
+    # Critical breach of a recommendation.
+    #
+    # A statement that establishes nothing — "Data retention" as a heading over
+    # "Records shall be kept for seven years" — still falls through to the
+    # requirements, so a clause whose obligation lives only there keeps it.
+    for key in ("statement", "title"):
+        found = _read(str(clause.get(key) or ""))
+        if found is not None:
+            return Obligation(found, READ)
+
     requirements = [str(r) for r in (clause.get("requirements") or [])]
     read = [s for s in (_read(text) for text in requirements) if s]
     strongest = _strongest(read)
     if strongest is not None:
         return Obligation(strongest, READ)
-
-    for key in ("statement", "title"):
-        found = _read(str(clause.get(key) or ""))
-        if found is not None:
-            return Obligation(found, READ)
 
     return UNKNOWN
 

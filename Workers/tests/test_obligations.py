@@ -98,10 +98,22 @@ ok(
     obligations.of({"requirements": [], "statement": "Logs should be retained"}).strength
     == "should",
 )
+# The statement governs. Taking the strongest word found anywhere made
+# "Respect Platform Ecosystem Boundaries" — which opens "should leverage" and
+# says "should" five times — a mandatory clause on one buried "must", and a
+# design that chose differently was a Critical breach of a recommendation.
 ok(
-    "requirements outrank the statement, which only introduces the subject",
+    "the statement governs where it establishes anything",
     obligations.of(
-        {"statement": "Systems may be internet-facing", "requirements": ["Traffic shall be logged"]}
+        {"statement": "Integration designs should leverage native capabilities",
+         "requirements": ["External platforms must be justified"]}
+    ).strength
+    == "should",
+)
+ok(
+    "and the requirements speak only where the statement is silent",
+    obligations.of(
+        {"statement": "Data retention", "requirements": ["Records shall be kept for seven years"]}
     ).strength
     == "must",
 )

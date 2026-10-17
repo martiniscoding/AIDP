@@ -162,6 +162,71 @@ def overreaches(rationale: str, clause_text: str) -> str | None:
     )
 
 
+# ------------------------------------------- a breach that is really a silence
+
+# "The document does not say." Every one of these describes a thing the design
+# failed to *record*, not a thing it does.
+_HEDGE = re.compile(
+    r"\b(?:"
+    r"does not confirm|do not confirm|not confirmed"
+    r"|lacks? (?:documented|evidence|confirmation)"
+    r"|no (?:documented|evidence of)"
+    r"|not (?:documented|evidenced|stated|specified|demonstrated)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# What the design *does*, said in the active voice. A rationale carrying one of
+# these is describing behaviour, and behaviour can breach a clause however much
+# paperwork is also missing: "uses one undifferentiated code unit and lacks
+# documented approval" is a real contradiction, and only the first half is why.
+_AFFIRMATIVE = re.compile(
+    r"\b(?:"
+    r"uses?|stores?|shares?|runs?|allows?|exposes?|writes?|manipulates?|sends?"
+    r"|keeps?|places?|deploys?|queries|querying|accesses|replicates?|routes?"
+    r"|lacks (?:logs|metrics|monitoring|alerts?|health|resilience|failover"
+    r"|authentication|authorisation|authorization|encryption)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def hedged_breach(rationale: str) -> str | None:
+    """Why this "contradicts" is really a silence, or None.
+
+    A document that does not say is not a document that breaches. Both judge
+    prompts say so — rule 3c — and a cheap model still answers "contradicts"
+    over a reason that is entirely about a missing record: "the designs mention
+    scaling mechanisms but *do not confirm* capacity expansion decisions are
+    triggered by utilisation", "operational readiness *is not confirmed* before
+    final approval". Three of eighteen contradictions on one real run.
+
+    The distinction that matters is whether the design is described as *doing*
+    something. "Uses one undifferentiated code unit and lacks documented
+    approval" breaches on its first clause and would be wrong to demote; "does
+    not confirm X" states nothing the design does at all.
+
+    Only the first sentence is read. The judge is asked for gap, impact and fix
+    in that order, and the fix sentence always says what is missing — testing
+    the whole rationale would demote every finding that proposes a remedy.
+    """
+    gap = _first_sentence(rationale)
+    if not _HEDGE.search(gap):
+        return None
+    if _AFFIRMATIVE.search(gap):
+        return None
+    return (
+        "Reported a breach over a record the document does not contain, not over "
+        "anything the design does."
+    )
+
+
+def _first_sentence(text: str) -> str:
+    """The gap, which is the first of the three sentences the judge writes."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)
+    return parts[0] if parts else text
+
+
 # ------------------------------------------------- P2: specified is not approved
 
 # A clause whose *subject* is qualified by one of these is a clause about work

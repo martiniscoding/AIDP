@@ -801,7 +801,10 @@ def _framework_clauses(conn, framework_id: str) -> list[dict]:
     return db.query(
         conn,
         """
-        SELECT cl."id", cl."title", cl."statement", cl."rationale",
+        SELECT cl."id", cl."ordinal", cl."title", cl."statement", cl."rationale",
+               (SELECT count(*) FROM "clause" sib
+                 WHERE sib."sectionId" = cl."sectionId"
+                   AND sib."supersededById" IS NULL) AS "siblings",
                cl."requirements", cl."guidance", cl."sourceRefs",
                s."headingPath", s."numberText", s."pageStart",
                d."title" AS "documentTitle", f."isBaseline"
@@ -1803,6 +1806,13 @@ def _guard(
         if overreach:
             return _demoted(overreach, rationale)
 
+        # A breach reported over a missing record rather than over anything the
+        # design does. Not a demotion to needs_review: the engine knows what
+        # this is — the document does not say — and that is not_assessable.
+        silence = fidelity.hedged_breach(rationale)
+        if silence:
+            return _reclassified("not_assessable", silence, rationale)
+
     if verdict == "covered":
         # A clause about what is "approved" or "certified", answered by a design
         # that names a technology and shows no approval. Not a breach and not a
@@ -2140,6 +2150,34 @@ def _normalise(
     )
 
 
+def _reference(clause: dict) -> str:
+    """What a reviewer is shown to identify the clause, and can cite back.
+
+    The reference comes from the section, deliberately: a decision anchored to
+    §9.3 has to keep finding the clause after it has been sharpened, and a
+    clause carries no number of its own. That is right for anchoring and was
+    wrong on screen as soon as a section held more than one clause.
+
+    "Core Integration Principles" is a table of ten integration principles, and
+    all ten findings showed the same line — the title underneath was the only
+    thing that differed, and the report read as one clause repeated ten times.
+    A section numbered "9" with several clauses gave a reference of "9", which
+    is not something a person can quote at anybody.
+
+    So where a section holds one clause the reference is the section's, exactly
+    as before; where it holds several, the clause's own position and name are
+    appended. Nothing that anchors a decision changes, because that still reads
+    the section.
+    """
+    base = clause["numberText"] or clause["headingPath"]
+    if (clause.get("siblings") or 1) <= 1:
+        return base
+    title = " ".join(str(clause.get("title") or "").split())
+    position = clause.get("ordinal")
+    tail = f"{position}. {title}" if position and title else (title or str(position or ""))
+    return f"{base} › {tail}" if tail else base
+
+
 def _render_clause(clause: dict) -> str:
     parts = []
     if clause["title"]:
@@ -2201,7 +2239,11 @@ def _mark_conflict(
 
     candidate = by_id.get(extract)
     if candidate is None:
-        logs.info(log, "conflict quote names an extract this finding does not cite", extract=extract)
+        logs.info(
+            log,
+            "conflict quote names an extract this finding does not cite",
+            extract=extract,
+        )
         return
 
     # Compared against `excerpt`, which is the text `_render_extracts` put in
@@ -2255,7 +2297,7 @@ def _write(
     design_id: str | None = None,
 ) -> None:
     """One finding, committed on its own so a crash costs at most one clause."""
-    reference = clause["numberText"] or clause["headingPath"]
+    reference = _reference(clause)
     # Severity is a function of this, so it is recorded with the finding rather
     # than looked up later: the clause behind a report can be sharpened or
     # retired, and a report has to keep explaining its own severities.
