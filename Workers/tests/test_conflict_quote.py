@@ -22,6 +22,7 @@ to a customer's design, in a compliance record.
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -81,6 +82,43 @@ cases.append(("a whole-excerpt quote is capped", len(ev[0].get("conflictQuote") 
 ev, by = setup()
 _mark_conflict(ev, "not a dict", by)
 cases.append(("junk is harmless", all("conflictQuote" not in e for e in ev)))
+
+# ---------------------------------------------------------------------------
+# The schema must allow everything the prompt asks for.
+#
+# The prompt asked for "conflict" from the day the feature landed and not one
+# reply carried it: `_VERDICT_SCHEMA` did not declare it, and strict mode
+# allows only what the schema names. Fourteen of fourteen contradictions came
+# back without one and the report went on guessing at the quote. The verdict
+# enum had the same fault once — `not_assessable` and `not_applicable` were in
+# the prompt and not in the enum, so the model could not answer them.
+#
+# Both are the same mistake, so this checks the rule rather than the instances:
+# every key the reply template names is a property the schema allows.
+from aidp.ai import llm  # noqa: E402
+
+tail = llm._JUDGE_PROMPT.rindex("reply with JSON only")
+template = llm._JUDGE_PROMPT[tail:]
+asked = set(re.findall(r'"(\w+)"\s*:', template))
+declared = set(llm._VERDICT_SCHEMA["properties"])
+missing = sorted(asked - declared - {"extract", "quote"})
+cases.append(
+    (f"the schema declares every field the prompt asks for (missing: {missing})", not missing)
+)
+
+strict = llm._strict_schema(llm._VERDICT_SCHEMA)
+cases.append(("strict mode keeps conflict", "conflict" in strict["properties"]))
+cases.append((
+    "and spells it nullable, since only a contradiction has one",
+    "null" in strict["properties"]["conflict"]["type"],
+))
+cases.append((
+    "every verdict the prompt offers is in the enum",
+    set(llm._VERDICT_SCHEMA["properties"]["verdict"]["enum"])
+    >= {"covered", "partial", "absent", "contradicts", "needs_review",
+        "not_assessable", "not_applicable"},
+))
+
 
 for name, okk in cases:
     print(f"  {'ok  ' if okk else 'FAIL'} {name}")

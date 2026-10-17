@@ -751,6 +751,30 @@ _VERDICT_SCHEMA = {
         },
         "evidence": {"type": "array", "items": {"type": "string"}},
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
+        # The one passage a contradiction rests on, and only for a
+        # contradiction — see `_mark_conflict` in stages/analyse.py, which
+        # verifies the naming rather than trusting it.
+        #
+        # It has to be declared here or it cannot be answered. The prompt asked
+        # for it from the day that feature landed and not one reply carried it,
+        # because strict mode allows only what the schema names: 14 of 14
+        # contradictions came back without a conflict and the report fell back
+        # to guessing at the quote, which is the behaviour the feature exists
+        # to replace. The verdict enum had the same fault once.
+        #
+        # Null on every other verdict, which is why it is nullable rather than
+        # merely optional: strict mode requires every property, so "absent" is
+        # spelled as a value and not as a missing key.
+        "conflict": {
+            "type": "object",
+            "properties": {
+                "extract": {"type": "string"},
+                "quote": {"type": "string"},
+            },
+            "required": ["extract", "quote"],
+            "propertyOrdering": ["extract", "quote"],
+            "nullable": True,
+        },
     },
     "required": [
         "internal_architect_reasoning",
@@ -759,6 +783,7 @@ _VERDICT_SCHEMA = {
         "rationale",
         "evidence",
         "appliedDecisions",
+        "conflict",
     ],
     "propertyOrdering": [
         "internal_architect_reasoning",
@@ -767,6 +792,7 @@ _VERDICT_SCHEMA = {
         "rationale",
         "evidence",
         "appliedDecisions",
+        "conflict",
     ],
 }
 
