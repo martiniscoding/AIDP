@@ -17,13 +17,14 @@ import {
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
 import {
+  orderEvidence,
   tablesForEvidence,
   tablesForGaps,
   withTables,
 } from "@/lib/ingest/evidence-tables";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
-import { draftView, draftsForRun } from "@/lib/ingest/standards";
+import { draftView, draftsForRun, requirementsForClauses } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { requireWorkspace } from "@/lib/access/gate";
 import { assessableDesigns, getProject, latestProjectRun } from "@/lib/ingest/projects";
@@ -120,26 +121,39 @@ export default async function ProjectAssessmentPage({
     findings.flatMap((f) => readEvidence(f.evidence).map((e) => e.chunkId)),
   );
 
-  const findingViews: FindingView[] = findings.map((f) => ({
-    id: f.id,
-    documentTitle: f.document?.title ?? null,
-    clauseRef: f.clauseRef,
-    clauseTitle: f.clauseTitle,
-    clauseStatement: f.clauseStatement,
-    verdict: f.verdict,
-    confidence: f.confidence,
-    rationale: withoutExtractIds(f.rationale),
-    obligation: readObligation(f.obligation),
-    obligationSource: f.obligationSource,
-    evidence: withTables(readEvidence(f.evidence), evidenceTables),
-    reviewerState: f.reviewerState,
-    reviewerVerdict: f.reviewerVerdict,
-    reviewerNote: f.reviewerNote,
-    appliedDecisions: readAppliedDecisions(f.appliedDecisions),
-    promotedDecisionId: promoted.get(f.id)?.id ?? null,
-    promotedScope: promoted.get(f.id)?.scope ?? null,
-    draft: draftView(drafts.get(f.id)),
-  }));
+  // The requirements behind each judged clause, which the finding itself does
+  // not carry. One keyed query for the page. See requirementsForClauses.
+  const clauseRequirements = await requirementsForClauses(findings.map((f) => f.clauseId));
+
+  const findingViews: FindingView[] = findings.map((f) => {
+    // Cleaned once: the reader sees this text, and so does the evidence
+    // ordering that works out which designs it names.
+    const rationale = withoutExtractIds(f.rationale);
+    return {
+      id: f.id,
+      documentTitle: f.document?.title ?? null,
+      clauseRef: f.clauseRef,
+      clauseTitle: f.clauseTitle,
+      clauseStatement: f.clauseStatement,
+      clauseRequirements: clauseRequirements.get(f.clauseId) ?? [],
+      verdict: f.verdict,
+      confidence: f.confidence,
+      rationale,
+      obligation: readObligation(f.obligation),
+      obligationSource: f.obligationSource,
+      evidence: orderEvidence(
+        withTables(readEvidence(f.evidence), evidenceTables),
+        rationale,
+      ),
+      reviewerState: f.reviewerState,
+      reviewerVerdict: f.reviewerVerdict,
+      reviewerNote: f.reviewerNote,
+      appliedDecisions: readAppliedDecisions(f.appliedDecisions),
+      promotedDecisionId: promoted.get(f.id)?.id ?? null,
+      promotedScope: promoted.get(f.id)?.scope ?? null,
+      draft: draftView(drafts.get(f.id)),
+    };
+  });
 
   // The organisation's rulings plus this project's own, which is what a run
   // from this page is actually judged with.

@@ -18,13 +18,14 @@ import {
   type VerdictCounts,
 } from "@/lib/ingest/verdicts";
 import {
+  orderEvidence,
   tablesForEvidence,
   tablesForGaps,
   withTables,
 } from "@/lib/ingest/evidence-tables";
 import { readAppliedDecisions } from "@/lib/ingest/decision-effects";
 import { countActive, promotedFrom } from "@/lib/ingest/decisions";
-import { draftView, draftsForRun } from "@/lib/ingest/standards";
+import { draftView, draftsForRun, requirementsForClauses } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
 import { canManageStandards } from "@/lib/access/roles";
@@ -184,26 +185,39 @@ export default async function DocumentPage({
     findings.flatMap((f) => readEvidence(f.evidence).map((e) => e.chunkId)),
   );
 
-  const findingViews: FindingView[] = findings.map((f) => ({
-    id: f.id,
-    documentTitle: null,
-    clauseRef: f.clauseRef,
-    clauseTitle: f.clauseTitle,
-    clauseStatement: f.clauseStatement,
-    verdict: f.verdict,
-    confidence: f.confidence,
-    rationale: withoutExtractIds(f.rationale),
-    obligation: readObligation(f.obligation),
-    obligationSource: f.obligationSource,
-    evidence: withTables(readEvidence(f.evidence), evidenceTables),
-    reviewerState: f.reviewerState,
-    reviewerVerdict: f.reviewerVerdict,
-    reviewerNote: f.reviewerNote,
-    appliedDecisions: readAppliedDecisions(f.appliedDecisions),
-    promotedDecisionId: promoted.get(f.id)?.id ?? null,
-    promotedScope: promoted.get(f.id)?.scope ?? null,
-    draft: draftView(drafts.get(f.id)),
-  }));
+  // The requirements behind each judged clause, which the finding itself does
+  // not carry. One keyed query for the page. See requirementsForClauses.
+  const clauseRequirements = await requirementsForClauses(findings.map((f) => f.clauseId));
+
+  const findingViews: FindingView[] = findings.map((f) => {
+    // Cleaned once: the reader sees this text, and so does the evidence
+    // ordering that works out which designs it names.
+    const rationale = withoutExtractIds(f.rationale);
+    return {
+      id: f.id,
+      documentTitle: null,
+      clauseRef: f.clauseRef,
+      clauseTitle: f.clauseTitle,
+      clauseStatement: f.clauseStatement,
+      clauseRequirements: clauseRequirements.get(f.clauseId) ?? [],
+      verdict: f.verdict,
+      confidence: f.confidence,
+      rationale,
+      obligation: readObligation(f.obligation),
+      obligationSource: f.obligationSource,
+      evidence: orderEvidence(
+        withTables(readEvidence(f.evidence), evidenceTables),
+        rationale,
+      ),
+      reviewerState: f.reviewerState,
+      reviewerVerdict: f.reviewerVerdict,
+      reviewerNote: f.reviewerNote,
+      appliedDecisions: readAppliedDecisions(f.appliedDecisions),
+      promotedDecisionId: promoted.get(f.id)?.id ?? null,
+      promotedScope: promoted.get(f.id)?.scope ?? null,
+      draft: draftView(drafts.get(f.id)),
+    };
+  });
 
   return (
     <>

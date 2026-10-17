@@ -391,6 +391,15 @@ export const RATIONALE_PARTS = ["Gap", "Impact", "Fix"] as const;
  */
 export const RATIONALE_PARTS_COVERED = ["Requirement", "Evidence", "Alignment"] as const;
 
+/**
+ * A fact the judge added after the three it was asked for.
+ *
+ * Nearly always a second design doing the same thing wrong, on a run that
+ * judges a clause against a project rather than a document. It is not part of
+ * the gap and not part of the impact, so it is named rather than absorbed.
+ */
+export const RATIONALE_PART_ALSO = "Also";
+
 /** Labels for a verdict: a passing clause is described, not remediated. */
 export function rationaleLabels(verdict: string): readonly string[] {
   return verdict === "covered" || verdict === "not_applicable"
@@ -465,9 +474,20 @@ function splitSentences(rationale: string): string[] {
  * sentence "Fix" is right, and labelling a second sentence that merely goes on
  * describing the gap "Fix" is a lie about what the reviewer is reading — so
  * the label is offered only to a sentence shaped like a remedy.
+ *
+ * Two shapes of remedy, because the judge writes it both ways. Most open with
+ * the verb — "Replace direct SQL with governed APIs…" — and some name it
+ * first: "The fix is to replace direct DB queries with well-defined APIs or
+ * event-driven integration." Only the first was recognised, and the second
+ * reads as a remedy to any reader, so both are.
+ *
+ * Worth being plain about the size of it: across 1,569 findings on verdicts
+ * that ask for three parts, this names the fix on four that were unlabelled
+ * before. It earns its place by being true rather than by the count — one of
+ * the four is a breach a customer is reading right now.
  */
 const FIX_OPENING =
-  /^(?:to\s+(?:satisfy|comply|close|remediate|address)\b|(?:the\s+)?(?:design|document|team|project)\s+(?:must|should|needs\s+to|will\s+need)\b|(?:add|define|document|specify|implement|provide|establish|include|record|align|obtain|introduce|apply|create|update|replace|restrict|migrate|remediate|remove|enable|configure|capture|publish|approve|extend)\b)/i;
+  /^(?:to\s+(?:satisfy|comply|close|remediate|address)\b|(?:the\s+)?(?:fix|remedy|resolution|remediation)\s+(?:is|would\s+be|here\s+is)\b|(?:the\s+)?(?:design|document|team|project)\s+(?:must|should|needs\s+to|will\s+need)\b|(?:add|define|document|specify|implement|provide|establish|include|record|align|obtain|introduce|apply|create|update|replace|restrict|migrate|remediate|remove|enable|configure|capture|publish|approve|extend)\b)/i;
 
 function looksLikeFix(sentence: string): boolean {
   return FIX_OPENING.test(sentence.trim());
@@ -516,6 +536,30 @@ export function rationaleSections(
     ];
   }
 
+  // Four, with the fix third and something after it.
+  //
+  // This is the judge answering the clause and then adding a second design:
+  // "...to enforce modular and loosely coupled architecture. Similarly, the
+  // Rapid Campaign Launch Portal has two applications manipulating shared
+  // tables, which breaches the clause." The three parts are all there, in
+  // order, with a fourth fact following them — and because the last sentence
+  // is not the fix, every branch above declined it and the reader was handed
+  // the four-sentence paragraph the labels exist to break up. Two of this
+  // workspace's seven contradictions read that way, both of them the breaches
+  // that name two designs at once.
+  //
+  // The remark is labelled rather than folded into the impact or dropped: it
+  // is a claim about a different design, which is exactly the thing a reader
+  // must not have blurred into the finding's own subject.
+  if (sentences.length === 4 && looksLikeFix(sentences[2])) {
+    return [
+      { label: gap, text: sentences[0] },
+      { label: impact, text: sentences[1] },
+      { label: fix, text: sentences[2] },
+      { label: RATIONALE_PART_ALSO, text: sentences[3] },
+    ];
+  }
+
   // Two: the impact is the part that goes missing, so this is a gap and a
   // remedy — but only when the second sentence actually reads as one.
   if (sentences.length === 2 && looksLikeFix(sentences[1])) {
@@ -526,6 +570,47 @@ export function rationaleSections(
   }
 
   return null;
+}
+
+/**
+ * A clause's citation with the part the title is about to say removed.
+ *
+ * `clauseRef` is the clause's address and `clauseTitle` is its name, and both
+ * are printed side by side on every row and at the head of every finding. On
+ * 415 of this workspace's 1,828 findings the address ends with the name, so the
+ * two together read:
+ *
+ *   Design Guidelines Application (1) › APPLICATION POLICIES › Policy 5 – No
+ *   Direct Database-to-Database Coupling Between Applications
+ *   Policy 5 – No Direct Database-to-Database Coupling Between Applications
+ *
+ * All seven contradictions in the run a customer is reading are that shape,
+ * with addresses of 71 to 130 characters. The row has one line: the address is
+ * set in mono and never truncated, the title truncates, and the finding's own
+ * sentence — the only part that says what is wrong — is what the ellipsis eats.
+ * So the reader is given the location twice and the problem not at all.
+ *
+ * The same mistake as the evidence cards that opened with their own heading
+ * path, and the same answer: say it once. The address keeps everything that
+ * locates the clause, including a trailing number, because that is what an
+ * auditor cites — "… › APPLICATION POLICIES", "… › Core Integration Principles
+ * › 3." Only the duplicated name goes.
+ *
+ * Returns the address unchanged when the title is not its tail, when the title
+ * is too short to be worth matching, and when removing it would leave nothing:
+ * a clause whose whole reference is its name has no other address to give.
+ */
+export function clauseAddress(clauseRef: string, clauseTitle: string): string {
+  const ref = clauseRef.trim();
+  const title = clauseTitle.trim();
+  // Two characters match too easily, and a numeric ref like "3.5" is the whole
+  // address rather than a prefix to trim.
+  if (title.length < 3 || !ref.toLowerCase().endsWith(title.toLowerCase())) return ref;
+  const head = ref
+    .slice(0, ref.length - title.length)
+    .replace(/[\s›»>|:–—-]+$/, "")
+    .trim();
+  return head || ref;
 }
 
 /** `evidence` is Json in the schema; narrow it before rendering. */

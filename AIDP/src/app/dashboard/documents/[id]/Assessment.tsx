@@ -20,6 +20,7 @@ import {
   VERDICTS,
   VERDICT_META,
   applyLens,
+  clauseAddress,
   rationaleSections,
   severityOf,
   type EvidenceItem,
@@ -36,6 +37,7 @@ import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import type { TableView } from "@/lib/ingest/documents";
 import {
   causeByFinding,
+  orderByCause,
   workItems,
   type RootCause,
   type RootCauseView,
@@ -66,6 +68,16 @@ export type FindingView = {
   clauseRef: string;
   clauseTitle: string;
   clauseStatement: string;
+  /**
+   * The clause's own requirements, read back from the standard at render.
+   *
+   * Not stored on the finding, which keeps only the statement — and the
+   * statement is the principle while these are the testable rules, so this is
+   * usually where the breach actually is. Empty for a clause that states its
+   * rule in one sentence, and for one a re-parse has since removed. See
+   * requirementsForClauses.
+   */
+  clauseRequirements: string[];
   verdict: string;
   confidence: number;
   rationale: string;
@@ -522,7 +534,9 @@ export function Assessment({
   const queued = run?.state === "queued" && !orphaned;
   const assessing = run?.state === "running" && !orphaned;
   const inFlight = queued || assessing;
-  const shown = applyLens(findings, lens);
+  // Worst first, then the findings that share one cause read together rather
+  // than scattered down the list. See orderByCause.
+  const shown = orderByCause(applyLens(findings, lens), run?.rootCauses ?? null);
   // Built once rather than searched per row: eighty findings would otherwise
   // walk every group eighty times.
   const causes = causeByFinding(run?.rootCauses ?? null);
@@ -1194,7 +1208,10 @@ function RootCauses({
   causes: RootCauseView | null;
   shown: FindingView[];
 }) {
-  const [open, setOpen] = useState(false);
+  // Open. The whole point of this panel is that a reader who counts the rows
+  // gets the wrong number, and a reader who has to find a control first has
+  // already counted them.
+  const [open, setOpen] = useState(true);
   const counts = workItems(
     shown.map((finding) => finding.id),
     causes,
@@ -1371,7 +1388,9 @@ function FindingRow({
                 {finding.documentTitle}
               </span>
             )}
-            <span className="font-mono text-[11.5px] text-ink/58">{finding.clauseRef}</span>
+            <span className="font-mono text-[11.5px] text-ink/58">
+              {clauseAddress(finding.clauseRef, finding.clauseTitle)}
+            </span>
             <span
               className={cn(
                 "truncate text-[13.5px]",
@@ -1381,10 +1400,20 @@ function FindingRow({
               {finding.clauseTitle}
             </span>
           </span>
+          {/* Two lines, not one.
+              This is the only part of the row that says what is wrong, and at
+              one line it was the part that got cut. The seven breaches a
+              customer is reading have gaps of 141 to 185 characters against a
+              row that fits about 95, so every one of them lost its second half
+              — which is where the judge names the rule that was broken:
+              "…violating the no direct DB coupling policy", "…which are
+              mandatory for production applications". The address above it is
+              set in mono and never truncated, so the ellipsis only ever landed
+              here. Two lines clears the longest of them. */}
           {gap && (
             <span
               className={cn(
-                "mt-0.5 block truncate text-[12.5px] leading-relaxed",
+                "mt-0.5 line-clamp-2 text-[12.5px] leading-relaxed",
                 decided ? "text-ink/50" : "text-ink/66",
               )}
             >

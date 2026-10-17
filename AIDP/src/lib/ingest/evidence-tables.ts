@@ -52,9 +52,41 @@ export function withTables(
   evidence: EvidenceItem[],
   tables: Map<string, EvidenceTable>,
 ): EvidenceView[] {
-  return foldDuplicates(
-    evidence.map((item) => ({ ...item, table: tables.get(item.chunkId) ?? null })),
-  );
+  return foldDuplicates(evidence.map((item) => ({ ...item, table: breachRow(item, tables) })));
+}
+
+/**
+ * The passage's table, with the row the breach was quoted from marked on it.
+ *
+ * A `table` chunk is the whole table, so nothing in the chunk says which row
+ * matters and the card is drawn with no highlight — "Quoted from this table",
+ * above twelve rows, under a finding about one of them. Twelve of this
+ * workspace's fifteen drawn tables read that way, and after the evidence was
+ * reordered the first card a reviewer meets is one of them.
+ *
+ * But on a contradiction the judge now names the passage it convicted on and
+ * the worker has already checked that quote against the design word for word
+ * (see `_mark_breach` in Workers/aidp/stages/analyse.py). That quote is a row's
+ * worth of text, so it can say what the chunk could not. Four of the twelve
+ * resolve from it on this run.
+ *
+ * `citedRow` decides, which means the strict rule comes along too: a row wins
+ * only outright, and a tie leaves the table unmarked. A highlight on the wrong
+ * row of a customer's design is a claim about where a breach was found, and it
+ * is worse than no highlight at all.
+ *
+ * The marked table is a new object. `tables` is keyed by chunk and shared by
+ * every finding that cites that chunk, so marking a row in place would mark it
+ * on another finding's evidence — which is the bug this shape avoids.
+ */
+function breachRow(
+  item: EvidenceItem,
+  tables: Map<string, EvidenceTable>,
+): EvidenceTable | null {
+  const found = tables.get(item.chunkId) ?? null;
+  if (!found || found.rows.length > 0 || !item.breachQuote) return found;
+  const row = citedRow(item.breachQuote, found.table.rows);
+  return row === null ? found : { table: found.table, rows: [row] };
 }
 
 /** Two passages are the same prose when each is nearly all of the other. */
@@ -145,14 +177,56 @@ function covered(words: string[], within: string[]): number {
   return words.filter((word) => have.has(word)).length / words.length;
 }
 
+/** Kinds whose chunk is a table and carries its id in `sourceId`. */
 const TABLE_KINDS = ["table", "table_row"];
+
+/**
+ * Kinds whose chunk may be a table flattened into a line, with no id to follow.
+ *
+ * The same cells reach the index a second way. A `clause` or `section` chunk is
+ * built from its source's own text, and where that source is a table the cells
+ * arrive as one unbroken run: "Rationale: or issue Application structure One
+ * undifferentiated code unit Modular design exception not documented or
+ * approved Database Two applications manipulate shared tables…" — 607
+ * characters on one line, in which the column headers and the values cannot be
+ * told apart. Retrieval has no reason to prefer the real table chunk over it,
+ * so findings cite it: this one is the evidence behind three of this
+ * workspace's seven contradictions, and the first card on one of them.
+ *
+ * These chunks point at a clause or a section rather than a table, so the table
+ * has to be recognised instead of followed — see `tablesForEvidence`.
+ */
+const FLATTENED_KINDS = ["clause", "section"];
+
+const TABLE_SELECT = {
+  id: true,
+  ordinal: true,
+  caption: true,
+  columns: true,
+  rows: true,
+  pageStart: true,
+  confidence: true,
+} as const;
 
 /**
  * Tables for the passages these findings cite, keyed by chunk id.
  *
- * One query for the chunks and one for the tables, however many findings are on
- * the page. A report of eighty findings cites a few hundred passages and a
- * handful of distinct tables, so this is two round trips, not three hundred.
+ * Two ways in. A `table` or `table_row` chunk carries the `TableBlock` id, so
+ * that is a lookup and nothing is inferred. A `clause` or `section` chunk whose
+ * source was a table carries no id at all, so its section's tables are fetched
+ * and the chunk's own text is tested against them one at a time.
+ *
+ * That test has to be able to say "no". `quoteIsTable` asks what share of the
+ * passage's words are in a table's cells and headers, with the passage's
+ * address discounted, and a section holding three tables will match at most one
+ * of them; anything else — two matches, none, a section of prose that merely
+ * mentions the same terms — leaves the chunk as the text it was. Drawing the
+ * wrong table under a verdict would be a claim about where the evidence came
+ * from, and a reviewer has no way to catch it.
+ *
+ * A few queries for the whole page however many findings are on it: one for
+ * the chunks, one for the clauses behind the flattened ones, and one for each
+ * family of tables.
  */
 export async function tablesForEvidence(
   chunkIds: string[],
@@ -162,35 +236,89 @@ export async function tablesForEvidence(
   if (wanted.length === 0) return out;
 
   const chunks = await prisma.chunk.findMany({
-    where: { id: { in: wanted }, sourceKind: { in: TABLE_KINDS }, sourceId: { not: null } },
-    select: { id: true, sourceId: true, sourceKind: true, text: true },
+    where: {
+      id: { in: wanted },
+      sourceKind: { in: [...TABLE_KINDS, ...FLATTENED_KINDS] },
+      sourceId: { not: null },
+    },
+    select: { id: true, sourceId: true, sourceKind: true, text: true, headingPath: true },
   });
   if (chunks.length === 0) return out;
 
-  const tables = await prisma.tableBlock.findMany({
-    where: { id: { in: [...new Set(chunks.map((c) => c.sourceId!))] } },
-    select: {
-      id: true,
-      ordinal: true,
-      caption: true,
-      columns: true,
-      rows: true,
-      pageStart: true,
-      confidence: true,
-    },
-  });
-  const byId = new Map(tables.map((t) => [t.id, t]));
+  const direct = chunks.filter((c) => TABLE_KINDS.includes(c.sourceKind));
+  const flattened = chunks.filter((c) => FLATTENED_KINDS.includes(c.sourceKind));
 
-  for (const chunk of chunks) {
-    const table = byId.get(chunk.sourceId!);
-    // A chunk whose table has since been removed by a re-parse keeps its
-    // flattened text rather than losing its evidence.
-    if (!table) continue;
-    out.set(chunk.id, {
-      table,
-      rows: rowsCited(chunk.sourceKind, chunk.text, table.rows),
+  if (direct.length > 0) {
+    const tables = await prisma.tableBlock.findMany({
+      where: { id: { in: [...new Set(direct.map((c) => c.sourceId!))] } },
+      select: TABLE_SELECT,
     });
+    const byId = new Map(tables.map((t) => [t.id, t]));
+
+    for (const chunk of direct) {
+      const table = byId.get(chunk.sourceId!);
+      // A chunk whose table has since been removed by a re-parse keeps its
+      // flattened text rather than losing its evidence.
+      if (!table) continue;
+      out.set(chunk.id, {
+        table,
+        rows: rowsCited(chunk.sourceKind, chunk.text, table.rows),
+      });
+    }
   }
+
+  if (flattened.length > 0) {
+    // A section chunk names its section outright; a clause chunk names the
+    // clause, which names the section.
+    const clauseIds = flattened
+      .filter((c) => c.sourceKind === "clause")
+      .map((c) => c.sourceId!);
+    const sectionOfClause = new Map<string, string>();
+    if (clauseIds.length > 0) {
+      const clauses = await prisma.clause.findMany({
+        where: { id: { in: [...new Set(clauseIds)] } },
+        select: { id: true, sectionId: true },
+      });
+      for (const clause of clauses) sectionOfClause.set(clause.id, clause.sectionId);
+    }
+
+    const sectionIdOf = (chunk: { sourceKind: string; sourceId: string | null }) =>
+      chunk.sourceKind === "section"
+        ? chunk.sourceId
+        : (sectionOfClause.get(chunk.sourceId!) ?? null);
+
+    const sectionIds = [
+      ...new Set(flattened.map(sectionIdOf).filter((id): id is string => Boolean(id))),
+    ];
+    if (sectionIds.length > 0) {
+      const blocks = await prisma.tableBlock.findMany({
+        where: { sectionId: { in: sectionIds } },
+        select: { ...TABLE_SELECT, sectionId: true },
+        orderBy: { ordinal: "asc" },
+      });
+      const bySection = new Map<string, TableView[]>();
+      for (const { sectionId, ...table } of blocks) {
+        bySection.set(sectionId, [...(bySection.get(sectionId) ?? []), table]);
+      }
+
+      for (const chunk of flattened) {
+        const sectionId = sectionIdOf(chunk);
+        const candidates = sectionId ? (bySection.get(sectionId) ?? []) : [];
+        // Exactly one, or the passage stays as it is.
+        const made = candidates.filter((table) =>
+          quoteIsTable(chunk.text, [table], chunk.headingPath),
+        );
+        if (made.length !== 1) continue;
+        const table = made[0]!;
+        // A flattened whole table holds every row, so every row matches and
+        // `citedRow` ties to null — which is the right answer. A flattened
+        // single row resolves to that row.
+        const row = citedRow(chunk.text, table.rows);
+        out.set(chunk.id, { table, rows: row === null ? [] : [row] });
+      }
+    }
+  }
+
   return out;
 }
 
@@ -374,4 +502,76 @@ export async function tablesForGaps(
     if (quoteIsTable(gap.quote, tables, gap.headingPath)) out[gap.section] = tables;
   }
   return out;
+}
+
+/** A design's name as a finding's prose would write it. */
+function designAliases(title: string): string[] {
+  const trimmed = title.trim();
+  if (!trimmed) return [];
+  const out = [trimmed.toLowerCase(), trimmed.replace(/\s*\([^)]*\)/g, "").trim().toLowerCase()];
+  // "Workforce Analytics Hub (WAH)" is written "WAH" as often as in full.
+  for (const match of trimmed.matchAll(/\(([A-Za-z]{2,8})\)/g)) out.push(match[1]!.toLowerCase());
+  // Two letters match inside ordinary words; three is the shortest acronym
+  // these documents actually use.
+  return [...new Set(out)].filter((alias) => alias.length >= 3);
+}
+
+/** Whether a finding's own prose names this design. */
+function rationaleNames(rationale: string, title: string): boolean {
+  const text = rationale.toLowerCase();
+  return designAliases(title).some((alias) =>
+    new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text),
+  );
+}
+
+/**
+ * The cited passages in the order that answers the finding.
+ *
+ * Retrieval ranks a passage by how well it matches the clause, which is the
+ * right question to put to a search engine and the wrong order to read a
+ * verdict in. On a project run every design is searched for every clause, so a
+ * finding about one design routinely cites passages from the others — and
+ * because those passages are about the same subject, they can rank first.
+ *
+ * What that does to a reader is the whole reason this exists. Over this
+ * workspace's seven contradictions, four cite a design their own rationale
+ * never mentions, and on two of them that design is the *first* card. The worst
+ * reads: the finding says the Rapid Campaign Launch Portal has no central
+ * monitoring, and the first piece of evidence offered is the Customer Order
+ * Platform's "Observability | Aligned by design" — a different design, passing
+ * the very clause, presented as the proof that this one failed it. A reviewer
+ * who opens that evidence has been told the report cannot keep its designs
+ * straight, and they are right to stop trusting it.
+ *
+ * So three bands, stable within each:
+ *
+ *   1. the passage the judge convicted on, where it named one (`breachQuote`)
+ *   2. passages from a design the rationale actually names
+ *   3. everything else, which is context and reads as context
+ *
+ * Nothing is dropped — band three is still on the card, still citable, still
+ * part of the audit trail. Only the reading order changes, and it changes at
+ * read, so every report already written is in the right order the next time it
+ * is opened.
+ */
+export function orderEvidence(evidence: EvidenceView[], rationale: string): EvidenceView[] {
+  if (evidence.length < 2) return evidence;
+  // Resolved once per design rather than once per card: a finding citing eight
+  // passages from three designs would otherwise run the same regex eight times.
+  const named = new Map<string, boolean>();
+  const band = (item: EvidenceView): number => {
+    if (item.breachQuote) return 0;
+    const title = item.documentTitle ?? "";
+    if (!title.trim()) return 2;
+    let hit = named.get(title);
+    if (hit === undefined) {
+      hit = rationaleNames(rationale, title);
+      named.set(title, hit);
+    }
+    return hit ? 1 : 2;
+  };
+  return evidence
+    .map((item, index) => ({ item, index, band: band(item) }))
+    .sort((a, b) => a.band - b.band || a.index - b.index)
+    .map((entry) => entry.item);
 }

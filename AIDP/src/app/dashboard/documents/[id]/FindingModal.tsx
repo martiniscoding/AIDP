@@ -21,7 +21,7 @@ import {
   type Verdict,
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, SCOPE_META, type DecisionScope } from "@/lib/ingest/decision-effects";
-import { rationaleSections } from "@/lib/ingest/verdicts";
+import { clauseAddress, rationaleSections } from "@/lib/ingest/verdicts";
 import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import { TableFigure } from "@/components/ui/TableFigure";
 import { makeStandard, reviewFinding } from "../actions";
@@ -72,6 +72,38 @@ const PROSE_MEASURE = "max-w-[68ch]";
 
 /** Past this, the clause is folded behind a control rather than printed. */
 const CLAUSE_CLAMP = 320;
+
+/**
+ * The clause's own requirements, under the principle they belong to.
+ *
+ * A statement says what the standard is for; a requirement is the line a
+ * design can be measured against, and it is where the breach nearly always
+ * is. Six of this workspace's seven contradictions were judged against a
+ * clause carrying requirements the report did not print, and four of them
+ * argue one in their own prose — on one, the finding opens "lacks integration with
+ * enterprise identity and access management" while the panel above it offers
+ * only "Security, privacy, and regulatory compliance must be embedded into
+ * application design from the start". Both sentences are true and neither
+ * explains the other, so the reviewer is left to take the verdict on trust.
+ *
+ * Nothing renders when a clause states its rule in one sentence and has none,
+ * which is most of them.
+ */
+function Requirements({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className="mt-2 space-y-1 border-t border-line-soft pt-2">
+      {items.map((text) => (
+        <li
+          key={text}
+          className="max-w-[68ch] pl-3.5 text-[12.5px] leading-relaxed text-ink/78 before:mr-1.5 before:-ml-3.5 before:text-ink/45 before:content-['•']"
+        >
+          {text}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /**
  * One finding, in full, over the list.
@@ -321,7 +353,9 @@ export function FindingModal({
           </span>
           <div className="min-w-0 flex-1">
             <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-mono text-[11.5px] text-ink/62">{finding.clauseRef}</span>
+              <span className="font-mono text-[11.5px] text-ink/62">
+                {clauseAddress(finding.clauseRef, finding.clauseTitle)}
+              </span>
               {severity && <SeverityTag severity={severity} />}
             </p>
             <h2
@@ -418,9 +452,27 @@ export function FindingModal({
             <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
               The standard requires
             </p>
-            <p className="max-w-[68ch] text-[13px] leading-relaxed text-ink/82">
+            <p
+              className={cn(
+                "max-w-[68ch] text-[13px] leading-relaxed text-ink/82",
+                // One clause in this workspace states its rule as 1,971
+                // characters of bullets, and it arrives above the evidence. The
+                // reader needs the one line that was breached, not the chapter.
+                !clauseOpen && "line-clamp-3",
+              )}
+            >
               {finding.clauseStatement}
             </p>
+            {finding.clauseStatement.length > CLAUSE_CLAMP && (
+              <button
+                type="button"
+                onClick={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
+                className="mt-0.5 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/88"
+              >
+                {clauseOpen ? "Show less of the clause" : "Show the whole clause"}
+              </button>
+            )}
+            <Requirements items={finding.clauseRequirements} />
           </div>
         )}
 
@@ -447,6 +499,7 @@ export function FindingModal({
                 {clauseOpen ? "Show less of the clause" : "Show the whole clause"}
               </button>
             )}
+            <Requirements items={finding.clauseRequirements} />
           </div>
         )}
 

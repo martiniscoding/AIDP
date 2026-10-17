@@ -113,3 +113,57 @@ export function workItems(
   }
   return { findings: findingIds.length, causes: seen.size, work: seen.size + alone };
 }
+
+/**
+ * The same findings, with the ones sharing a cause read together.
+ *
+ * A guarantee rather than a repair, and worth being honest about which: on the
+ * run this was written against the seven contradictions already fell into their
+ * cause blocks unaided — positions 1–2, 3–6 and 7 — so this reorders nothing
+ * there. It is here because that adjacency is luck. Findings are sorted by
+ * verdict and then by the judge's confidence, and neither key knows anything
+ * about causes; the four findings that are one application reading another's
+ * database sat together only because their confidences happened to agree. One
+ * clause judged at 0.9 among siblings at 1.0 splits the block, and a reviewer
+ * working down the list then reads four separate critical problems and plans
+ * four pieces of work, having been told the real number in a header they must
+ * join up themselves across six rows.
+ *
+ * So: same findings, same verdict order, each cause contiguous — by
+ * construction instead of by coincidence.
+ *
+ * Severity is not negotiable here. The anchor is keyed by verdict as well as
+ * cause, so a cause whose findings span two verdicts is gathered within each
+ * verdict band rather than lifting a `partial` up among the contradictions.
+ * Within a band, a cause takes the position of its worst member — the one that
+ * sorted highest — so grouping never demotes a finding below something that
+ * was already under it. Ungrouped findings keep their place.
+ */
+export function orderByCause<T extends { id: string; verdict: string }>(
+  findings: T[],
+  view: RootCauseView | null,
+): T[] {
+  const byFinding = causeByFinding(view);
+  if (byFinding.size === 0) return findings;
+
+  // A finding with no cause is its own group of one, keyed on its id so it can
+  // never collide with a cause label.
+  const keyOf = (finding: T): string =>
+    `${finding.verdict}\u0000${byFinding.get(finding.id)?.label ?? `\u0001${finding.id}`}`;
+
+  // Where each group first appears in the order the list already had. That
+  // position is what the group keeps.
+  const anchor = new Map<string, number>();
+  findings.forEach((finding, index) => {
+    const key = keyOf(finding);
+    if (!anchor.has(key)) anchor.set(key, index);
+  });
+
+  return findings
+    .map((finding, index) => ({ finding, index, key: keyOf(finding) }))
+    .sort(
+      (a, b) =>
+        (anchor.get(a.key) ?? 0) - (anchor.get(b.key) ?? 0) || a.index - b.index,
+    )
+    .map((entry) => entry.finding);
+}

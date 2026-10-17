@@ -486,3 +486,45 @@ export async function discardDraft(userId: string, draftId: string): Promise<voi
     data: { state: "discarded" },
   });
 }
+
+/**
+ * What each of these clauses requires, by clause id.
+ *
+ * A finding denormalises its clause's `statement` and nothing else, because
+ * that is what a report has always printed. The requirements were left in the
+ * clause — and they are where the breach usually lives.
+ *
+ * What that costs the reader, measured on this workspace's seven
+ * contradictions: six of the seven clauses carry requirements the report never
+ * shows. On one of them the finding's own first sentence is "lacks integration
+ * with enterprise identity and access management", which is the clause's first
+ * requirement almost word for word, while the panel above it shows only
+ * "Security, privacy, and regulatory compliance must be embedded into
+ * application design from the start, not added as an afterthought." The
+ * reviewer is given a principle and an accusation with nothing joining them,
+ * and the honest reaction is "how is that a breach?".
+ *
+ * Read at render rather than copied onto the finding: a migration would leave
+ * every report already written exactly as unreadable as it is now, and this
+ * costs one keyed query per page. A clause a re-parse has since removed simply
+ * has no entry, which is why the finding keeps its own copy of the statement
+ * and why this returns a map rather than throwing.
+ */
+export async function requirementsForClauses(
+  clauseIds: string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const wanted = [...new Set(clauseIds.filter(Boolean))];
+  if (wanted.length === 0) return out;
+
+  const rows = await prisma.clause.findMany({
+    where: { id: { in: wanted } },
+    select: { id: true, requirements: true },
+  });
+  for (const row of rows) {
+    // An empty list and a missing clause render the same, so only say
+    // something when there is something to say.
+    if (row.requirements.length > 0) out.set(row.id, row.requirements);
+  }
+  return out;
+}
