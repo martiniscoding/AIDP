@@ -38,8 +38,8 @@ import { SeverityTag } from "./SeverityTag";
 /**
  * What each design actually says, for the comparison a contradiction is.
  *
- * Only the passages the judge named as the conflict and the worker verified
- * word for word against the text the model was shown — see `_mark_conflict`
+ * Only the passages the judge named as the breach and the worker verified
+ * word for word against the text the model was shown — see `_mark_breach`
  * in analyse.py. Nothing is inferred here and nothing is chosen here.
  *
  * It used to take the first retrieved passage per design, which is a guess:
@@ -53,9 +53,9 @@ function designVoices(evidence: EvidenceView[]): { title: string; text: string }
   const out: { title: string; text: string }[] = [];
   const seen = new Set<string>();
   for (const item of evidence) {
-    if (!item.conflictQuote || seen.has(item.documentId)) continue;
+    if (!item.breachQuote || seen.has(item.documentId)) continue;
     seen.add(item.documentId);
-    out.push({ title: item.documentTitle, text: item.conflictQuote });
+    out.push({ title: item.documentTitle, text: item.breachQuote });
   }
   return out;
 }

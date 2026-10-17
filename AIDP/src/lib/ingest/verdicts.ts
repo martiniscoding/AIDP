@@ -297,7 +297,7 @@ export type EvidenceItem = {
    * the judge was asked for it — the comparison is simply not drawn then,
    * rather than drawn around a guess.
    */
-  conflictQuote: string | null;
+  breachQuote: string | null;
 };
 
 /**
@@ -601,9 +601,9 @@ export function readEvidence(value: unknown): EvidenceItem[] {
         figureId: typeof row.figureId === "string" ? row.figureId : null,
         documentId: typeof row.documentId === "string" ? row.documentId : "",
         documentTitle: typeof row.documentTitle === "string" ? row.documentTitle : "",
-        conflictQuote:
-          typeof row.conflictQuote === "string" && row.conflictQuote.trim()
-            ? row.conflictQuote.trim()
+        breachQuote:
+          typeof row.breachQuote === "string" && row.breachQuote.trim()
+            ? row.breachQuote.trim()
             : null,
       },
     ];

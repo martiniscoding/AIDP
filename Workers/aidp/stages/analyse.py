@@ -1041,11 +1041,11 @@ def _judge_by_search(
         ),
     )
     # After the guard, not before: the guard can demote a contradiction to
-    # needs_review, and a quote presented as the conflict on a verdict that is
-    # no longer a conflict would be the UI asserting something nothing stands
+    # needs_review, and a quote presented as the breach on a verdict that is
+    # no longer a breach would be the UI asserting something nothing stands
     # behind any more.
     if verdict == "contradicts":
-        _mark_conflict(evidence, raw.get("conflict"), by_id)
+        _mark_breach(evidence, raw.get("breach"), by_id)
 
     return _Judged(
         verdict, confidence, rationale, evidence, applied, best,
@@ -2205,12 +2205,12 @@ def _render_clause(clause: dict) -> str:
 
 
 # The design's own words, as the comparison beside the clause prints them.
-MAX_CONFLICT_QUOTE = 240
+MAX_BREACH_QUOTE = 240
 
 
-def _mark_conflict(
+def _mark_breach(
     evidence: list[dict],
-    raw_conflict: object,
+    raw_breach: object,
     by_id: dict[str, retrieval.Candidate],
 ) -> None:
     """Mark the one passage a contradiction rests on, if the judge named it.
@@ -2230,10 +2230,10 @@ def _mark_conflict(
     against — it would be put in the design's mouth, in quotation marks, in a
     compliance record.
     """
-    if not isinstance(raw_conflict, dict):
+    if not isinstance(raw_breach, dict):
         return
-    extract = str(raw_conflict.get("extract") or "").strip()
-    quote = " ".join(str(raw_conflict.get("quote") or "").split())
+    extract = str(raw_breach.get("extract") or "").strip()
+    quote = " ".join(str(raw_breach.get("quote") or "").split())
     if not extract or not quote:
         return
 
@@ -2241,7 +2241,7 @@ def _mark_conflict(
     if candidate is None:
         logs.info(
             log,
-            "conflict quote names an extract this finding does not cite",
+            "breaching quote names an extract this finding does not cite",
             extract=extract,
         )
         return
@@ -2250,12 +2250,12 @@ def _mark_conflict(
     # front of the model — not the stored chunk, which may differ from it.
     haystack = " ".join(candidate.excerpt.split()).casefold()
     if quote.casefold() not in haystack:
-        logs.info(log, "conflict quote is not inside its extract", extract=extract)
+        logs.info(log, "breaching quote is not inside its extract", extract=extract)
         return
 
     for item in evidence:
         if item.get("chunkId") == extract:
-            item["conflictQuote"] = quote[:MAX_CONFLICT_QUOTE]
+            item["breachQuote"] = quote[:MAX_BREACH_QUOTE]
             return
 
 

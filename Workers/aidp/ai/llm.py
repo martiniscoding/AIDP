@@ -319,7 +319,7 @@ Rules that matter:
    clouds and leaves its network interconnect outside the monitored estate.
    Move the compute and database tiers into the AWS landing zone, or record an
    Architecture Review Board exception before the build starts."
-8b. For "contradicts", and only for it, also return "conflict": the one extract
+8b. For "contradicts", and only for it, also return "breach": the one extract
    whose words the verdict rests on, and those words themselves.
      {{"extract": "an id you listed in evidence",
        "quote": "at most 200 characters, copied character for character from
@@ -331,7 +331,7 @@ Rules that matter:
    the finding loses the comparison that makes it checkable at a glance.
    Do not quote the design's own remediation plan, its self-assessment, or a
    line saying it is aligned. Those are the design agreeing with the standard;
-   the conflict is where it does not.
+   the breach is where it does not.
 8a. Write as a principal enterprise architect states a finding on the record:
    authoritative, technical, and short. Banned outright — hedging ("it seems",
    "arguably", "one could argue", "may want to", "it would be good to"), filler
@@ -379,7 +379,7 @@ when not, three complete sentences - gap, impact, fix - up to 600 chars",
 read from its own words; "unstated" if it never says, and do not supply one it does \
 not state",
   "evidence": ["extract id", ...], "appliedDecisions": ["decision id", ...],
-  "conflict": {{"extract": "extract id", "quote": "the design's own words"}}}}"""
+  "breach": {{"extract": "extract id", "quote": "the design's own words"}}}}"""
 
 
 class QuotaExhausted(RuntimeError):
@@ -752,20 +752,20 @@ _VERDICT_SCHEMA = {
         "evidence": {"type": "array", "items": {"type": "string"}},
         "appliedDecisions": {"type": "array", "items": {"type": "string"}},
         # The one passage a contradiction rests on, and only for a
-        # contradiction — see `_mark_conflict` in stages/analyse.py, which
+        # contradiction — see `_mark_breach` in stages/analyse.py, which
         # verifies the naming rather than trusting it.
         #
         # It has to be declared here or it cannot be answered. The prompt asked
         # for it from the day that feature landed and not one reply carried it,
         # because strict mode allows only what the schema names: 14 of 14
-        # contradictions came back without a conflict and the report fell back
+        # contradictions came back without a breach quote and the report fell back
         # to guessing at the quote, which is the behaviour the feature exists
         # to replace. The verdict enum had the same fault once.
         #
         # Null on every other verdict, which is why it is nullable rather than
         # merely optional: strict mode requires every property, so "absent" is
         # spelled as a value and not as a missing key.
-        "conflict": {
+        "breach": {
             "type": "object",
             "properties": {
                 "extract": {"type": "string"},
@@ -783,7 +783,7 @@ _VERDICT_SCHEMA = {
         "rationale",
         "evidence",
         "appliedDecisions",
-        "conflict",
+        "breach",
     ],
     "propertyOrdering": [
         "internal_architect_reasoning",
@@ -792,7 +792,7 @@ _VERDICT_SCHEMA = {
         "rationale",
         "evidence",
         "appliedDecisions",
-        "conflict",
+        "breach",
     ],
 }
 
