@@ -120,6 +120,44 @@ cases.append((
 ))
 
 
+# Every object the converter emits must be closed, nullable or not.
+#
+# `_strict_schema` tested `type == "object"`, which is true of a required
+# object and false of an optional one — its type is a union with null. It had
+# only ever seen nullable scalars, so the first nullable object went out open
+# and OpenAI refused the whole schema: "In context=('properties','breach',
+# 'type','0'), 'additionalProperties' is required to be supplied and to be
+# false." All 61 clauses of a run came back unjudged with a 400.
+def _objects(node):
+    """Every object node in a converted schema, however its type is spelled."""
+    if isinstance(node, list):
+        for item in node:
+            yield from _objects(item)
+        return
+    if not isinstance(node, dict):
+        return
+    kind = node.get("type")
+    if (kind == "object" or (isinstance(kind, list) and "object" in kind)) and isinstance(
+        node.get("properties"), dict
+    ):
+        yield node
+    for value in node.values():
+        yield from _objects(value)
+
+
+converted = llm._strict_schema(llm._VERDICT_SCHEMA)
+open_objects = [o for o in _objects(converted) if o.get("additionalProperties") is not False]
+cases.append((f"every object is closed, including nullable ones ({len(open_objects)} open)",
+              not open_objects))
+cases.append((
+    "a nullable object keeps its properties required",
+    set(converted["properties"]["breach"]["required"]) == {"extract", "quote"},
+))
+cases.append((
+    "and the union with null survives the closing",
+    "null" in converted["properties"]["breach"]["type"],
+))
+
 for name, okk in cases:
     print(f"  {'ok  ' if okk else 'FAIL'} {name}")
     bad += 0 if okk else 1

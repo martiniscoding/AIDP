@@ -2766,7 +2766,17 @@ def _strict_schema(schema: dict) -> dict:
         if node.get("nullable") and "type" in out:
             kind = out["type"]
             out["type"] = [*kind, "null"] if isinstance(kind, list) else [kind, "null"]
-        if out.get("type") == "object" and isinstance(out.get("properties"), dict):
+        # `type` is a plain string on a required object and a union with null on
+        # an optional one, so both shapes have to be recognised as objects. The
+        # converter only ever saw nullable *scalars* until a nullable object
+        # arrived — the breaching passage, which only a contradiction has — and
+        # it closed every object but that one. OpenAI refuses the schema whole:
+        # "In context=('properties','breach','type','0'), 'additionalProperties'
+        # is required to be supplied and to be false." Every clause of the run
+        # came back unjudged.
+        kind = out.get("type")
+        is_object = kind == "object" or (isinstance(kind, list) and "object" in kind)
+        if is_object and isinstance(out.get("properties"), dict):
             out["additionalProperties"] = False
             out["required"] = list(out["properties"])
         return out
