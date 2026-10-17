@@ -144,5 +144,66 @@ ok(
     len(retrieval._shorten("a" * 690 + " " + "b" * 200)) > retrieval._EXCERPT // 2,
 )
 
+print("\nLine breaks that mean something are kept")
+# Collapsing every newline destroyed the only structure a passage had. A table
+# inside a section chunk arrived as "Area Decision / current choice Rationale or
+# issue Ingestion Nightly ETL from HR…" — the column boundaries that *are* the
+# content, gone.
+TABLE_IN_SECTION = """Area
+Decision / current choice
+Rationale or issue
+Ingestion
+Nightly ETL from HR and learning systems
+Source access
+BI dashboard directly queries Timekeeping DB"""
+out = retrieval._reflow(TABLE_IN_SECTION)
+ok("every cell keeps its own line", len(out.splitlines()) == 7, len(out.splitlines()))
+ok("and nothing is fused", "Ingestion Nightly" not in out, out[:90])
+
+bullets = "Each principle includes:\n• Statement (what it means)\n• Rationale (why it matters)"
+ok(
+    "a bullet list stays a list",
+    len(retrieval._reflow(bullets).splitlines()) == 3,
+    retrieval._reflow(bullets),
+)
+ok(
+    "a line ending in a colon keeps its break",
+    retrieval._reflow("Each principle includes:\nstatement").splitlines()[0].endswith(":"),
+)
+
+print("\nAnd the ones that do not are closed up")
+# A PDF wrapping at its right margin: a long unterminated line, then a
+# lower-case continuation. 4% of line pairs in this corpus.
+wrapped = (
+    "It collects measurement data from approximately 310,000 field\n"
+    "devices and smart meters across the estate."
+)
+ok("a mid-sentence wrap is rejoined", len(retrieval._reflow(wrapped).splitlines()) == 1)
+ok("with a space, not a jam", "field devices" in retrieval._reflow(wrapped))
+ok(
+    "a short line is not treated as a wrap, however it ends",
+    len(retrieval._reflow("Area\ndecision").splitlines()) == 2,
+)
+ok(
+    "nor is a continuation that starts upper case",
+    len(
+        retrieval._reflow(
+            "It collects measurement data from approximately 310,000 field\nDevices are listed."
+        ).splitlines()
+    )
+    == 2,
+)
+ok("blank lines are dropped", retrieval._reflow("a\n\n\nb") == "a\nb")
+ok("empty in, empty out", retrieval._reflow("") == "")
+
+print("\nA table's own chunk is never reflowed")
+# A cell can be short and lower case, and any continuation rule would weld it
+# onto the row above — which is unrecoverable by eye.
+cells = Candidate(
+    chunk_id="t", heading_path="h", text="Object Type | Convention\ntable | snake case",
+    page_start=1, score=1.0, vector_rank=1, lexical_rank=1, source_kind="table",
+)
+ok("its rows stay separate", len(cells.excerpt.splitlines()) == 2, cells.excerpt)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

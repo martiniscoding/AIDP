@@ -114,13 +114,63 @@ class Candidate:
         because the join is indistinguishable from a two-word cell.
         """
         if self.source_kind in ("table", "table_row"):
+            # Nothing is rejoined here. A cell can be short and lowercase and
+            # would be fused onto the row above by any continuation rule.
             body = "\n".join(
                 " ".join(line.split()) for line in self.text.splitlines() if line.strip()
             )
         else:
-            body = " ".join(_rejoin_wraps(self.text).split())
+            body = _reflow(_rejoin_wraps(self.text))
         return _shorten(body)
 
+
+
+# A line this long with no terminator, followed by one that carries on in lower
+# case, is a PDF wrapping at its right margin rather than a new thought.
+# Measured over this corpus: of 11,095 line pairs in section and clause chunks,
+# 90% end cleanly and 4% look like a wrap.
+_WRAP_MIN = 60
+
+# What a line ends with when it has finished saying something. A bullet or a
+# bracket counts: a list item is its own line however it ends.
+_LINE_ENDS = (".", ":", ";", "!", "?", "•", ")", "]", "|", "–", "—")
+
+
+def _reflow(text: str) -> str:
+    """Keep the line breaks that mean something; close the ones that do not.
+
+    Collapsing every newline — which is what this did — destroys the only
+    structure a passage has. A table inside a section chunk arrives as one
+    run-on line, "Flow Pattern / current design Controls or assessment HR →
+    Warehouse Nightly batch / bulk Record counts…", and the column boundaries
+    that *are* the content are gone. Bullets fuse into a paragraph. "Statement:"
+    and "Rationale:" become one sentence.
+
+    The chunk's own text already has the structure: the parser writes one
+    logical unit per line. Almost all of those breaks are real — a bullet, a
+    table row, the end of a sentence. The exception is a PDF wrapping at its
+    margin, which leaves a long unterminated line followed by a lower-case
+    continuation, and that is the only case joined back.
+
+    Erring towards keeping a break: a wrongly kept one costs a line ending
+    early, which a reader forgives and can still read. A wrongly closed one
+    welds two table rows together and cannot be undone by eye.
+    """
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            continue
+        if (
+            out
+            and len(out[-1]) >= _WRAP_MIN
+            and not out[-1].endswith(_LINE_ENDS)
+            and line[:1].islower()
+        ):
+            out[-1] = f"{out[-1]} {line}"
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 # What a cited passage is cut to. Long enough to carry a table row or a
