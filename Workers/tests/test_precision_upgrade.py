@@ -340,7 +340,7 @@ for filler in ("data", "through", "rather", "between", "platform", "access", "co
     ok(f"{filler!r} alone carries no subject matter", analyse._keywords(filler) == set())
 
 
-print("\nCoverage holds its gaps and standards to the same standard")
+print("\nA suggested standard is advice, and held to the advice filter")
 
 ok("the filter is shared, not copied", advice._is_generic is coverage._is_generic)
 ok("and so is its word floor", advice.MIN_RECOMMENDATION_WORDS == coverage.MIN_SPECIFIC_WORDS)
@@ -362,6 +362,48 @@ for real in (
     "Telemetry is written straight to the billing Oracle database with no staging table.",
 ):
     ok(f"coverage keeps {real[:36]!r}", not coverage._is_generic(real))
+
+
+print("\nA gap is not advice, and is not held to the advice filter")
+
+# The advice filter searches anywhere in the text for the phrases advice falls
+# back on. Design prose uses several of them while describing something exact,
+# so a gap run through it lost real parts of the design — nine in one run.
+ok("a refusal counter exists for a vague gap", "vague" in coverage.Checked().dropped)
+ok("and it is not the advice counter", "generic" in coverage.Checked().dropped)
+
+for description in (
+    "Card payments are settled through Moneris with retries applied as appropriate.",
+    "The warehouse retains employee-level rows indefinitely where appropriate.",
+    "Operators review and update the ingestion schedule each quarter by hand.",
+    "Nightly batches follow best practices documented in the vendor runbook.",
+):
+    ok(f"a gap survives {description[:34]!r}", not coverage._is_vague_gap(description))
+    ok("  which the advice filter would have refused", coverage._is_generic(description))
+
+# What a description fails at on its own: opening by naming part of the
+# document. Both of the first two reached a customer's report, and the advice
+# filter passed them both.
+for meta in (
+    "Architecture sketch of HR System, ETL Job, Analytics Warehouse and the BI Dashboard",
+    "Architecture sketch of Nightly ETL Job",
+    "Diagram showing the order flow through the broker",
+    "The section lists the requirements for ingestion",
+):
+    ok(f"a gap is refused for {meta[:34]!r}", coverage._is_vague_gap(meta))
+
+ok(
+    "a description that merely mentions the sketch is kept",
+    not coverage._is_vague_gap(
+        "Fulfilment workers settle card payments, drawn as one box in the architecture sketch."
+    ),
+)
+ok("the word floor still applies", coverage._is_vague_gap("Stores addresses."))
+for real in (
+    "The storefront caches card numbers in Redis with no stated expiry or tokenisation.",
+    "Telemetry is written straight to the billing Oracle database with no staging table.",
+):
+    ok(f"and a concrete gap is kept {real[:30]!r}", not coverage._is_vague_gap(real))
 
 long_what = "The portal stores customer addresses in its own schema. " * 8
 ok(

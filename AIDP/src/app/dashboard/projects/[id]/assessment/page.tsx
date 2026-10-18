@@ -98,6 +98,7 @@ export default async function ProjectAssessmentPage({
         totalClauses: run.totalClauses,
         completedClauses: run.completedClauses,
         frameworkName: run.framework.name,
+        designCount: ready.length,
         frameworkVersion: run.framework.version,
         model: run.model,
         failureReason: run.failureReason,

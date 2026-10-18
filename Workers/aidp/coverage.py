@@ -96,6 +96,9 @@ class Checked:
             "unverified": 0,
             "outsideSection": 0,
             "alreadyJudged": 0,
+            # A gap whose description said nothing; see `_is_vague_gap`.
+            "vague": 0,
+            # A suggested standard written as filler; see `_is_generic`.
             "generic": 0,
         }
     )
@@ -251,10 +254,51 @@ def _is_generic(text: str) -> bool:
     Deterministic on purpose. The prompt asks for a concrete change and mostly
     gets one; this is the floor under it, so a reply that drifts back to filler
     is refused by the same rule every time rather than by a model's mood.
+
+    For advice and for a suggested standard, both of which tell somebody to do
+    something. A gap says what the design *does*, which is a different kind of
+    sentence — see `_is_vague_gap`.
     """
     if len(text.split()) < MIN_SPECIFIC_WORDS:
         return True
     return bool(_GENERIC.search(text))
+
+
+# A gap's own description, opening by naming part of the document rather than
+# part of the system: "Architecture sketch of HR System, ETL Job, Analytics
+# Warehouse", "Architecture sketch of Nightly ETL Job". Both of those reached a
+# customer's report. They say where to look, not what the design does there, and
+# "the document contains a sketch" is not something a standard can govern.
+#
+# Anchored at the start, unlike `_GENERIC`, because that is the whole claim: a
+# description that *opens* on the page is about the page. One that mentions a
+# diagram halfway through is describing the system and locating it.
+_ABOUT_THE_DOCUMENT = re.compile(
+    r"^\s*(an?|the|this)?\s*"
+    r"(architecture|context|system|flow|component|high.level|reference)?\s*"
+    r"(sketch|diagram|figure|illustration|drawing|matrix|section|page|appendix|heading)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_vague_gap(what: str) -> bool:
+    """Whether a gap's description gives a reader nothing to act on.
+
+    Not `_is_generic`. That refuses the phrases advice falls back on when it has
+    nothing to say — "consider implementing", "ensure that proper", "as
+    appropriate" — and a gap is not advice. Design prose says "as appropriate"
+    and "ensures that proper controls" all the time while describing something
+    perfectly concrete, so searching a description for those phrases threw out
+    real gaps: nine went that way in one run over three designs, and the same
+    filter kept none of the junk it was blamed for, which the section the quote
+    came from had already let through.
+
+    What is left is the word floor, which is about the sentence being a
+    sentence, and the one shape a description fails at on its own.
+    """
+    if len(what.split()) < MIN_SPECIFIC_WORDS:
+        return True
+    return bool(_ABOUT_THE_DOCUMENT.match(what))
 
 # The design is rendered uncut for the cache key. The budget the model is given
 # shrinks as the findings grow, and a key that moved with it would miss whenever
@@ -476,10 +520,12 @@ def check(
 
         what = _sentences(item.get("what"), MAX_GAP_WHAT)
         # A gap a reader could not act on. It named a real section and quoted
-        # it, so it passed every other check, and still said nothing.
-        if _is_generic(what):
-            logs.warn(log, "coverage gap refused as generic", section=section.ordinal, what=what)
-            out.dropped["generic"] += 1
+        # it, so it passed every other check, and still said nothing. Counted
+        # apart from the advice filter's refusals, because the two are different
+        # claims about a reply and were read as one for a while.
+        if _is_vague_gap(what):
+            logs.warn(log, "coverage gap refused as vague", section=section.ordinal, what=what)
+            out.dropped["vague"] += 1
             continue
 
         seen.add(section.ordinal)

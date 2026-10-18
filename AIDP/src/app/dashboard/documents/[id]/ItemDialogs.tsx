@@ -268,7 +268,7 @@ export function GapDialog({
   onNavigate: (delta: number) => void;
   onClose: () => void;
 }) {
-  const key = `${gap.section}-${gap.headingPath}`;
+  const key = `${gap.documentId ?? ""}-${gap.section}-${gap.headingPath}`;
   const [openFor, setOpenFor] = useState<string | null>(null);
 
   // Evidence closes on every step, so the next gap starts clean.
@@ -288,6 +288,14 @@ export function GapDialog({
           <Chip className="border-royal-mid/40 bg-royal-tint text-royal-deep">
             No standard covers this
           </Chip>
+          {/* Which design, on a project report. A reader stepping through a
+              merged list has no other way to tell, and the heading path below
+              only carries the title the design gave itself. */}
+          {gap.documentTitle && (
+            <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/65">
+              {gap.documentTitle}
+            </span>
+          )}
           <span className="font-mono text-[11.5px] text-ink/62">
             {where(gap.headingPath, gap.title, gap.page)}
           </span>

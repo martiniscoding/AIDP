@@ -146,6 +146,8 @@ export type RunView = {
   totalClauses: number;
   completedClauses: number;
   frameworkName: string;
+  /** How many designs this run read. More than one is a project report. */
+  designCount: number;
   frameworkVersion: number;
   model: string | null;
   failureReason: string | null;
@@ -170,7 +172,7 @@ export type RunView = {
    * out to be made of them. A gap over a table section quoted sixteen "Category:"
    * labels in one run-on line; this is the same table, shown as one.
    */
-  coverageTables: Record<number, TableView[]>;
+  coverageTables: Record<string, TableView[]>;
   /** Improvements to the design itself, suggested after the assessment. Advice, not a verdict. */
   advice: AdviceView | null;
   /** Whether the products the design names are still supported, from endoflife.date. Facts, not a verdict. */
@@ -731,6 +733,7 @@ export function Assessment({
         <CoverageGaps
           coverage={run.coverage}
           frameworkName={run.frameworkName}
+          designCount={run.designCount}
           runId={run.id}
           gapTables={run.coverageTables}
         />

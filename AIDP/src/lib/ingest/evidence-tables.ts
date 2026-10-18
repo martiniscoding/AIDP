@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { gapKey } from "./coverage";
 import type { TableView } from "./documents";
 import { cellValues } from "./table-text";
 import type { EvidenceItem } from "./verdicts";
@@ -463,16 +464,25 @@ function contentWords(value: string): string[] {
  */
 export async function tablesForGaps(
   documentIds: string[],
-  gaps: { section: number; headingPath: string; quote: string }[],
-): Promise<Record<number, TableView[]>> {
+  gaps: {
+    section: number;
+    headingPath: string;
+    quote: string;
+    documentId: string | null;
+  }[],
+): Promise<Record<string, TableView[]>> {
   // A plain object, not a Map: this crosses into a Client Component as a prop.
-  const out: Record<number, TableView[]> = {};
+  // Keyed by `gapKey`, not by section ordinal: two designs in one project both
+  // have a section 6, and whichever was read second overwrote the other's
+  // tables.
+  const out: Record<string, TableView[]> = {};
   const paths = [...new Set(gaps.map((gap) => gap.headingPath).filter(Boolean))];
   if (documentIds.length === 0 || paths.length === 0) return out;
 
   const sections = await prisma.documentSection.findMany({
     where: { documentId: { in: documentIds }, headingPath: { in: paths } },
     select: {
+      documentId: true,
       headingPath: true,
       tables: {
         select: {
@@ -489,8 +499,15 @@ export async function tablesForGaps(
     },
   });
 
+  // Two maps, because a gap only knows which design it came from on a project
+  // run. A heading path carries the design's title as its first element, so the
+  // path alone rarely crosses designs — but "rarely" is not a guarantee worth
+  // keying a reader's evidence on, so the design is used wherever it is known.
+  const byDesignAndPath = new Map<string, TableView[]>();
   const byPath = new Map<string, TableView[]>();
   for (const section of sections) {
+    const exact = `${section.documentId}\u0000${section.headingPath}`;
+    byDesignAndPath.set(exact, [...(byDesignAndPath.get(exact) ?? []), ...section.tables]);
     byPath.set(section.headingPath, [
       ...(byPath.get(section.headingPath) ?? []),
       ...section.tables,
@@ -498,8 +515,10 @@ export async function tablesForGaps(
   }
 
   for (const gap of gaps) {
-    const tables = byPath.get(gap.headingPath) ?? [];
-    if (quoteIsTable(gap.quote, tables, gap.headingPath)) out[gap.section] = tables;
+    const tables = gap.documentId
+      ? (byDesignAndPath.get(`${gap.documentId}\u0000${gap.headingPath}`) ?? [])
+      : (byPath.get(gap.headingPath) ?? []);
+    if (quoteIsTable(gap.quote, tables, gap.headingPath)) out[gapKey(gap)] = tables;
   }
   return out;
 }

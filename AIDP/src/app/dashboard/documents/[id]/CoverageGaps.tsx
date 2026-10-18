@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { BookPlus, Check, ChevronRight, CircleCheck, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { CoverageGap, CoverageView } from "@/lib/ingest/coverage";
+import { gapKey, type CoverageGap, type CoverageView } from "@/lib/ingest/coverage";
 import type { TableView } from "@/lib/ingest/documents";
 import { itemKey, useReviewMarks } from "@/lib/ingest/review-marks";
 import { GapDialog } from "./ItemDialogs";
@@ -13,7 +13,30 @@ import { GapDialog } from "./ItemDialogs";
  * position: the coverage array is rewritten whole by the next assessment.
  */
 function keyOf(gap: CoverageGap): string {
-  return itemKey([gap.section, gap.headingPath, gap.title, gap.quote.slice(0, 80)]);
+  return itemKey([
+    gap.documentId ?? "",
+    gap.section,
+    gap.headingPath,
+    gap.title,
+    gap.quote.slice(0, 80),
+  ]);
+}
+
+/**
+ * The standard suggested for one gap, from the same design as the gap.
+ *
+ * Section ordinals restart in each design, so matching on the ordinal alone
+ * attached one design's proposed standard to another design's gap.
+ */
+function standardFor(
+  gap: CoverageGap,
+  suggestions: CoverageView["suggestions"],
+): CoverageView["suggestions"][number] | null {
+  return (
+    suggestions.find(
+      (s) => (s.documentId ?? null) === (gap.documentId ?? null) && s.sections.includes(gap.section),
+    ) ?? null
+  );
 }
 
 /**
@@ -30,6 +53,7 @@ function keyOf(gap: CoverageGap): string {
 export function CoverageGaps({
   coverage,
   frameworkName,
+  designCount = 1,
   runId,
   gapTables = {},
   idPrefix = "",
@@ -38,8 +62,14 @@ export function CoverageGaps({
   /** Which run these gaps belong to, so a reviewer's marks reset on a re-run. */
   runId: string;
   frameworkName: string;
-  /** The tables a gap's quote was made of, by section ordinal. */
-  gapTables?: Record<number, TableView[]>;
+  /**
+   * How many designs this run read. Needed separately from the gaps, because a
+   * project report with no gaps at all still must not call three designs "this
+   * design" — and with nothing in the list there is nothing to count.
+   */
+  designCount?: number;
+  /** The tables a gap's quote was made of, by `gapKey`. */
+  gapTables?: Record<string, TableView[]>;
   /** Keeps anchors unique where several designs' results share one page. */
   idPrefix?: string;
 }) {
@@ -69,13 +99,21 @@ export function CoverageGaps({
   const plural = gaps.length === 1;
   const openIndex = openKey === null ? -1 : gaps.findIndex((gap) => keyOf(gap) === openKey);
 
+  // A project run merges every design's gaps into one list, and each one says
+  // which design it came from. Without that, "section 4 is ungoverned" names
+  // nothing on a report covering three designs — and the sentences below used
+  // to say "this design" over all of them.
+  const several = designCount > 1;
+  const named = several && gaps.some((gap) => gap.documentTitle);
+  const subject = several ? `these ${designCount} designs` : "this design";
+
   return (
     <div className="space-y-7">
       <div className="space-y-1">
         <p className="text-[13px] leading-relaxed text-ink/76">
           {gaps.length === 0
-            ? `Every part of this design that describes the system is governed by at least one clause in ${frameworkName}.`
-            : `${gaps.length} part${plural ? "" : "s"} of this design describe${plural ? "s" : ""} something no clause in ${frameworkName} governs, so nothing in this assessment checked ${plural ? "it" : "them"}.`}
+            ? `Every part of ${subject} that describes the system is governed by at least one clause in ${frameworkName}.`
+            : `${gaps.length} part${plural ? "" : "s"} of ${subject} describe${plural ? "s" : ""} something no clause in ${frameworkName} governs, so nothing in this assessment checked ${plural ? "it" : "them"}.`}
         </p>
         {coverage.truncated && (
           <p className="text-[12px] text-ink/62">
@@ -87,7 +125,8 @@ export function CoverageGaps({
           <p className="text-[12px] text-ink/62">
             {coverage.setAside} more proposed by the model{" "}
             {coverage.setAside === 1 ? "was" : "were"} set aside: the quote was not in the section it
-            was claimed for, or a clause had already judged that passage.
+            was claimed for, a clause had already judged that passage, or the description said
+            nothing a reader could act on.
           </p>
         )}
       </div>
@@ -95,7 +134,7 @@ export function CoverageGaps({
       {gaps.length === 0 ? (
         <p className="flex items-center justify-center gap-2 rounded-xl border border-ok-line bg-ok-tint px-4 py-6 text-center text-[13px] text-ok">
           <CircleCheck size={15} aria-hidden="true" />
-          Nothing in this design falls outside your standards.
+          Nothing in {several ? "these designs" : "this design"} falls outside your standards.
         </p>
       ) : (
         <>
@@ -106,6 +145,7 @@ export function CoverageGaps({
                 <Gap
                   key={key}
                   gap={gap}
+                  showDesign={named}
                   mark={marks[key]}
                   onOpen={() => setOpenKey(key)}
                 />
@@ -118,10 +158,8 @@ export function CoverageGaps({
           {openIndex >= 0 && (
             <GapDialog
               gap={gaps[openIndex]!}
-              standard={
-                suggestions.find((s) => s.sections.includes(gaps[openIndex]!.section)) ?? null
-              }
-              tables={gapTables[gaps[openIndex]!.section]}
+              standard={standardFor(gaps[openIndex]!, suggestions)}
+              tables={gapTables[gapKey(gaps[openIndex]!)]}
               mark={marks[keyOf(gaps[openIndex]!)]}
               onMark={(value) => {
                 mark(keyOf(gaps[openIndex]!), value);
@@ -179,10 +217,17 @@ export function CoverageGaps({
                 <p className="mt-2 text-[11.5px] text-ink/60">
                   Would cover{" "}
                   {suggestion.sections
-                    .map((section) => gaps.find((gap) => gap.section === section))
+                    .map((section) =>
+                      gaps.find(
+                        (gap) =>
+                          gap.section === section &&
+                          (gap.documentId ?? null) === (suggestion.documentId ?? null),
+                      ),
+                    )
                     .filter((gap): gap is CoverageGap => gap !== undefined)
                     .map((gap) => gap.title || gap.headingPath)
                     .join(", ")}
+                  {named && suggestion.documentTitle ? ` in ${suggestion.documentTitle}` : ""}
                 </p>
               </li>
             ))}
@@ -195,10 +240,13 @@ export function CoverageGaps({
 
 function Gap({
   gap,
+  showDesign,
   mark,
   onOpen,
 }: {
   gap: CoverageGap;
+  /** Only on a project report, where the list crosses several designs. */
+  showDesign: boolean;
   mark: "accepted" | "dismissed" | undefined;
   onOpen: () => void;
 }) {
@@ -229,6 +277,11 @@ function Gap({
             <span className={cn("truncate text-[13.5px]", settled ? "text-ink/62" : "text-ink/88")}>
               {gap.title || gap.headingPath}
             </span>
+            {showDesign && gap.documentTitle && (
+              <span className="rounded border border-line px-1.5 py-px text-[10.5px] text-ink/65">
+                {gap.documentTitle}
+              </span>
+            )}
             {pages && <span className="font-mono text-[11.5px] text-ink/58">{pages}</span>}
           </span>
           <span

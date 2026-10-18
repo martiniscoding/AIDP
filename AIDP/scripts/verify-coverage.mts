@@ -8,7 +8,7 @@
  *
  * Run with:  npx tsx scripts/verify-coverage.mts
  */
-import { readCoverage } from "../src/lib/ingest/coverage";
+import { gapKey, readCoverage } from "../src/lib/ingest/coverage";
 
 let pass = 0;
 let fail = 0;
@@ -56,6 +56,42 @@ ok("a fractional page is not a page", view?.gaps[1]?.page === null, view?.gaps[1
 ok("a suggestion keeps only reported gaps, once each", JSON.stringify(view?.suggestions[0]?.sections) === "[12]", view?.suggestions[0]);
 ok("suggestions with no reported gap, or no title, are dropped", JSON.stringify(view?.suggestions.map((s) => s.title)) === '["Payment card data handling","Carrier integrations"]', view?.suggestions);
 ok("counts what the checks set aside, ignoring anything that is not a count", view?.setAside === 3, view?.setAside);
+
+console.log("\nA project's designs each number their own sections");
+// Both designs have a section 6. Keyed on the ordinal alone, the second one's
+// gap was dropped as a duplicate of the first's, its suggested standard was
+// justified by the other design's gap, and its tables were filed under a key
+// the first design already owned.
+const project = readCoverage({
+  state: "complete",
+  gaps: [
+    { section: 6, title: "HR System", quote: "Workforce metrics land in the warehouse nightly.", documentId: "doc-a", documentTitle: "Workforce Analytics Hub" },
+    { section: 6, title: "Order DB", quote: "Orders are written to a dedicated Postgres instance.", documentId: "doc-b", documentTitle: "Customer Order Platform" },
+    { section: 7, title: "Repeat of A's 6", quote: "Workforce metrics land in the warehouse nightly.", documentId: "doc-a", documentTitle: "Workforce Analytics Hub" },
+    { section: 6, title: "A's 6 again", quote: "A second go at the same section.", documentId: "doc-a", documentTitle: "Workforce Analytics Hub" },
+  ],
+  suggestions: [
+    { title: "Workforce analytics standards", covers: "Nightly ETL.", why: "The hub.", sections: [6], documentId: "doc-a", documentTitle: "Workforce Analytics Hub" },
+    { title: "Borrowed from the other design", covers: "Orders.", why: "The platform.", sections: [7], documentId: "doc-b", documentTitle: "Customer Order Platform" },
+  ],
+});
+ok("one gap per section per design, not per section", project?.gaps.length === 3, project?.gaps.map((g) => `${g.documentId}#${g.section}`));
+ok("both designs keep their section 6", JSON.stringify(project?.gaps.map((g) => g.documentId)) === '["doc-a","doc-b","doc-a"]', project?.gaps.map((g) => g.documentId));
+ok("a repeat within one design is still dropped", project?.gaps.filter((g) => g.documentId === "doc-a" && g.section === 6).length === 1, project?.gaps);
+ok("the design's name is read, not discarded", project?.gaps[1]?.documentTitle === "Customer Order Platform", project?.gaps[1]);
+ok("gapKey separates the two section 6s", gapKey(project!.gaps[0]!) !== gapKey(project!.gaps[1]!), [gapKey(project!.gaps[0]!), gapKey(project!.gaps[1]!)]);
+ok("a suggestion is justified by its own design's gap", JSON.stringify(project?.suggestions.map((s) => s.title)) === '["Workforce analytics standards"]', project?.suggestions);
+
+console.log("\nA single design carries no design id, and still dedupes");
+const alone = readCoverage({
+  state: "complete",
+  gaps: [
+    { section: 6, title: "Only design", quote: "One design, no project around it." },
+    { section: 6, title: "Duplicate", quote: "The same section twice." },
+  ],
+});
+ok("an untagged gap reads as having no design", alone?.gaps[0]?.documentId === null && alone.gaps[0]?.documentTitle === null, alone?.gaps[0]);
+ok("and a duplicate section is still one gap", alone?.gaps.length === 1, alone?.gaps);
 
 console.log("\nA check that could not run");
 const skipped = readCoverage({ state: "skipped", note: "This design was processed before its pages were stored." });

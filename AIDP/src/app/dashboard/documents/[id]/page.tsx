@@ -123,6 +123,7 @@ export default async function DocumentPage({
         totalClauses: run.totalClauses,
         completedClauses: run.completedClauses,
         frameworkName: run.framework.name,
+        designCount: 1,
         frameworkVersion: run.framework.version,
         model: run.model,
         failureReason: run.failureReason,
