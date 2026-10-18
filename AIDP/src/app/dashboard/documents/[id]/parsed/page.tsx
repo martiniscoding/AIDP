@@ -12,6 +12,7 @@ import { setAside } from "@/lib/ingest/rules";
 import { Figures, type FigureView } from "../Figures";
 import { SetAside } from "../SetAside";
 import { SectionRow } from "./SectionRow";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -89,17 +90,17 @@ export default async function ParsedPage({
         {document.title}
       </Link>
 
-      <header className="mb-8">
-        <h1 className="font-display text-[27px] font-semibold leading-tight tracking-[-0.02em] text-ink">
-          Parsed content
-        </h1>
-        <p className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-ink/64">
-          <span className="text-ink/72">{document.title}</span>
-          <span>{STATUS_LABEL[document.status] ?? document.status}</span>
-          {document.pageCount != null && <span>{document.pageCount} pages</span>}
-          {document.profile && <span>{document.profile}</span>}
-        </p>
-      </header>
+      <PageHeader
+        title="Parsed content"
+        meta={
+          <span className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
+            <span className="text-ink/72">{document.title}</span>
+            <span>{STATUS_LABEL[document.status] ?? document.status}</span>
+            {document.pageCount != null && <span>{document.pageCount} pages</span>}
+            {document.profile && <span>{document.profile}</span>}
+          </span>
+        }
+      />
 
       {!isTerminal(document.status) && (
         <p className="mb-6 rounded-xl border border-line bg-card px-4 py-3 text-[13px] text-ink/70">

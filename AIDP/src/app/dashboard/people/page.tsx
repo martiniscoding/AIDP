@@ -5,6 +5,8 @@ import { list } from "@/lib/access/roster";
 import { formatTokens, organisationSpend } from "@/lib/access/usage";
 import { PeopleTable } from "./PeopleTable";
 import { ImportPanel } from "./ImportPanel";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatCard } from "@/components/ui/StatCard";
 
 export const metadata: Metadata = {
   title: "People",
@@ -43,31 +45,31 @@ export default async function PeoplePage() {
 
   return (
     <>
-      <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          People
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
-          Everyone at {access.organisation.name} who can use Dexter. Load your staff
-          list, then admit the people who need access — nobody gets in until you
-          say so.
-        </p>
-      </header>
+      <PageHeader
+        title="People"
+        lede={
+          <>
+            Everyone at {access.organisation.name} who can use Dexter. Load your staff
+            list, then admit the people who need access — nobody gets in until you
+            say so.
+          </>
+        }
+      />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-3">
-        <Stat
+        <StatCard
           icon={<UsersRound size={16} strokeWidth={1.9} />}
           label="With access"
           value={String(admitted)}
           hint={admitted === 1 ? "1 person can sign in" : `${admitted} people can sign in`}
         />
-        <Stat
+        <StatCard
           icon={<UserRound size={16} strokeWidth={1.9} />}
           label="On the list, not admitted"
           value={String(waiting)}
           hint={waiting === 0 ? "Nobody waiting" : "Imported, with no access"}
         />
-        <Stat
+        <StatCard
           icon={<Coins size={16} strokeWidth={1.9} />}
           label="Tokens used"
           value={formatTokens(spend.totalTokens)}
@@ -121,30 +123,5 @@ export default async function PeoplePage() {
         </section>
       )}
     </>
-  );
-}
-
-function Stat({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-line bg-card shadow-card p-5">
-      <div className="flex items-center gap-2 text-ink/64">
-        <span className="text-royal">{icon}</span>
-        <span className="text-[11px] font-medium uppercase tracking-[0.13em]">{label}</span>
-      </div>
-      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-ink">
-        {value}
-      </p>
-      <p className="mt-0.5 text-[12px] text-ink/62">{hint}</p>
-    </div>
   );
 }

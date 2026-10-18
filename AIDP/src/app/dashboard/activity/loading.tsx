@@ -1,11 +1,11 @@
 import { cn } from "@/lib/cn";
 import {
   Bone,
+  PageHeaderSkeleton,
   PillsSkeleton,
   SkeletonScreen,
   StatSkeleton,
   TableSkeleton,
-  TitleSkeleton,
 } from "@/components/ui/Skeleton";
 
 const EVENTS = ["w-64", "w-48", "w-72", "w-56", "w-44"];
@@ -14,7 +14,7 @@ const EVENTS = ["w-64", "w-48", "w-72", "w-56", "w-44"];
 export default function ActivityLoading() {
   return (
     <SkeletonScreen label="Loading activity">
-      <TitleSkeleton lede={["w-[38rem]", "w-72"]} />
+      <PageHeaderSkeleton eyebrow={false} lede={["w-[38rem]", "w-72"]} />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((index) => (

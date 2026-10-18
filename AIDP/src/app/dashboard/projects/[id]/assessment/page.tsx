@@ -31,6 +31,7 @@ import { requireWorkspace } from "@/lib/access/gate";
 import { assessableDesigns, getProject, latestProjectRun } from "@/lib/ingest/projects";
 import { Assessment, type FindingView, type RunView } from "../../../documents/[id]/Assessment";
 import { Decide, type OutcomeView } from "../../../documents/[id]/Decide";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -191,12 +192,11 @@ export default async function ProjectAssessmentPage({
       </Link>
 
       <div className="mb-7">
-        <h1 className="font-display text-[25px] font-semibold tracking-[-0.02em] text-ink">
-          {project.name}
-        </h1>
-        <p className="mt-2 text-[13px] text-ink/64">
-          Every design in this project, measured against the standards together.
-        </p>
+        <PageHeader
+          className="mb-4"
+          title={project.name}
+          lede="Every design in this project, measured against the standards together."
+        />
 
         {ready.length > 0 && (
           <ul className="mt-3.5 flex flex-wrap gap-2">

@@ -1,6 +1,5 @@
-import Link from "next/link";
-import { Logo } from "@/components/ui/Logo";
 import { requireWorkspace } from "@/lib/access/gate";
+import { SideNav, type NavGroup } from "@/components/ui/SideNav";
 import { SignOutButton } from "./SignOutButton";
 import { SessionTimeout } from "@/components/auth/SessionTimeout";
 
@@ -16,6 +15,10 @@ import { SessionTimeout } from "@/components/auth/SessionTimeout";
  * question; `requireAccess` asks whether they are still on the roster. Server
  * Actions and Route Handlers repeat the check for themselves, because a layout
  * does not run in front of a direct POST.
+ *
+ * The chrome is a navigation rail down the left rather than a strip along the
+ * top: see SideNav. All this layout owns is which destinations exist for this
+ * person, and the one column of page the rail leaves.
  */
 export default async function DashboardLayout({
   children,
@@ -38,76 +41,64 @@ export default async function DashboardLayout({
 
   // Destinations only — starting a project belongs on the projects page, next
   // to the list it adds to. Profile is not in this list either: it lives on
-  // the account block at the right, which is where people look for it.
-  const links = [
-    // Home *is* the project list, so a "My Projects" entry beside it pointed at
-    // the same screen and only raised the question of how the two differed.
-    { href: "/dashboard", label: "Home" },
-    { href: "/dashboard/documents", label: "Reference Library" },
-    { href: "/dashboard/decisions", label: "Decisions" },
+  // the account block at the foot of the rail, which is where people look for
+  // it.
+  //
+  // Grouped by who they are for. An administrator's two screens are about
+  // other people's work rather than their own, and a member never sees them at
+  // all, so they read as a section instead of as four peers in one run.
+  const groups: NavGroup[] = [
+    {
+      label: "Workspace",
+      items: [
+        // Home *is* the project list, so a "My Projects" entry beside it
+        // pointed at the same screen and only raised the question of how the
+        // two differed.
+        { href: "/dashboard", label: "Home", icon: "home" },
+        { href: "/dashboard/documents", label: "Reference Library", icon: "library" },
+        { href: "/dashboard/decisions", label: "Decisions", icon: "decisions" },
+      ],
+    },
+  ];
+
+  const adminItems: NavGroup["items"] = [
     ...(isOwner
       ? [
-          { href: "/dashboard/activity", label: "Activity" },
-          { href: "/dashboard/people", label: "People" },
+          { href: "/dashboard/activity", label: "Activity", icon: "activity" as const },
+          { href: "/dashboard/people", label: "People", icon: "people" as const },
         ]
+      : []),
+    ...(user.isPlatformAdmin
+      ? [{ href: "/admin", label: "Admin", icon: "operator" as const, accent: true }]
       : []),
   ];
 
+  if (adminItems.length > 0) {
+    groups.push({ label: "Admin Tools", items: adminItems });
+  }
+
   return (
-    <div className="app-dark min-h-svh">
+    <div className="flex min-h-svh">
       <SessionTimeout />
-      <header className="sticky top-0 z-50 border-b border-deep bg-deep backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
-          <Logo tone="light" href="/dashboard" />
 
-          <nav className="hidden items-center gap-0.5 lg:flex">
-            {links.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="whitespace-nowrap rounded-full px-2.5 py-1.5 text-[13px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              >
-                {link.label}
-              </Link>
-            ))}
-            {user.isPlatformAdmin && (
-              <Link
-                href="/admin"
-                className="ml-1 whitespace-nowrap rounded-full border border-royal-light/40 bg-white/10 px-2.5 py-1.5 text-[13px] text-royal-light transition-colors hover:bg-white/20"
-              >
-                Admin
-              </Link>
-            )}
-          </nav>
+      <SideNav
+        brandHref="/dashboard"
+        groups={groups}
+        account={{
+          name: user.name || user.email,
+          meta: `${organisation.name}${isOwner ? " · Administrator" : ""}`,
+          initials,
+          href: "/dashboard/profile",
+        }}
+      >
+        <SignOutButton />
+      </SideNav>
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            <Link
-              href="/dashboard/profile"
-              className="flex shrink-0 items-center gap-2.5 rounded-full py-1 pl-3 pr-1 transition-colors hover:bg-white/10"
-            >
-              <span className="hidden text-right xl:block">
-                <span className="block whitespace-nowrap text-[13px] leading-tight text-white/88">
-                  {user.name || user.email}
-                </span>
-                <span className="block whitespace-nowrap text-[11.5px] leading-tight text-white/55">
-                  {organisation.name}
-                  {isOwner ? " · Administrator" : ""}
-                </span>
-              </span>
-              <span
-                aria-hidden="true"
-                className="grid size-9 shrink-0 place-items-center rounded-full bg-royal-light text-[12px] font-semibold text-deep"
-              >
-                {initials}
-              </span>
-            </Link>
-            <SignOutButton />
-          </div>
+      <main className="min-w-0 flex-1">
+        <div className="mx-auto w-full max-w-[1180px] px-5 pb-20 pt-[76px] sm:px-7 lg:px-10 lg:pt-9">
+          {children}
         </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
+      </main>
     </div>
   );
 }
-

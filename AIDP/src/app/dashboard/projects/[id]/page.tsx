@@ -19,6 +19,7 @@ import { PipelineWatcher } from "../../documents/PipelineWatcher";
 import { AssessProject, type ProjectRunSummary } from "./AssessProject";
 import { DesignResult } from "./DesignResult";
 import { ProjectSettings } from "./ProjectSettings";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export async function generateMetadata({
   params,
@@ -100,29 +101,29 @@ export default async function ProjectPage({
         All projects
       </Link>
 
-      <header className="mb-7">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-ink">
+      <PageHeader
+        title={
+          <span className="flex flex-wrap items-center gap-2.5">
             {project.name}
-          </h1>
-          {archived && (
-            <span className="rounded-full border border-line bg-canvas-sunk px-2 py-0.5 text-[11px] text-ink/58">
-              Archived
-            </span>
-          )}
-        </div>
-        {project.description && (
-          <p className="mt-2 max-w-2xl text-[14.5px] text-ink/68">{project.description}</p>
-        )}
-        <p className="mt-1.5 text-[12px] text-ink/58">
-          Opened by {project.createdByName || "someone since departed"} on{" "}
-          {project.createdAt.toLocaleDateString(undefined, {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          })}
-        </p>
-      </header>
+            {archived && (
+              <span className="rounded-full border border-line bg-canvas-sunk px-2 py-0.5 text-[11px] font-sans font-medium text-ink/58">
+                Archived
+              </span>
+            )}
+          </span>
+        }
+        lede={project.description || undefined}
+        meta={
+          <>
+            Opened by {project.createdByName || "someone since departed"} on{" "}
+            {project.createdAt.toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            })}
+          </>
+        }
+      />
 
       {mayEdit && <ProjectSettings project={project} />}
 

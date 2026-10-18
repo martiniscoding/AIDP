@@ -37,48 +37,37 @@ export function SkeletonScreen({ label, children }: { label: string; children: R
   );
 }
 
-/** PageHeader's panel: eyebrow, title, and one lede bar per width given. */
-export function PageHeaderSkeleton({ lede = ["w-[34rem]"] }: { lede?: string[] }) {
+/**
+ * PageHeader's block: an eyebrow where the page has one, the title, and one
+ * lede bar per width given — down to the rule the real header draws.
+ */
+export function PageHeaderSkeleton({
+  eyebrow = true,
+  lede = ["w-[34rem]"],
+}: {
+  eyebrow?: boolean;
+  lede?: string[];
+}) {
   return (
-    <div className="card-sheen relative mb-5 overflow-hidden rounded-2xl border border-line bg-card px-7 py-7 shadow-card">
-      <div className="header-bloom absolute inset-0" />
-      <div className="relative">
-        <Bone className="h-3 w-28" />
-        <Bone className="mt-4 h-8 w-72" />
-        {lede.map((width, index) => (
-          <Bone key={index} className={cn("h-3.5", index === 0 ? "mt-5" : "mt-3", width)} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** The plain title-and-lede header the console pages open with. */
-export function TitleSkeleton({ lede = ["w-[36rem]"] }: { lede?: string[] }) {
-  return (
-    <div className="mb-8">
-      <Bone className="my-2 h-7 w-44" />
+    <div className="mb-6 border-b border-line pb-5">
+      {eyebrow ? <Bone className="h-2.5 w-28" /> : null}
+      <Bone className={cn("h-7 w-72", eyebrow ? "mt-3.5" : "mt-1")} />
       {lede.map((width, index) => (
-        <Bone key={index} className={cn("h-3.5", index === 0 ? "mt-4" : "mt-2", width)} />
+        <Bone key={index} className={cn("h-3.5", index === 0 ? "mt-4" : "mt-2.5", width)} />
       ))}
     </div>
   );
 }
 
 /** A figure tile: icon and label, the number, and a hint beneath. */
-export function StatSkeleton({ raised = false }: { raised?: boolean }) {
+export function StatSkeleton() {
   return (
-    <div
-      className={cn(
-        "border border-line bg-card",
-        raised ? "rounded-2xl p-5 shadow-card" : "rounded-xl p-4",
-      )}
-    >
+    <div className="rounded-2xl border border-line bg-card p-5 shadow-card">
       <div className="flex items-center gap-2">
         <Bone square className="size-4" />
         <Bone className="h-3 w-24" />
       </div>
-      <Bone square className={cn("h-7 w-16", raised ? "mt-3.5" : "mt-3")} />
+      <Bone square className="mt-3.5 h-7 w-16" />
       <Bone className="mt-2 h-3 w-32" />
     </div>
   );

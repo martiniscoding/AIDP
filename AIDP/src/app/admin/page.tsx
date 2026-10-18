@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ArrowUpRight, Building2, Coins, Users } from "lucide-react";
 import { listOrganisations } from "@/lib/access/platform";
 import { formatTokens, platformSpend } from "@/lib/access/usage";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatCard } from "@/components/ui/StatCard";
 
 export const metadata: Metadata = {
   title: "Companies",
@@ -25,27 +27,20 @@ export default async function AdminPage() {
 
   return (
     <>
-      <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Companies
-        </h1>
-        <p className="mt-2 text-[15px] text-ink/68">
-          Every organisation on the platform.
-        </p>
-      </header>
+      <PageHeader title="Companies" lede="Every organisation on the platform." />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-3">
-        <Stat
+        <StatCard
           icon={<Building2 size={16} strokeWidth={1.9} />}
           label="Companies"
           value={String(totals.organisations)}
         />
-        <Stat
+        <StatCard
           icon={<Users size={16} strokeWidth={1.9} />}
           label="People with access"
           value={String(people)}
         />
-        <Stat
+        <StatCard
           icon={<Coins size={16} strokeWidth={1.9} />}
           label="Tokens used"
           value={formatTokens(totals.totalTokens)}
@@ -137,31 +132,6 @@ function Pair({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline gap-1.5">
       <dt className="text-ink/62">{label}</dt>
       <dd className="tabular-nums text-ink/78">{value}</dd>
-    </div>
-  );
-}
-
-function Stat({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-line bg-card shadow-card p-5">
-      <div className="flex items-center gap-2 text-ink/64">
-        <span className="text-royal">{icon}</span>
-        <span className="text-[11px] font-medium uppercase tracking-[0.13em]">{label}</span>
-      </div>
-      <p className="mt-3 font-display text-[26px] font-semibold tabular-nums tracking-tight text-ink">
-        {value}
-      </p>
-      {hint && <p className="mt-0.5 text-[12px] text-ink/62">{hint}</p>}
     </div>
   );
 }

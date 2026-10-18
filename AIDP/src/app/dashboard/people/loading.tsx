@@ -1,21 +1,21 @@
 import {
   Bone,
+  PageHeaderSkeleton,
   PillsSkeleton,
   SkeletonScreen,
   StatSkeleton,
   TableSkeleton,
-  TitleSkeleton,
 } from "@/components/ui/Skeleton";
 
 /** The roster and spend while they load. */
 export default function PeopleLoading() {
   return (
     <SkeletonScreen label="Loading people">
-      <TitleSkeleton lede={["w-[38rem]", "w-64"]} />
+      <PageHeaderSkeleton eyebrow={false} lede={["w-[38rem]", "w-64"]} />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-3">
         {[0, 1, 2].map((index) => (
-          <StatSkeleton key={index} raised />
+          <StatSkeleton key={index} />
         ))}
       </div>
 

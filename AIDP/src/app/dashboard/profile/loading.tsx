@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { Bone, SkeletonScreen, TitleSkeleton } from "@/components/ui/Skeleton";
+import { Bone, PageHeaderSkeleton, SkeletonScreen } from "@/components/ui/Skeleton";
 
 const LABELS = ["w-24", "w-16", "w-28", "w-24", "w-24", "w-16"];
 
@@ -7,7 +7,7 @@ const LABELS = ["w-24", "w-16", "w-28", "w-24", "w-24", "w-16"];
 export default function ProfileLoading() {
   return (
     <SkeletonScreen label="Loading company profile">
-      <TitleSkeleton lede={["w-80"]} />
+      <PageHeaderSkeleton eyebrow={false} lede={["w-80"]} />
 
       <div className="rounded-2xl border border-line bg-card p-5 shadow-card sm:p-6">
         <div className="grid gap-4 sm:grid-cols-2">

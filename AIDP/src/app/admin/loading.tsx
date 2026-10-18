@@ -1,9 +1,9 @@
 import { cn } from "@/lib/cn";
 import {
   Bone,
+  PageHeaderSkeleton,
   SkeletonScreen,
   StatSkeleton,
-  TitleSkeleton,
 } from "@/components/ui/Skeleton";
 
 const COMPANIES = ["w-48", "w-60", "w-40"];
@@ -12,11 +12,11 @@ const COMPANIES = ["w-48", "w-60", "w-40"];
 export default function AdminLoading() {
   return (
     <SkeletonScreen label="Loading companies">
-      <TitleSkeleton lede={["w-64"]} />
+      <PageHeaderSkeleton eyebrow={false} lede={["w-64"]} />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-3">
         {[0, 1, 2].map((index) => (
-          <StatSkeleton key={index} raised />
+          <StatSkeleton key={index} />
         ))}
       </div>
 

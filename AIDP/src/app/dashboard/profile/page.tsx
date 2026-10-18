@@ -6,6 +6,7 @@ import { secretsConfigured } from "@/lib/access/secrets";
 import { openrouterModels } from "@/lib/access/model-catalogue";
 import { ProfileForm } from "./ProfileForm";
 import { ModelKey } from "./ModelKey";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Profile",
@@ -32,15 +33,15 @@ export default async function ProfilePage() {
 
   return (
     <>
-      <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Profile
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
-          Your company&rsquo;s details and the model key your assessments run on. Only
-          administrators can change these.
-        </p>
-      </header>
+      <PageHeader
+        title="Profile"
+        lede={
+          <>
+            Your company&rsquo;s details and the model key your assessments run on. Only
+            administrators can change these.
+          </>
+        }
+      />
 
       <ProfileForm profile={profile} />
 

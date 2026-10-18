@@ -7,6 +7,7 @@ import { organisationDetail } from "@/lib/access/platform";
 import { ROLE_LABEL, toRole } from "@/lib/access/roles";
 import { STATUS_META, isRosterStatus } from "@/lib/access/roster-status";
 import { formatTokens, organisationSpend } from "@/lib/access/usage";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 const TONE: Record<string, string> = {
   good: "border-ok-line bg-ok-tint text-ok",
@@ -58,26 +59,26 @@ export default async function OrganisationPage({
         All companies
       </Link>
 
-      <header className="mb-8">
-        <h1 className="font-display text-[28px] font-semibold tracking-[-0.02em] text-ink">
-          {organisation.name}
-        </h1>
-        <p className="mt-1.5 text-[13.5px] text-ink/66">
-          Joined{" "}
-          {organisation.createdAt.toLocaleDateString(undefined, {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          })}
-          {" · "}
-          {organisation.documentCount} document{organisation.documentCount === 1 ? "" : "s"}
-          {" · "}
-          {organisation.assessmentCount} assessment
-          {organisation.assessmentCount === 1 ? "" : "s"}
-          {" · "}
-          {formatTokens(spend.totalTokens)} tokens over {spend.calls.toLocaleString()} calls
-        </p>
-      </header>
+      <PageHeader
+        title={organisation.name}
+        meta={
+          <>
+            Joined{" "}
+            {organisation.createdAt.toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            })}
+            {" · "}
+            {organisation.documentCount} document{organisation.documentCount === 1 ? "" : "s"}
+            {" · "}
+            {organisation.assessmentCount} assessment
+            {organisation.assessmentCount === 1 ? "" : "s"}
+            {" · "}
+            {formatTokens(spend.totalTokens)} tokens over {spend.calls.toLocaleString()} calls
+          </>
+        }
+      />
 
       <section>
         <h2 className="mb-4 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">

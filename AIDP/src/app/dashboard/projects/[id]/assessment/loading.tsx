@@ -25,7 +25,7 @@ export default function ProjectAssessmentLoading() {
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[0, 1, 2, 3].map((index) => (
-          <StatSkeleton key={index} raised />
+          <StatSkeleton key={index} />
         ))}
       </div>
 

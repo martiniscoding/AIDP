@@ -40,6 +40,7 @@ import { Decide, type OutcomeView } from "./Decide";
 import { DocumentActions } from "../DocumentActions";
 import { PipelineStatus } from "../PipelineStatus";
 import { PipelineWatcher } from "../PipelineWatcher";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -255,12 +256,10 @@ export default async function DocumentPage({
         {assessed ? "Home" : "Standards library"}
       </Link>
 
-      <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="font-display text-[27px] font-semibold leading-tight tracking-[-0.02em] text-ink">
-            {document.title}
-          </h1>
-          <p className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-ink/64">
+      <PageHeader
+        title={document.title}
+        meta={
+          <span className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
             <span className="text-ink/72">{STATUS_LABEL[document.status] ?? document.status}</span>
             {document.pipeline.state === "ready" && document.pipeline.tookMs !== null && (
               <span>Processed in {formatDuration(document.pipeline.tookMs)}</span>
@@ -274,39 +273,40 @@ export default async function DocumentPage({
                 {document.sensitivity}
               </span>
             )}
-          </p>
-        </div>
+          </span>
+        }
+        action={
+          <>
+            {/* A new tab, not this one: it is looked at beside a finding, to see
+                what the finding was drawn from, and coming back to the report
+                should not mean loading it again. */}
+            <Link
+              href={`/dashboard/documents/${document.id}/parsed`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
+            >
+              <ScrollText size={13} aria-hidden="true" />
+              Parsed content
+              {toReview > 0 && (
+                <span className="rounded-full border border-warn-line bg-warn-tint px-1.5 text-[11px] text-warn">
+                  {toReview}
+                </span>
+              )}
+              <ExternalLink size={11} aria-hidden="true" className="text-ink/50" />
+            </Link>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* A new tab, not this one: it is looked at beside a finding, to see
-              what the finding was drawn from, and coming back to the report
-              should not mean loading it again. */}
-          <Link
-            href={`/dashboard/documents/${document.id}/parsed`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid"
-          >
-            <ScrollText size={13} aria-hidden="true" />
-            Parsed content
-            {toReview > 0 && (
-              <span className="rounded-full border border-warn-line bg-warn-tint px-1.5 text-[11px] text-warn">
-                {toReview}
-              </span>
+            {mayChange && (
+              <DocumentActions
+                documentId={document.id}
+                title={document.title}
+                redirectAfterDelete
+                redirectTo={home}
+              />
             )}
-            <ExternalLink size={11} aria-hidden="true" className="text-ink/50" />
-          </Link>
-
-          {mayChange && (
-            <DocumentActions
-            documentId={document.id}
-            title={document.title}
-            redirectAfterDelete
-            redirectTo={home}
-          />
-          )}
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* Until the document is in, where it has got to is the whole story. */}
       {document.pipeline.state !== "ready" && (

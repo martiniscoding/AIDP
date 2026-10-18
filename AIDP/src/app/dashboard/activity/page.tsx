@@ -3,6 +3,8 @@ import { FileStack, Gavel, ScanSearch, UsersRound } from "lucide-react";
 import { requireOwnerWorkspace } from "@/lib/access/gate";
 import { organisationActivity } from "@/lib/access/activity";
 import { ActivityBoard } from "./ActivityBoard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatCard } from "@/components/ui/StatCard";
 
 export const metadata: Metadata = {
   title: "Activity",
@@ -29,31 +31,31 @@ export default async function ActivityPage() {
 
   return (
     <>
-      <header className="mb-8">
-        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">
-          Activity
-        </h1>
-        <p className="mt-2 max-w-2xl text-[15px] text-ink/68">
-          What everyone at {access.organisation.name} has put through Dexter — which
-          standards they contributed, which designs they submitted, and where each
-          one got to.
-        </p>
-      </header>
+      <PageHeader
+        title="Activity"
+        lede={
+          <>
+            What everyone at {access.organisation.name} has put through Dexter — which
+            standards they contributed, which designs they submitted, and where each
+            one got to.
+          </>
+        }
+      />
 
       <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat
+        <StatCard
           icon={<FileStack size={16} strokeWidth={1.9} />}
           label="Documents filed"
           value={String(totals.references + totals.submissions)}
           hint={`${totals.references} standards · ${totals.submissions} submissions`}
         />
-        <Stat
+        <StatCard
           icon={<ScanSearch size={16} strokeWidth={1.9} />}
           label="Assessments run"
           value={String(totals.runs)}
           hint={totals.runs === 0 ? "None yet" : "Across all submissions"}
         />
-        <Stat
+        <StatCard
           icon={<Gavel size={16} strokeWidth={1.9} />}
           label="Decisions recorded"
           value={String(totals.decisions)}
@@ -63,7 +65,7 @@ export default async function ActivityPage() {
               : "Rulings the next assessment will weigh"
           }
         />
-        <Stat
+        <StatCard
           icon={<UsersRound size={16} strokeWidth={1.9} />}
           label="People contributing"
           value={String(totals.contributors)}
@@ -77,30 +79,5 @@ export default async function ActivityPage() {
 
       <ActivityBoard activity={activity} />
     </>
-  );
-}
-
-function Stat({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <div className="rounded-xl border border-line bg-card p-4">
-      <div className="flex items-center gap-2 text-ink/64">
-        {icon}
-        <span className="text-[12.5px]">{label}</span>
-      </div>
-      <p className="mt-2 font-display text-[26px] font-semibold tabular-nums tracking-[-0.02em] text-ink">
-        {value}
-      </p>
-      <p className="mt-0.5 text-[12.5px] text-ink/62">{hint}</p>
-    </div>
   );
 }
