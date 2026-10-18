@@ -78,7 +78,7 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-svh">
+    <div className="app-dark flex min-h-svh">
       <SessionTimeout />
 
       <SideNav

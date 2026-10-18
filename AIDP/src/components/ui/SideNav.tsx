@@ -111,7 +111,7 @@ export function SideNav({
         <div
           aria-hidden="true"
           onClick={() => setOpen(false)}
-          className="fixed inset-0 z-30 bg-ink/45 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-30 bg-black/55 backdrop-blur-sm lg:hidden"
         />
       )}
 

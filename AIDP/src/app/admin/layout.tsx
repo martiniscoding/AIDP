@@ -50,7 +50,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   ];
 
   return (
-    <div className="flex min-h-svh">
+    <div className="app-dark flex min-h-svh">
       <SessionTimeout />
 
       <SideNav
