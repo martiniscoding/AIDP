@@ -201,12 +201,20 @@ def _parse(doc: fitz.Document, document: dict, heartbeat) -> _Result:
     all_tables, table_regions = tables.extract_with_regions(doc)
     heartbeat()
 
+    # And where the pictures are drawn, for the same reason: a diagram's box
+    # labels are short, bold and unpunctuated, so each one used to open a
+    # section of its own. Geometry only here — the figures themselves are
+    # rendered further down, once there are sections to file them under.
+    label_regions = figure_parser.label_regions(doc, table_regions)
+    heartbeat()
+
     out.sections = sections.build(
         content,
         profile,
         document_title=out.title,
         skip_pages=skip,
         not_headings=table_regions,
+        not_titles=label_regions,
     )
     if not out.sections:
         # Nothing in the document's own formatting marked a heading. Ask a model

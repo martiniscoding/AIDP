@@ -31,6 +31,11 @@ _MAX_AREA_RATIO = 0.92
 # Vector primitives closer than this are treated as one drawing.
 _CLUSTER_GAP = 26.0
 
+# How many shapes a cluster needs before its contents read as a diagram's
+# labels rather than as prose. Two boxes and an arrow is a diagram; one shaded
+# band behind a paragraph is a paragraph. See `label_regions_page`.
+_MIN_DRAWN_SHAPES = 2
+
 _RENDER_DPI = 170
 _CAPTION_GAP = 46.0
 _CAPTION = re.compile(r"^\s*(figure|fig\.?|diagram|exhibit)\b", re.IGNORECASE)
@@ -175,20 +180,75 @@ def _stop_at_next_heading(page: fitz.Page, rect: fitz.Rect) -> fitz.Rect:
     return trimmed
 
 
-def extract_page(
+def _primitives(page: fitz.Page) -> list[fitz.Rect]:
+    """The page's drawn shapes, hairlines and the page border left out."""
+    try:
+        drawings = page.get_drawings()
+    except Exception:  # noqa: BLE001
+        return []
+    page_area = max(_area(page.rect), 1.0)
+    kept: list[fitz.Rect] = []
+    for drawing in drawings:
+        rect = fitz.Rect(drawing["rect"])
+        area = _area(rect)
+        # Skip hairlines and rules at one end, the page border at the other.
+        if area > 120 and area / page_area < 0.95:
+            kept.append(rect)
+    return kept
+
+
+def regions_page(
     page: fitz.Page, exclude: list[tuple[float, float, float, float]] | None = None
-) -> list[Figure]:
+) -> list[tuple[str, fitz.Rect]]:
+    """Where this page's figures are, in reading order, rendering none of them.
+
+    Kept apart from `extract_page` because the section tree has to be told where
+    the pictures are *before* it is cut, and rendering is the expensive half.
+    See `label_regions` for what the section tree is actually given.
+    """
     exclusions = [fitz.Rect(*b) for b in (exclude or [])]
     page_rect = page.rect
-    found: list[Figure] = []
-    taken: list[fitz.Rect] = []
+    kept: list[tuple[str, fitz.Rect]] = []
 
     def blocked(rect: fitz.Rect) -> bool:
-        for other in exclusions + taken:
+        for other in exclusions + [taken for _, taken in kept]:
             overlap = _area(rect & other)
             if overlap and overlap / max(_area(rect), 1.0) > 0.5:
                 return True
         return False
+
+    def keep(rect: fitz.Rect, kind: str) -> None:
+        clipped = rect & page_rect
+        if not _plausible(clipped, page_rect) or blocked(clipped):
+            return
+        kept.append((kind, clipped))
+
+    # Embedded rasters first — they are unambiguous, and claiming their area
+    # stops the vector pass from re-rendering the same region.
+    for image in page.get_images(full=True):
+        xref = image[0]
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:  # noqa: BLE001
+            continue
+        for rect in rects:
+            keep(fitz.Rect(rect), "raster")
+
+    # Then vector drawings, which is where diagrams with no text layer live.
+    for cluster in _cluster(_primitives(page)):
+        # Cut at the next numbered heading: a cluster that chained body-text
+        # rules together would otherwise crop the following section as though
+        # it were part of the diagram.
+        keep(_stop_at_next_heading(page, cluster), "vector")
+
+    kept.sort(key=lambda item: item[1].y0)
+    return kept
+
+
+def extract_page(
+    page: fitz.Page, exclude: list[tuple[float, float, float, float]] | None = None
+) -> list[Figure]:
+    page_rect = page.rect
 
     def complexity_of(rect: fitz.Rect, kind: str) -> int:
         """How risky this figure is to trust a model's reading of.
@@ -225,58 +285,83 @@ def extract_page(
             return 50 + int(min(share, 1.0) * 50)
         return score
 
-    def render(rect: fitz.Rect, kind: str) -> None:
-        clipped = rect & page_rect
-        if not _plausible(clipped, page_rect) or blocked(clipped):
-            return
-        pixmap = page.get_pixmap(clip=clipped, dpi=_RENDER_DPI)
-        found.append(
-            Figure(
-                page=page.number + 1,
-                bbox=(clipped.x0, clipped.y0, clipped.x1, clipped.y1),
-                png=pixmap.tobytes("png"),
-                caption=_caption_for(page, clipped),
-                kind=kind,
-                complexity=complexity_of(clipped, kind),
-            )
+    return [
+        Figure(
+            page=page.number + 1,
+            bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
+            png=page.get_pixmap(clip=rect, dpi=_RENDER_DPI).tobytes("png"),
+            caption=_caption_for(page, rect),
+            kind=kind,
+            complexity=complexity_of(rect, kind),
         )
-        taken.append(clipped)
-
-    # Embedded rasters first — they are unambiguous, and claiming their area
-    # stops the vector pass from re-rendering the same region.
-    for image in page.get_images(full=True):
-        xref = image[0]
-        try:
-            rects = page.get_image_rects(xref)
-        except Exception:  # noqa: BLE001
-            continue
-        for rect in rects:
-            render(fitz.Rect(rect), "raster")
-
-    # Then vector drawings, which is where diagrams with no text layer live.
-    try:
-        drawings = page.get_drawings()
-    except Exception:  # noqa: BLE001
-        drawings = []
-    page_area = max(_area(page_rect), 1.0)
-    primitives = []
-    for drawing in drawings:
-        rect = fitz.Rect(drawing["rect"])
-        area = _area(rect)
-        # Skip hairlines and rules at one end, the page border at the other.
-        if area > 120 and area / page_area < 0.95:
-            primitives.append(rect)
-    for cluster in _cluster(primitives):
-        # Cut at the next numbered heading: a cluster that chained body-text
-        # rules together would otherwise crop the following section as though
-        # it were part of the diagram.
-        render(_stop_at_next_heading(page, cluster), "vector")
-
-    found.sort(key=lambda f: f.bbox[1])
-    return found
+        for kind, rect in regions_page(page, exclude)
+    ]
 
 
 BoxesByPage = dict[int, list[tuple[float, float, float, float]]]
+
+
+def label_regions_page(
+    page: fitz.Page, exclude: list[tuple[float, float, float, float]] | None = None
+) -> list[tuple[float, float, float, float]]:
+    """The shapes a diagram's own labels sit inside, on one page.
+
+    Not the figure outlines, for two reasons, and they pull in opposite
+    directions — which is why this asks its own question rather than reusing
+    `regions_page`. "Is this text inside something drawn?" is not "is this
+    drawing worth rendering for a reviewer?".
+
+    Too wide: a vector figure's outline is a cluster grown by proximity, and on
+    a page mixing a diagram with shaded prose it reaches far past the diagram —
+    page 3 of one sample runs 50–632 of an 842pt page and would take a real
+    "Leg-by-leg classification" subsection with it. The shapes the diagram is
+    drawn from stop where the drawing does, and that heading sits in open space
+    between two of them.
+
+    Too narrow: `_plausible` holds a figure to 60pt in each direction, because
+    anything smaller is a logo or a rule as far as rendering goes. A single row
+    of boxes is 45pt tall, so a one-row sketch is no figure at all and its
+    labels would keep opening sections.
+
+    So the clustering is borrowed and the size test is not. A cluster of at
+    least `_MIN_DRAWN_SHAPES` shapes is a drawing, and the shapes in it are
+    where its labels sit. One shaded band behind a paragraph is not a drawing,
+    and the words in it are prose. An embedded raster contributes all of itself,
+    since nothing inside a picture can be read as structure.
+    """
+    exclusions = [fitz.Rect(*b) for b in (exclude or [])]
+    primitives = _primitives(page)
+
+    def on_a_table(rect: fitz.Rect) -> bool:
+        return any(_area(rect & other) / max(_area(rect), 1.0) > 0.5 for other in exclusions)
+
+    boxes = [rect for kind, rect in regions_page(page, exclude) if kind == "raster"]
+    for cluster in _cluster(primitives):
+        held = [rect for rect in primitives if cluster.contains(rect)]
+        if len(held) < _MIN_DRAWN_SHAPES:
+            continue
+        boxes.extend(rect for rect in held if not on_a_table(rect))
+    return [(rect.x0, rect.y0, rect.x1, rect.y1) for rect in boxes]
+
+
+def label_regions(doc: fitz.Document, exclude_by_page: BoxesByPage | None = None) -> BoxesByPage:
+    """Where a line of text is a picture's own label rather than a heading.
+
+    The parse stage asks for this before cutting the section tree and then
+    extracts the figures themselves afterwards, so the drawings are read twice.
+    It is page geometry either way — `get_drawings` and some rectangle
+    arithmetic — and sharing one definition of where the pictures are matters
+    more than saving that, because the two answers drifting apart would suppress
+    a heading under a figure that no reviewer is ever shown.
+    """
+    exclude_by_page = exclude_by_page or {}
+    found: BoxesByPage = {}
+    for index in range(doc.page_count):
+        page_number = index + 1
+        boxes = label_regions_page(doc[index], exclude_by_page.get(page_number))
+        if boxes:
+            found[page_number] = boxes
+    return found
 
 
 def extract(doc: fitz.Document, exclude_by_page: BoxesByPage | None = None) -> list[Figure]:

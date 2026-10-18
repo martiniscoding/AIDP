@@ -132,6 +132,25 @@ def _in_region(line: Line, regions: dict[int, list] | None) -> bool:
     )
 
 
+def _candidate(
+    line: Line,
+    profile: FontProfile,
+    skip_pages: set[int],
+    not_headings: dict[int, list] | None,
+    not_titles: dict[int, list] | None,
+) -> tuple[str | None, str] | None:
+    """(number, title) when this line may open a section, else None."""
+    if line.page in skip_pages or _in_region(line, not_headings):
+        return None
+    found = _classify(line, profile)
+    # A label inside a picture is not a heading. See `not_titles` below: only
+    # the unnumbered ones are refused, because a number is the one landmark a
+    # diagram label never carries.
+    if found is not None and found[0] is None and _in_region(line, not_titles):
+        return None
+    return found
+
+
 def build(
     lines: list[Line],
     profile: FontProfile,
@@ -139,6 +158,7 @@ def build(
     document_title: str,
     skip_pages: set[int] | None = None,
     not_headings: dict[int, list] | None = None,
+    not_titles: dict[int, list] | None = None,
 ) -> list[Section]:
     """Walk lines in reading order and cut them into sections.
 
@@ -155,6 +175,25 @@ def build(
     heading candidates were header cells, including fragments a narrow column
     had hyphenated ("Estima", "Transactio"), and each opened an empty section.
 
+    `not_titles` is regions where an *unnumbered* line may not open a section —
+    the figures. A diagram's box labels are set short, bold, capitalised and
+    unpunctuated, which `_TITLE_LIKE` accepts, and they sit under a numbered
+    heading, so each one opened a subsection. On a two-page design, seven boxes
+    of an architecture sketch — "HR System", "Nightly ETL Job", "BI Dashboard"
+    twice — became seven sections holding an arrow apiece, while "3 Architecture
+    sketch" itself came out empty. Three of those seven were then reported to
+    the customer as parts of the design no standard governs, quoting a heading
+    and an arrow as proof.
+
+    Numbered headings survive a figure region, unlike a table region. The
+    regions are the shapes a drawing is made of (`figures.label_regions`), and
+    on the designs this was built against no numbered heading falls in one — so
+    this is a guard rather than something those documents need. It is worth its
+    line because the cost of the two mistakes is not symmetrical: a box label
+    promoted to a heading invents a section, while a heading demoted to a label
+    loses a real one, and a section number is the one thing a box label never
+    carries.
+
     A line in a region is not dropped. It stays in whichever section it falls
     under, as content, exactly as before.
     """
@@ -166,10 +205,7 @@ def build(
     # one blueprint, the labels of embedded spreadsheets, at 18pt regular, each
     # of which opened a section and pulled the server inventory under it.
     candidates = [
-        None
-        if line.page in skip_pages or _in_region(line, not_headings)
-        else _classify(line, profile)
-        for line in lines
+        _candidate(line, profile, skip_pages, not_headings, not_titles) for line in lines
     ]
     numbered = [
         lines[i]
