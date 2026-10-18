@@ -30,10 +30,12 @@ import {
   orderEvidence,
   withTables,
   tablesForEvidence,
+  tablesForStatements,
   citedRow,
 } from "../src/lib/ingest/evidence-tables";
 import { orderByCause, readRootCauses, causeByFinding, workItems } from "../src/lib/ingest/root-causes";
 import { requirementsForClauses } from "../src/lib/ingest/standards";
+import { rowCells } from "../src/lib/ingest/table-text";
 import {
   readEvidence,
   withoutExtractIds,
@@ -201,19 +203,34 @@ for (let i = 1; i < grouped.length; i += 1) {
 }
 ok("severity order survives grouping", monotonic);
 
-// Each cause occupies one run of rows, not several.
+// Each cause occupies one run of rows *within a verdict* — which is the rule
+// `orderByCause` actually promises.
+//
+// Not one run overall. A cause can hold a breach and a partial at once, and
+// gathering those two into one block would have to lift the partial up among
+// the contradictions or push the breach down among them; severity order is the
+// one thing grouping is not allowed to spend. On the run this was written
+// against, three of five causes span two verdicts and so appear twice, each
+// time as one block — "Use of synchronous point-to-point integration in RCLP"
+// over two contradictions, and again over one partial. The panel above the list
+// still names each cause once, with all of its clauses, so the count a reviewer
+// plans against is told whole in one place.
 const runsPerCause = new Map<string, number>();
 let previous: string | null = null;
 for (const f of grouped) {
   const label = byFinding.get(f.id)?.label ?? null;
-  if (label && label !== previous) runsPerCause.set(label, (runsPerCause.get(label) ?? 0) + 1);
-  previous = label;
+  // Keyed by verdict too, so a cause continuing into the next verdict band is
+  // a new block rather than a second piece of the same one.
+  const key = label === null ? null : `${f.verdict}\u0000${label}`;
+  if (key && key !== previous) runsPerCause.set(key, (runsPerCause.get(key) ?? 0) + 1);
+  previous = key;
 }
 const split = [...runsPerCause.entries()].filter(([, n]) => n > 1);
+const causeLabels = new Set([...runsPerCause.keys()].map((k) => k.split("\u0000")[1]!));
 ok(
-  `each cause reads as one block (${runsPerCause.size} causes)`,
+  `each cause reads as one block per verdict (${causeLabels.size} causes, ${runsPerCause.size} blocks)`,
   split.length === 0,
-  split.map(([l, n]) => `${l} in ${n} pieces`).join("; "),
+  split.map(([k, n]) => `${k.split("\u0000")[1]} in ${n} pieces`).join("; "),
 );
 
 // What the reader was being asked to do before, and is not now.
@@ -363,6 +380,138 @@ if (shortened.length > 0) {
       `removed from ${shortened.length} findings on this run)`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// 7. A quoted table row is read under its own headings.
+// ---------------------------------------------------------------------------
+//
+// The rule that matters here is the mapping, not the count. A stored row is an
+// object keyed by heading whose key order is not the column order, so labelling
+// cells by position puts a design's words under the wrong heading — and a
+// mislabelled cell in a compliance record is worse than an unlabelled one.
+ok(
+  "cells are matched to headings by name, not by position",
+  JSON.stringify(
+    rowCells(
+      ["Area", "Decision / current choice", "Rationale or issue"],
+      {
+        Area: "Source access",
+        "Rationale or issue": "Against no-direct-database-coupling policy",
+        "Decision / current choice": "BI dashboard directly queries Timekeeping DB",
+      },
+    ),
+  ) ===
+    JSON.stringify([
+      { column: "Area", value: "Source access" },
+      { column: "Decision / current choice", value: "BI dashboard directly queries Timekeeping DB" },
+      { column: "Rationale or issue", value: "Against no-direct-database-coupling policy" },
+    ]),
+);
+ok(
+  "an empty cell does not shift the ones after it",
+  JSON.stringify(rowCells(["A", "B", "C"], { A: "one", B: null, C: "three" })) ===
+    JSON.stringify([
+      { column: "A", value: "one" },
+      { column: "C", value: "three" },
+    ]),
+);
+ok(
+  "a cell the headings do not name is kept, at the end",
+  rowCells(["A"], { A: "one", Spare: "two" }).at(-1)?.value === "two",
+);
+
+let headed = 0;
+let quotedProse = 0;
+for (const f of breaches) {
+  const ev = orderEvidence(withTables(readEvidence(f.evidence), tables), withoutExtractIds(f.rationale));
+  const item = ev.find((e) => e.breachQuote);
+  if (!item) continue;
+  const marked = item.table?.rows.length === 1 ? item.table.rows[0]! : null;
+  const row =
+    marked === null || !Array.isArray(item.table?.table.rows)
+      ? null
+      : (item.table!.table.rows as unknown[])[marked];
+  const cells = row === undefined || row === null ? null : rowCells(item.table!.table.columns, row);
+  if (cells && cells.length > 1 && cells.every((c) => item.breachQuote!.includes(c.value))) {
+    headed += 1;
+    // Every heading shown must be one of that table's own.
+    ok(
+      `${f.clauseTitle.slice(0, 40)}: every heading belongs to the quoted table`,
+      cells.every((c) => item.table!.table.columns.includes(c.column)),
+    );
+  } else {
+    quotedProse += 1;
+  }
+}
+ok(`breach quotes read under their headings (${headed}) or as prose (${quotedProse})`, headed > 0);
+
+// ---------------------------------------------------------------------------
+// 8. No pipe-flattened table text reaches the reader where a table can be drawn.
+// ---------------------------------------------------------------------------
+//
+// A parser flattens a table into lines of "cell | cell | cell" so it can be
+// embedded and retrieved, and the first line of that grid is the column
+// headers. Quote one row out of it — which is what a breach is — and the
+// headers are gone, leaving three values and nothing saying which is which. A
+// customer reading their own report asked exactly that about the line
+// "Source access | BI dashboard directly queries Timekeeping DB | Against
+// no-direct-database-coupling policy".
+//
+// The quote itself cannot be rewritten: it is checked against the design word
+// for word, and that check is the only reason the quote can be trusted. So the
+// table is put back around it. This asserts there is nothing left on either
+// half of the comparison that could be drawn and was not.
+const PIPED = /\s\|\s/;
+
+const statementTables = await tablesForStatements(
+  ordered.map((f) => ({ id: f.clauseId, statement: f.clauseStatement, ref: f.clauseRef })),
+);
+const pipedStatements = ordered.filter((f) => PIPED.test(f.clauseStatement));
+const statementsLeft = pipedStatements.filter((f) => !statementTables.has(f.clauseId));
+ok(
+  `every clause written as a grid is drawn as one (${pipedStatements.length - statementsLeft.length}/${pipedStatements.length})`,
+  statementsLeft.length === 0,
+  statementsLeft.map((f) => f.clauseRef.slice(0, 40)).join("; "),
+);
+ok(
+  "a clause whose statement is prose keeps its paragraph",
+  ordered
+    .filter((f) => !PIPED.test(f.clauseStatement))
+    .every((f) => !statementTables.has(f.clauseId)),
+);
+
+let pipedQuotes = 0;
+let pipedQuotesShown = 0;
+let pipedExcerpts = 0;
+for (const f of breaches) {
+  const ev = orderEvidence(withTables(readEvidence(f.evidence), tables), withoutExtractIds(f.rationale));
+  for (const e of ev) {
+    if (e.breachQuote && PIPED.test(e.breachQuote)) {
+      pipedQuotes += 1;
+      const marked = e.table?.rows.length === 1 ? e.table.rows[0]! : null;
+      const row =
+        marked === null || !Array.isArray(e.table?.table.rows)
+          ? null
+          : (e.table!.table.rows as unknown[])[marked];
+      const cells = row === undefined || row === null ? null : rowCells(e.table!.table.columns, row);
+      // Shown under headings, so the pipes are never what the reader sees.
+      if (cells && cells.length > 1 && cells.every((c) => e.breachQuote!.includes(c.value))) {
+        pipedQuotesShown += 1;
+      }
+    }
+    if (!e.table && !e.figureId && PIPED.test(readableExcerpt(e.excerpt, e.headingPath))) {
+      pipedExcerpts += 1;
+    }
+  }
+}
+ok(
+  `every piped breach quote is read under its headings (${pipedQuotesShown}/${pipedQuotes})`,
+  pipedQuotesShown === pipedQuotes,
+);
+console.log(
+  `       (${pipedExcerpts} evidence excerpt(s) still carry pipes — no table could be ` +
+    `resolved for them, so the passage stands as the text it is)`,
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 await prisma.$disconnect();

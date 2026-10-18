@@ -20,6 +20,7 @@ import {
 import {
   orderEvidence,
   tablesForEvidence,
+  tablesForStatements,
   tablesForGaps,
   withTables,
 } from "@/lib/ingest/evidence-tables";
@@ -189,6 +190,11 @@ export default async function DocumentPage({
   // not carry. One keyed query for the page. See requirementsForClauses.
   const clauseRequirements = await requirementsForClauses(findings.map((f) => f.clauseId));
 
+  // And the grid a clause was written as, where it was written as one.
+  const clauseTables = await tablesForStatements(
+    findings.map((f) => ({ id: f.clauseId, statement: f.clauseStatement, ref: f.clauseRef })),
+  );
+
   const findingViews: FindingView[] = findings.map((f) => {
     // Cleaned once: the reader sees this text, and so does the evidence
     // ordering that works out which designs it names.
@@ -200,6 +206,7 @@ export default async function DocumentPage({
       clauseTitle: f.clauseTitle,
       clauseStatement: f.clauseStatement,
       clauseRequirements: clauseRequirements.get(f.clauseId) ?? [],
+      clauseTable: clauseTables.get(f.clauseId) ?? null,
       verdict: f.verdict,
       confidence: f.confidence,
       rationale,

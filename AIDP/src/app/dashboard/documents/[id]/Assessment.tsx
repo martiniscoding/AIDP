@@ -78,6 +78,15 @@ export type FindingView = {
    * requirementsForClauses.
    */
   clauseRequirements: string[];
+  /**
+   * The table the clause's statement was flattened out of, where it was one.
+   *
+   * Some standards write a clause as a small grid, and the statement stored on
+   * the finding is that grid run into a line. Drawn rather than printed — see
+   * tablesForStatements. Null for a clause that states its rule as prose,
+   * which is most of them.
+   */
+  clauseTable: TableView | null;
   verdict: string;
   confidence: number;
   rationale: string;

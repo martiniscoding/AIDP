@@ -22,6 +22,8 @@ import {
 } from "@/lib/ingest/verdicts";
 import { EFFECT_META, SCOPE_META, type DecisionScope } from "@/lib/ingest/decision-effects";
 import { clauseAddress, rationaleSections } from "@/lib/ingest/verdicts";
+import { rowCells } from "@/lib/ingest/table-text";
+import type { TableView } from "@/lib/ingest/documents";
 import type { EvidenceView } from "@/lib/ingest/evidence-tables";
 import { TableFigure } from "@/components/ui/TableFigure";
 import { makeStandard, reviewFinding } from "../actions";
@@ -49,13 +51,49 @@ import { SeverityTag } from "./SeverityTag";
  * and twice put a design's own remediation plan in its mouth as the breach.
  * Where no quote was verified the comparison is not drawn at all.
  */
-function designVoices(evidence: EvidenceView[]): { title: string; text: string }[] {
-  const out: { title: string; text: string }[] = [];
+type DesignVoice = {
+  title: string;
+  text: string;
+  /**
+   * The quote as the row it is, where it is one and we hold the table.
+   *
+   * A verified quote is often a table row, and the parser hands it over
+   * flattened: "Source access | BI dashboard directly queries Timekeeping DB |
+   * Against no-direct-database-coupling policy". Those pipes are column
+   * boundaries and nothing says so, so the reader gets three fragments and no
+   * way to tell an area of the design from the choice made in it from the
+   * design's own note on that choice. Given the headings it reads as what it
+   * is: under Source access the design chose a dashboard that queries the
+   * timekeeping database directly, and the design itself records that this is
+   * against the policy. Null when the quote is prose, or when the row could
+   * not be identified outright — see `breachRow`.
+   */
+  cells: { column: string; value: string }[] | null;
+};
+
+function designVoices(evidence: EvidenceView[]): DesignVoice[] {
+  const out: DesignVoice[] = [];
   const seen = new Set<string>();
   for (const item of evidence) {
     if (!item.breachQuote || seen.has(item.documentId)) continue;
     seen.add(item.documentId);
-    out.push({ title: item.documentTitle, text: item.breachQuote });
+    // One row, named outright, and the quote is made of it. Two marked rows
+    // cannot say which one the quote was, and a quote that is not the row is
+    // not a row at all.
+    const marked = item.table?.rows.length === 1 ? item.table.rows[0]! : null;
+    const row =
+      marked === null || !Array.isArray(item.table?.table.rows)
+        ? null
+        : (item.table!.table.rows as unknown[])[marked];
+    const cells = row === undefined || row === null
+      ? null
+      : rowCells(item.table!.table.columns, row);
+    const quoted = cells?.every((cell) => item.breachQuote!.includes(cell.value)) ?? false;
+    out.push({
+      title: item.documentTitle,
+      text: item.breachQuote,
+      cells: quoted && cells && cells.length > 1 ? cells : null,
+    });
   }
   return out;
 }
@@ -89,6 +127,56 @@ const CLAUSE_CLAMP = 320;
  * Nothing renders when a clause states its rule in one sentence and has none,
  * which is most of them.
  */
+/**
+ * The clause's statement: drawn as the grid it is, or printed as the prose it is.
+ *
+ * Some standards write a clause as a small table — a row each for its focus
+ * area, its rationale, its guidelines and the data principles behind it — and
+ * the statement a finding carries is that table flattened. Four clauses in this
+ * workspace arrive that way, the longest at 2,000 characters, and 87 findings
+ * are judged against one of them. Folding that behind "Show the whole clause"
+ * only hid it; drawing it gives the reader the four rows the standard actually
+ * wrote, with the long one plainly the long one.
+ *
+ * The fold stays for a genuinely long paragraph, which no amount of structure
+ * can help.
+ */
+function ClauseStatement({
+  statement,
+  table,
+  open,
+  onToggle,
+  className,
+}: {
+  statement: string;
+  table: TableView | null;
+  open: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  if (table) {
+    return (
+      <div className="mt-1">
+        <TableFigure table={table} bare caption="The clause as the standard sets it out" />
+      </div>
+    );
+  }
+  return (
+    <>
+      <p className={cn(className, !open && "line-clamp-3")}>{statement}</p>
+      {statement.length > CLAUSE_CLAMP && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-0.5 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/88"
+        >
+          {open ? "Show less of the clause" : "Show the whole clause"}
+        </button>
+      )}
+    </>
+  );
+}
+
 function Requirements({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return (
@@ -452,53 +540,33 @@ export function FindingModal({
             <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
               The standard requires
             </p>
-            <p
-              className={cn(
-                "max-w-[68ch] text-[13px] leading-relaxed text-ink/82",
-                // One clause in this workspace states its rule as 1,971
-                // characters of bullets, and it arrives above the evidence. The
-                // reader needs the one line that was breached, not the chapter.
-                !clauseOpen && "line-clamp-3",
-              )}
-            >
-              {finding.clauseStatement}
-            </p>
-            {finding.clauseStatement.length > CLAUSE_CLAMP && (
-              <button
-                type="button"
-                onClick={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
-                className="mt-0.5 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/88"
-              >
-                {clauseOpen ? "Show less of the clause" : "Show the whole clause"}
-              </button>
-            )}
+            <ClauseStatement
+              statement={finding.clauseStatement}
+              table={finding.clauseTable}
+              open={clauseOpen}
+              onToggle={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
+              className="max-w-[68ch] text-[13px] leading-relaxed text-ink/82"
+            />
             <Requirements items={finding.clauseRequirements} />
           </div>
         )}
 
         {finding.clauseStatement && !facing && (
-          <div className={cn(PROSE_MEASURE, "mb-3")}>
-            <p
-              className={cn(
-                "text-[13px] leading-relaxed text-ink/72",
-                // Median 25 words, but the longest clause in this workspace is
-                // 293 — a wall that arrives before the evidence and is where a
-                // reviewer stops reading. Only the long ones are folded.
-                !clauseOpen && "line-clamp-3",
-              )}
-            >
-              <span className="text-ink/62">Requires: </span>
-              {finding.clauseStatement}
-            </p>
-            {finding.clauseStatement.length > CLAUSE_CLAMP && (
-              <button
-                type="button"
-                onClick={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
-                className="mt-0.5 text-[11.5px] text-ink/62 underline decoration-ink/25 underline-offset-2 transition-colors hover:text-ink/88"
-              >
-                {clauseOpen ? "Show less of the clause" : "Show the whole clause"}
-              </button>
+          <div className={cn(!finding.clauseTable && PROSE_MEASURE, "mb-3")}>
+            {!finding.clauseTable && (
+              <p className="text-[11.5px] text-ink/62">Requires</p>
             )}
+            {/* Median 25 words, but the longest clause in this workspace is
+                2,000 — a wall that arrives before the evidence and is where a
+                reviewer stops reading. A clause written as a grid is drawn as
+                one; only a long paragraph is folded. */}
+            <ClauseStatement
+              statement={finding.clauseStatement}
+              table={finding.clauseTable}
+              open={clauseOpen}
+              onToggle={() => setClauseOpenFor(clauseOpen ? null : finding.id)}
+              className="text-[13px] leading-relaxed text-ink/72"
+            />
             <Requirements items={finding.clauseRequirements} />
           </div>
         )}
@@ -544,7 +612,7 @@ export function FindingModal({
                       <p className="mb-1 font-display text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink/62">
                         {voices.length > 1 ? "What the designs say" : "What the design says"}
                       </p>
-                      <ul className="space-y-1.5">
+                      <ul className="space-y-2">
                         {voices.map((voice) => (
                           <li key={voice.title || voice.text}>
                             {voices.length > 1 && voice.title && (
@@ -552,9 +620,28 @@ export function FindingModal({
                                 {voice.title}
                               </span>
                             )}
-                            <span className="text-[13px] leading-relaxed text-ink/82">
-                              {voice.text}
-                            </span>
+                            {/* A quoted table row under its own headings, so
+                                the pipes stop being the only thing separating
+                                an area of the design from the choice made in
+                                it. Prose is quoted as prose. */}
+                            {voice.cells ? (
+                              <dl className="mt-1 grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,10rem)_1fr]">
+                                {voice.cells.map((cell) => (
+                                  <div key={cell.column} className="sm:col-span-2 sm:grid sm:grid-cols-subgrid">
+                                    <dt className="text-[11.5px] leading-relaxed text-ink/58">
+                                      {cell.column}
+                                    </dt>
+                                    <dd className="text-[13px] leading-relaxed text-ink/88">
+                                      {cell.value}
+                                    </dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            ) : (
+                              <span className="text-[13px] leading-relaxed text-ink/82">
+                                {voice.text}
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>

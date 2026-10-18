@@ -575,3 +575,62 @@ export function orderEvidence(evidence: EvidenceView[], rationale: string): Evid
     .sort((a, b) => a.band - b.band || a.index - b.index)
     .map((entry) => entry.item);
 }
+
+/**
+ * The table a clause's own statement was flattened out of, by clause id.
+ *
+ * The same fault as the evidence, on the other half of the comparison. Four of
+ * this workspace's clauses are a two-column table in the standard — "DMLC
+ * PHASE | Usage and Sharing", with a row each for FOCUS AREA, RATIONALE,
+ * GUIDELINES and DATA PRINCIPLES — and the statement stored on a finding is
+ * that whole grid run into one string. It reaches "The standard requires" as
+ * 1,971 characters opening "DMLC PHASE: FOCUS AREA | Usage and Sharing:
+ * Governed Data Access and Integration DMLC PHASE: GUIDELINES | …", and 87
+ * findings are judged against one of them.
+ *
+ * It was tempting to call that a parsing problem and send it back for a
+ * re-parse. It is not: the table is stored, the clause names its section, and
+ * the four rows are exactly the structure the reader is being asked to
+ * reconstruct in their head. So it is drawn, like the evidence is.
+ *
+ * `quoteIsTable` decides, and must match exactly one of the section's tables —
+ * a clause whose statement is prose that merely shares vocabulary with a table
+ * nearby keeps its paragraph. The clause reference is passed as the address so
+ * the heading words are not counted as a match against the cells.
+ */
+export async function tablesForStatements(
+  clauses: { id: string; statement: string; ref: string }[],
+): Promise<Map<string, TableView>> {
+  const out = new Map<string, TableView>();
+  // Only a statement that still carries the flattening is worth a lookup.
+  const wanted = clauses.filter((c) => c.statement.includes(" | "));
+  if (wanted.length === 0) return out;
+
+  const rows = await prisma.clause.findMany({
+    where: { id: { in: [...new Set(wanted.map((c) => c.id))] } },
+    select: { id: true, sectionId: true },
+  });
+  const sectionOf = new Map(rows.map((r) => [r.id, r.sectionId]));
+  const sectionIds = [...new Set(rows.map((r) => r.sectionId))];
+  if (sectionIds.length === 0) return out;
+
+  const blocks = await prisma.tableBlock.findMany({
+    where: { sectionId: { in: sectionIds } },
+    select: { ...TABLE_SELECT, sectionId: true },
+    orderBy: { ordinal: "asc" },
+  });
+  const bySection = new Map<string, TableView[]>();
+  for (const { sectionId, ...table } of blocks) {
+    bySection.set(sectionId, [...(bySection.get(sectionId) ?? []), table]);
+  }
+
+  for (const clause of wanted) {
+    const sectionId = sectionOf.get(clause.id);
+    const candidates = sectionId ? (bySection.get(sectionId) ?? []) : [];
+    const made = candidates.filter((table) =>
+      quoteIsTable(clause.statement, [table], clause.ref),
+    );
+    if (made.length === 1) out.set(clause.id, made[0]!);
+  }
+  return out;
+}
