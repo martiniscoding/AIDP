@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, Check, Gavel, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Ban, Check, Gavel, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   OUTCOMES,
@@ -23,15 +23,30 @@ export type OutcomeView = {
 
 const TONE: Record<string, string> = {
   good: "border-ok-line bg-ok-tint text-ok",
+  bad: "border-danger-line bg-danger-tint text-danger",
   warn: "border-warn-line bg-warn-tint text-warn",
   escalate: "border-royal-mid/40 bg-royal/8 text-royal",
 };
 
 const ICON = {
   approved: Check,
+  rejected: Ban,
   revise: RefreshCw,
   escalated: ArrowUpRight,
 } as const;
+
+/**
+ * What the reason box asks for, which is a different question each time.
+ *
+ * A map rather than the ternary chain this was: four outcomes made it three
+ * deep, and the next one would have made it four.
+ */
+const PROMPT: Record<Outcome, string> = {
+  approved: "Anything worth recording alongside the approval.",
+  rejected: "Why is this design refused, and which findings carry the refusal?",
+  revise: "What has to change before this is resubmitted?",
+  escalated: "What is the board being asked to decide?",
+};
 
 /**
  * The end of the review.
@@ -189,6 +204,16 @@ export function Decide({
         <div className="mt-3.5 rounded-xl border border-line bg-canvas-sunk p-4">
           <p className="mb-3 text-[12.5px] text-ink/70">{meta.commitment}</p>
 
+          {/* Said before the attempt rather than after it. The refusal itself
+              lives in lib/ingest/outcomes.ts, where the report is in reach. */}
+          {meta.requiresFinding && (
+            <p className="mb-3 text-[12px] leading-relaxed text-ink/62">
+              A rejection has to rest on a breach this report cited — a contradiction, or a
+              requirement met only in part, with evidence behind it. Where the findings do not
+              carry the refusal, the case for it belongs to the board.
+            </p>
+          )}
+
           <label className="block">
             <span className="mb-1.5 block text-[11.5px] text-ink/64">
               {meta.requiresNote ? "Reason (required)" : "Reason (optional)"}
@@ -197,13 +222,7 @@ export function Decide({
               value={note}
               onChange={(event) => setNote(event.target.value)}
               rows={3}
-              placeholder={
-                chosen === "revise"
-                  ? "What has to change before this is resubmitted?"
-                  : chosen === "escalated"
-                    ? "What is the board being asked to decide?"
-                    : "Anything worth recording alongside the approval."
-              }
+              placeholder={PROMPT[chosen]}
               className="w-full resize-y rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-ink/88 placeholder:text-ink/58 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-royal-mid"
             />
           </label>

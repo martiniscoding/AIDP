@@ -824,6 +824,7 @@ export async function recordOutcome(
 
     const said = {
       approved: "Approved. The decision and the report behind it are on record.",
+      rejected: "Rejected. The findings you cited are the record of why.",
       revise: "Sent back for revision.",
       escalated: "Escalated to the architecture review board.",
     } as const;

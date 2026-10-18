@@ -1415,10 +1415,16 @@ model SubmissionOutcome {
   /// The project signed off, when the run was over all of its designs.
   projectId  String?
 
-  // "approved" | "revise" | "escalated"
+  // "approved" | "rejected" | "revise" | "escalated"
+  //
+  // A string rather than an enum so the vocabulary can grow without a
+  // migration, which is what adding "rejected" cost. `toView` in
+  // src/lib/ingest/outcomes.ts drops a word it no longer recognises rather
+  // than coercing it, so an old row can never read as a decision nobody took.
   decision String
-  /// Why. Required for revise and escalated — an instruction with no stated
-  /// basis is not an instruction, and a board asked to rule needs the question.
+  /// Why. Required for rejected, revise and escalated — a refusal its author
+  /// cannot answer is a dead end, an instruction with no stated basis is not an
+  /// instruction, and a board asked to rule needs the question.
   note     String @default("")
 
   /// The report as it stood when this was decided: verdict counts, how many

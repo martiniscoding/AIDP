@@ -109,6 +109,84 @@ async function snapshotOf(runId: string): Promise<OutcomeSnapshot> {
 export class OutcomeRefused extends Error {}
 
 /**
+ * The design in this run that the person deciding submitted themselves.
+ *
+ * Separation of duties, and the brief admits no exception to it: a requestor
+ * never rules on their own submission, "even if they also hold an architect
+ * role elsewhere in the organisation". So this is deliberately *not* a role
+ * check and does not belong beside the ones in lib/access/roles.ts — an
+ * administrator is as disqualified as anyone else here, because the conflict is
+ * with the work rather than with the permission.
+ *
+ * A project run is judged against every design in it, so having submitted any
+ * one of them is enough: the report the decision would rest on is in part a
+ * report on their own work.
+ *
+ * The title is returned rather than a boolean so the refusal can name the
+ * conflict, which across a project of nine designs is the only version of the
+ * message anyone can act on.
+ *
+ * A null `uploadedById` cannot match a real user id, so a document from before
+ * that column existed — or one whose author's account has since been deleted —
+ * disqualifies nobody. That is the right direction to fail: the alternative is
+ * a submission that no one in the organisation is permitted to decide.
+ */
+async function ownSubmission(
+  userId: string,
+  documentId: string | null,
+  designIds: string[],
+): Promise<string | null> {
+  // Whichever the run was over. A single-design run carries its document; a
+  // project run carries the ids it opened with, which is also the set the
+  // worker judged — see AssessmentRun.designIds.
+  const ids = documentId ? [documentId] : designIds;
+  if (ids.length === 0) return null;
+  const own = await prisma.document.findFirst({
+    where: { id: { in: ids }, uploadedById: userId },
+    select: { title: true },
+  });
+  return own?.title ?? null;
+}
+
+/**
+ * How many findings in this report a refusal could be hung on.
+ *
+ * A breach the engine was able to quote: the design contradicting the standard,
+ * or meeting it only in part, with evidence attached. `absent` is not one of
+ * them, for the same reason it is not in the report at all — a clause the
+ * design is silent on is a question for its author rather than a quotable
+ * breach — and a verdict carrying an empty evidence array is one the report
+ * itself downgrades.
+ *
+ * Counted rather than listed: the caller only needs to know whether the report
+ * gives a rejection anything to stand on.
+ */
+async function citedBreaches(runId: string): Promise<number> {
+  const findings = await prisma.finding.findMany({
+    where: { runId, verdict: { in: ["contradicts", "partial"] } },
+    select: { evidence: true },
+  });
+  return findings.filter(
+    (finding) => Array.isArray(finding.evidence) && finding.evidence.length > 0,
+  ).length;
+}
+
+/**
+ * Why a missing reason is refused, in the terms of the decision being taken.
+ *
+ * One message per outcome rather than one generic line, because the thing the
+ * reviewer has left out is different each time and a reviewer who is told
+ * precisely what is missing writes it.
+ */
+const WITHOUT_A_REASON: Partial<Record<Outcome, string>> = {
+  rejected:
+    "Say why this design is refused. A rejection its author cannot answer is a dead end rather than a decision.",
+  revise:
+    "Say what has to change. A revision request with no stated basis is not an instruction.",
+  escalated: "Say why this is going to the board. A board asked to rule needs the question.",
+};
+
+/**
  * Record a decision on a completed run.
  *
  * Deliberately does *not* block an approval that leaves findings unreviewed or
@@ -118,6 +196,21 @@ export class OutcomeRefused extends Error {}
  * and a tool that refuses their decision would simply be worked around. What it
  * does instead is record exactly what was outstanding at the moment they
  * decided, so the choice is visible rather than prevented.
+ *
+ * The three things it does refuse are not judgements:
+ *
+ *   - an unfinished run, which has nothing to decide on yet;
+ *   - a decision by the person who submitted the design, which is a question of
+ *     *who* may rule rather than of what the ruling should be;
+ *   - a rejection with no stated reason or no cited breach, which is a refusal
+ *     the author cannot answer and an audit cannot defend.
+ *
+ * None of them second-guesses the verdict. They keep the record answerable,
+ * which is the whole reason the record exists.
+ *
+ * All of it lives here rather than in the Server Action that calls it: an
+ * action is a POST endpoint reachable by anyone who can send the request, so
+ * a check that sits in front of a button is not a check at all.
  */
 export async function record(
   userId: string,
@@ -133,11 +226,20 @@ export async function record(
       organisationId: true,
       documentId: true,
       projectId: true,
+      designIds: true,
       state: true,
     },
   });
   if (!run) throw new OutcomeRefused("That assessment no longer exists.");
   await requireMembership(userId, run.organisationId);
+
+  const own = await ownSubmission(userId, run.documentId, run.designIds);
+  if (own) {
+    throw new OutcomeRefused(
+      `You submitted “${own}”, so this decision is not yours to record. ` +
+        "A colleague has to take it — nobody rules on their own submission.",
+    );
+  }
 
   if (run.state !== "complete") {
     throw new OutcomeRefused(
@@ -148,9 +250,16 @@ export async function record(
   const trimmed = note.trim();
   if (OUTCOME_META[decision].requiresNote && !trimmed) {
     throw new OutcomeRefused(
-      decision === "revise"
-        ? "Say what has to change. A revision request with no stated basis is not an instruction."
-        : "Say why this is going to the board. A board asked to rule needs the question.",
+      WITHOUT_A_REASON[decision] ??
+        "Say why. A decision with no stated basis is not one a reader can act on.",
+    );
+  }
+
+  if (OUTCOME_META[decision].requiresFinding && (await citedBreaches(run.id)) === 0) {
+    throw new OutcomeRefused(
+      "This report cites no breach to reject the design on. Where the findings do not " +
+        "carry the refusal, the case for it belongs to the board — escalate instead, and " +
+        "say what you are asking them to rule on.",
     );
   }
 
