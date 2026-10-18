@@ -234,6 +234,63 @@ export function severityOf(
   return "check";
 }
 
+/**
+ * The same finding on the brief's four-tier scale, which is not this engine's.
+ *
+ * FR-03 requires every finding to carry Critical / High / Medium / Low. This
+ * engine grades on three, and the third is the whole reason: `check` says the
+ * document does not settle how serious this is and a person has to look. Four
+ * tiers have no slot for that, and folding it into "Low" would turn "nobody has
+ * established the impact" into "the impact is small" — the one reading the
+ * evidence does not support, and the exact mistake the three-tier scale was
+ * introduced to stop.
+ *
+ * So both are kept and this is a translation, not a replacement. `SEVERITIES`
+ * stays the engine's answer and stays what the reviewer works from; this is
+ * what the report says to a reader who grades on four, with `settled` carrying
+ * the part the fourth tier cannot say by itself.
+ *
+ * Derived from `severityOf` rather than read off the verdict a second time,
+ * deliberately: two independent readings of the same two facts will eventually
+ * disagree, and a finding labelled "Moderate" in one place and "Critical" in
+ * another is worse than either label on its own.
+ */
+export const BRIEF_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+
+export type BriefSeverity = (typeof BRIEF_SEVERITIES)[number];
+
+export const BRIEF_SEVERITY_LABEL: Record<BriefSeverity, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+export function briefSeverityOf(
+  verdict: string,
+  obligation: Obligation = "unstated",
+): { tier: BriefSeverity; settled: boolean } | null {
+  const severity = severityOf(verdict, obligation);
+  // Nothing to act on, so nothing to grade — same answer, same reason.
+  if (!severity) return null;
+
+  if (severity === "critical") return { tier: "critical", settled: true };
+
+  // The one this scale cannot express. Placed at the bottom tier because an
+  // unquantified finding has to sit somewhere in a ranked list, and flagged
+  // unsettled so a reader does not take the placement for a measurement.
+  if (severity === "check") return { tier: "low", settled: false };
+
+  // `moderate` covers two different things, and four tiers can tell them apart.
+  // A shortfall is the design falling short of a clause it engaged: meeting a
+  // requirement only in part, or stating something the standard advises
+  // against. The rest of what lands here is a question rather than a
+  // shortfall — an advisory clause the design never engages, or a mandatory one
+  // the document leaves unevidenced, which is a matter for the author.
+  const shortfall = verdict === "partial" || verdict === "contradicts";
+  return { tier: shortfall ? "high" : "medium", settled: true };
+}
+
 export type VerdictCounts = Record<Verdict, number>;
 
 /**

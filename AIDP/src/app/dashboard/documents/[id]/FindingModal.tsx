@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
+  BRIEF_SEVERITY_LABEL,
   OBLIGATION_META,
   SEVERITY_META,
   VERDICTS,
   VERDICT_META,
+  briefSeverityOf,
   severityOf,
   type Verdict,
 } from "@/lib/ingest/verdicts";
@@ -322,6 +324,10 @@ export function FindingModal({
 
   const meta = VERDICT_META[finding.verdict as Verdict] ?? VERDICT_META.needs_review;
   const severity = severityOf(finding.verdict, finding.obligation);
+  // The same finding on the four-tier scale the governance process grades on.
+  // Shown here rather than on the row: the row is scanned, and a second scale
+  // beside the first would be two words competing where one has to win.
+  const brief = briefSeverityOf(finding.verdict, finding.obligation);
   const hasQuotedText = finding.evidence.some((item) => item.sourceKind === "quote");
   const hasExtractedText = finding.evidence.some(
     (item) => item.sourceKind !== "quote" && item.sourceKind !== "figure",
@@ -750,6 +756,12 @@ export function FindingModal({
             internal and is not presented as a probability to reviewers. */}
         <p className={cn(PROSE_MEASURE, "mb-3 text-[11.5px] text-ink/58")}>
           {severity ? `${SEVERITY_META[severity].blurb} ` : ""}
+          {brief &&
+            (brief.settled
+              ? `On the four-tier scale: ${BRIEF_SEVERITY_LABEL[brief.tier]}. `
+              : `On the four-tier scale this reports as ${BRIEF_SEVERITY_LABEL[brief.tier]}, which is ` +
+                "where an unsettled severity has to sit in a ranked list rather than a judgement that " +
+                "the impact is small. ")}
           Evidence basis: {evidenceBasis}.
         </p>
 
