@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, FolderOpen } from "lucide-react";
+import { ArrowRight, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ProjectSummary } from "@/lib/ingest/projects";
 
@@ -37,12 +37,6 @@ export function ProjectRow({ project }: { project: ProjectSummary }) {
             {archived && (
               <span className="rounded-full border border-line bg-canvas-sunk px-2 py-0.5 text-[10.5px] text-ink/58">
                 Archived
-              </span>
-            )}
-            {project.open > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-warn-line bg-warn-tint px-2 py-0.5 text-[10.5px] text-warn">
-                <AlertTriangle size={10} />
-                {project.open} to resolve
               </span>
             )}
           </div>

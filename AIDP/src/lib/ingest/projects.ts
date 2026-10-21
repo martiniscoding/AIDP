@@ -38,10 +38,12 @@ export type ProjectSummary = {
   designs: number;
   /** Designs that have finished indexing and can be assessed. */
   ready: number;
+  /** Assessments run on this project — on one design, or on all of them. */
   runs: number;
-  /** Findings that contradict a standard or leave it unaddressed. */
-  open: number;
-  /** Findings nobody has confirmed or overridden yet. */
+  /**
+   * Findings nobody has confirmed or overridden yet, in the assessments that
+   * are still current. See `listProjects` for what counts as current.
+   */
   unreviewed: number;
   lastActivityAt: Date | null;
 };
@@ -85,40 +87,81 @@ export async function listProjects(organisationId: string): Promise<ProjectSumma
           id: true,
           status: true,
           updatedAt: true,
-          _count: { select: { runs: true } },
         },
       },
     },
   });
 
-  // Every finding in the organisation in one query rather than one per
-  // project: the list shows a health number on each row, and a workspace with
-  // twenty projects would otherwise be twenty round trips. Only three small
-  // fields come back, so the row count is the only thing that grows.
-  const findings = await prisma.finding.findMany({
-    where: { run: { organisationId } },
+  /**
+   * Every assessment in the organisation, cheapest fields only.
+   *
+   * The list needs two things from them: how many have been run on each
+   * project, and which of them are *current* — the latest finished run on each
+   * design, plus the latest finished run on the project read as a whole. A
+   * design reassessed ten times has ten runs of findings on record and only the
+   * newest is shown anywhere; counting them all made the row report ten times
+   * the review that was actually outstanding.
+   *
+   * Newest first, so the first run seen in each scope is its current one.
+   */
+  const runs = await prisma.assessmentRun.findMany({
+    where: { organisationId },
+    orderBy: { startedAt: "desc" },
     select: {
-      verdict: true,
-      reviewerState: true,
+      id: true,
+      state: true,
       // A design run reaches its project through the document; a project run
       // names it outright.
-      run: { select: { projectId: true, document: { select: { projectId: true } } } },
+      documentId: true,
+      projectId: true,
+      document: { select: { projectId: true } },
     },
   });
 
-  const health = new Map<string, { open: number; unreviewed: number }>();
-  for (const finding of findings) {
-    const projectId = finding.run.projectId ?? finding.run.document?.projectId ?? null;
+  const counted = new Map<string, number>();
+  // Current run id -> the project it belongs to.
+  const current = new Map<string, string>();
+  const claimed = new Set<string>();
+  for (const run of runs) {
+    const projectId = run.projectId ?? run.document?.projectId ?? null;
     if (!projectId) continue;
-    const entry = health.get(projectId) ?? { open: 0, unreviewed: 0 };
-    // Not "absent": a clause the design is silent on is no longer reported.
-    if (finding.verdict === "contradicts") entry.open += 1;
-    if (finding.reviewerState === "pending" && finding.verdict !== "absent") entry.unreviewed += 1;
-    health.set(projectId, entry);
+    counted.set(projectId, (counted.get(projectId) ?? 0) + 1);
+    // An unfinished or failed run has no report to review, and the one before
+    // it is still what the pages show.
+    if (run.state !== "complete") continue;
+    const scope = run.documentId ?? `project:${projectId}`;
+    if (claimed.has(scope)) continue;
+    claimed.add(scope);
+    current.set(run.id, projectId);
+  }
+
+  // Counted in the database rather than by reading the findings back: the rows
+  // were only ever being length-counted, and a workspace's findings run to
+  // thousands. A project assessed as a whole *and* design by design has two
+  // reports waiting on a reviewer, so both are counted — they are separate
+  // reviews on separate pages, not one review counted twice.
+  const unreviewed = new Map<string, number>();
+  if (current.size > 0) {
+    const pending = await prisma.finding.groupBy({
+      by: ["runId"],
+      where: {
+        runId: { in: [...current.keys()] },
+        reviewerState: "pending",
+        // Not "absent": a clause the design is silent on is not reported, so
+        // nobody is being asked to review it. The report itself filters the
+        // same way — see dashboard/documents/[id]/page.tsx.
+        verdict: { not: "absent" },
+      },
+      _count: { _all: true },
+    });
+    for (const row of pending) {
+      const projectId = current.get(row.runId);
+      if (!projectId) continue;
+      unreviewed.set(projectId, (unreviewed.get(projectId) ?? 0) + row._count._all);
+    }
   }
 
   return projects.map((project) => {
-    const entry = health.get(project.id) ?? { open: 0, unreviewed: 0 };
     const touched = project.documents
       .map((document) => document.updatedAt)
       .sort((a, b) => b.getTime() - a.getTime())[0];
@@ -133,9 +176,8 @@ export async function listProjects(organisationId: string): Promise<ProjectSumma
       createdAt: project.createdAt,
       designs: project.documents.length,
       ready: project.documents.filter((document) => document.status === "ready").length,
-      runs: project.documents.reduce((total, document) => total + document._count.runs, 0),
-      open: entry.open,
-      unreviewed: entry.unreviewed,
+      runs: counted.get(project.id) ?? 0,
+      unreviewed: unreviewed.get(project.id) ?? 0,
       lastActivityAt: touched ?? null,
     };
   });
