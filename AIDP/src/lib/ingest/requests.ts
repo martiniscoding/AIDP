@@ -38,11 +38,18 @@ import { canManageStandards } from "@/lib/access/roles";
  * embed — `NEXT_STAGE["embed"]` is None — and a person presses "Assess". The
  * brief requires the opposite: the review runs immediately after intake with no
  * further step. `advanceSubmitted` is that step, and it is reached two ways.
- * The embed worker calls it the moment a document lands `ready`, which is the
- * fast path and makes the assessment start within the second. A timer calls it
- * as well, far less often, because a push that is never delivered — the app
- * redeploying, a network that drops — would otherwise leave a request waiting
- * for a report nobody is coming to write.
+ *
+ * The embed worker calls it the moment a document lands `ready`
+ * (Workers/aidp/notify.py). That is the fast path, it is nearly always the only
+ * one that runs, and it starts the assessment within the second.
+ *
+ * The screens call it too, before they draw. A ping sent while the app was
+ * redeploying is not retried — the worker swallows it on purpose — so without a
+ * second route in, such a request waits in "submitted" for ever with a document
+ * that is ready and no run against it. Sweeping on the two screens somebody
+ * waits on costs an indexed lookup that almost always matches nothing, and puts
+ * the repair where the problem is noticed. See the note on
+ * src/app/dashboard/requests/page.tsx.
  *
  * **A request that cannot proceed says so.** An organisation with no standards
  * indexed, or a document that failed to parse, ends in "failed" with a reason —

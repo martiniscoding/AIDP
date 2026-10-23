@@ -244,6 +244,119 @@ try {
   ok("nor its reference", !forbidden.body.includes(`${TAG} theirs`));
   ok("and the page says there is nothing there", /not.?found|404/i.test(forbidden.body));
 
+  // --- the ping that never arrived ----------------------------------------
+  console.log("\nA request whose ping never arrived");
+  // The failure this guards: the embed worker finished a document, called the
+  // app, and the call was lost — the app was redeploying, or the network
+  // blinked. The worker does not retry it on purpose. Without a second route
+  // in, the request waits in "submitted" for ever with a ready document and no
+  // run, and nothing anywhere says so.
+  //
+  // Nothing is scheduled to catch that: Vercel's Hobby plan allows only a daily
+  // cron, which is not a fallback anybody would want to wait on. So the screens
+  // sweep for themselves, and this is the check that they do.
+  const standard = await prisma.document.create({
+    data: {
+      organisationId: org.id,
+      role: "reference",
+      title: `${TAG} Security Standards`,
+      storageKey: `${TAG}/standard`,
+      byteSize: 1,
+      sha256: `${TAG}-standard`,
+      status: "ready",
+    },
+  });
+  const section = await prisma.documentSection.create({
+    data: {
+      documentId: standard.id,
+      ordinal: 0,
+      numberText: "2.2",
+      title: "Authentication",
+      headingPath: "Security Standards › 2.2 Authentication",
+    },
+  });
+  await prisma.clause.create({
+    data: {
+      sectionId: section.id,
+      ordinal: 0,
+      title: "Authentication",
+      statement: "Administrative access must require multi-factor authentication.",
+    },
+  });
+
+  // A design that finished indexing, and a request that never heard about it.
+  const design = await prisma.document.create({
+    data: {
+      organisationId: org.id,
+      projectId: project.id,
+      role: "assessed",
+      title: "AR-0001 Rendered intake",
+      storageKey: `${TAG}/design.docx`,
+      byteSize: 1,
+      sha256: `${TAG}-design`,
+      status: "ready",
+    },
+  });
+  await prisma.chunk.create({
+    data: {
+      organisationId: org.id,
+      documentId: design.id,
+      sourceKind: "section",
+      ordinal: 0,
+      headingPath: "AR-0001 › 3 Solution Overview",
+      text: "Sessions are held in application memory.",
+      contentHash: `${TAG}-chunk`,
+    },
+  });
+  await prisma.architectureRequest.update({
+    where: { id },
+    data: { state: "submitted", documentId: design.id, runId: null, failureReason: null },
+  });
+
+  const beforeOpening = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id },
+    select: { runId: true },
+  });
+  ok("it is stuck with no run", beforeOpening.runId === null);
+
+  // Opening the list is the repair.
+  await get("/dashboard/requests", cookie);
+  const afterList = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id },
+    select: { runId: true, state: true },
+  });
+  ok("opening the list starts it", afterList.runId !== null, afterList.state);
+  ok("and moves it on", afterList.state === "checking", afterList.state);
+
+  // The job this just created would be claimed by a worker and billed for.
+  await prisma.job.deleteMany({ where: { organisationId: org.id, stage: "analyse" } });
+
+  // The detail page does the same, for somebody who went straight there.
+  await prisma.assessmentRun.deleteMany({ where: { organisationId: org.id } });
+  await prisma.architectureRequest.update({
+    where: { id },
+    data: { state: "submitted", runId: null },
+  });
+  await get(`/dashboard/requests/${id}`, cookie);
+  const afterDetail = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id },
+    select: { runId: true, state: true },
+  });
+  ok("and so does opening the request itself", afterDetail.runId !== null, afterDetail.state);
+  await prisma.job.deleteMany({ where: { organisationId: org.id, stage: "analyse" } });
+
+  // A draft must not be swept into an assessment by somebody reading the list.
+  const { id: draftId } = await createRequest(access, {
+    projectId: project.id,
+    title: "Still being written",
+  });
+  await get("/dashboard/requests", cookie);
+  const stillDraft = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id: draftId },
+    select: { state: true, runId: true },
+  });
+  ok("a draft is left alone by the sweep", stillDraft.state === "draft" && stillDraft.runId === null);
+
   // --- the navigation ------------------------------------------------------
   console.log("\nThe navigation");
   ok("Requests is in the rail", listed.body.includes(">Requests<") || listed.body.includes("Requests"));
@@ -252,8 +365,16 @@ try {
     where: { slug: { startsWith: TAG } },
     select: { id: true },
   });
+  // Children first, in dependency order: one cascading delete of the
+  // organisation touches a dozen tables at once and deadlocks against itself
+  // on Neon.
   for (const o of orgs) {
+    await prisma.job.deleteMany({ where: { organisationId: o.id } });
+    await prisma.chunk.deleteMany({ where: { organisationId: o.id } });
     await prisma.architectureRequest.deleteMany({ where: { organisationId: o.id } });
+    await prisma.assessmentRun.deleteMany({ where: { organisationId: o.id } });
+    await prisma.document.deleteMany({ where: { organisationId: o.id } });
+    await prisma.framework.deleteMany({ where: { organisationId: o.id } });
     await prisma.project.deleteMany({ where: { organisationId: o.id } });
     await prisma.organisation.delete({ where: { id: o.id } });
   }

@@ -6,6 +6,7 @@ import {
   CHECKING,
   DRAFT,
   FAILED,
+  advanceSubmitted,
   canEditRequest,
   getRequestDraft,
   whatIsMissing,
@@ -44,8 +45,18 @@ export default async function RequestPage({
   // A request in another customer is indistinguishable from one that does not
   // exist, for the same reason a document is — saying "forbidden" would confirm
   // it is real.
-  const request = await getRequestDraft(access.organisation.id, id);
-  if (!request) notFound();
+  const first = await getRequestDraft(access.organisation.id, id);
+  if (!first) notFound();
+
+  // The other place somebody waits for a report, and so the other place a ping
+  // that never arrived has to be recoverable from. Scoped to this one document,
+  // and skipped unless this request is actually waiting on one — see the note
+  // on the list page for why a page does this at all.
+  const stuck = first.state === "submitted" && first.documentId && !first.runId;
+  const request = stuck
+    ? ((await advanceSubmitted({ documentId: first.documentId! })),
+      (await getRequestDraft(access.organisation.id, id)) ?? first)
+    : first;
 
   const editable = request.state === DRAFT || request.state === FAILED;
   const mayEdit = canEditRequest(access, request);

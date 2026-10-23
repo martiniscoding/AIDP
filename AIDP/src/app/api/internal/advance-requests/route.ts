@@ -19,8 +19,15 @@ import { advanceSubmitted } from "@/lib/ingest/requests";
  *
  * With a `documentId` it advances the request that document belongs to, which
  * is what the embed worker asks for the moment it finishes one — see
- * Workers/aidp/notify.py. Without one it sweeps everything, which is what the
- * timer does.
+ * Workers/aidp/notify.py. Without one it sweeps everything, which is what a
+ * scheduled caller would do.
+ *
+ * Nothing schedules it today. The worker's push is the fast path and the
+ * screens sweep for themselves before they render, which between them covers
+ * the request that is waiting and the person waiting on it. This endpoint
+ * stays because the push needs somewhere to arrive, and because a deployment
+ * that would rather run a timer — beside the workers, or Vercel Cron on a plan
+ * that allows one — has something to point it at.
  *
  * Idempotent and safe to call as often as you like: it only ever acts on
  * requests in "submitted" with a document and no run, and the first thing it
@@ -39,9 +46,9 @@ import { advanceSubmitted } from "@/lib/ingest/requests";
  *
  * Vercel Cron signs its own requests with `CRON_SECRET`, which it sends as a
  * bearer token when a variable of exactly that name is set on the project.
- * That is the timer. A deployment that would rather run the timer somewhere
- * else — beside the workers, say — can drop the `crons` entry from vercel.json
- * and call this with the worker secret instead.
+ * Accepted so that adding a `crons` entry to vercel.json is all a timer takes —
+ * though Vercel's Hobby plan allows only a daily one, which is why there is no
+ * entry there now and why the screens sweep instead.
  *
  * With neither configured the route refuses everything. An endpoint that starts
  * billable model work must never be open, and "no secret set" is a deployment
