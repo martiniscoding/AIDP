@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from .. import db, logs, progress, queue
+from .. import db, logs, notify, progress, queue
 from ..ai import embeddings
 from ..config import get_config
 from ..queue import Job
@@ -120,6 +120,15 @@ def _finish(job: Job) -> None:
             (job.document_id,),
         )
         queue.complete(conn, job)
+
+    # Outside the transaction, and after it has committed. The document is
+    # ready whether or not anyone is told, and a call made inside the
+    # transaction would hold it open for the length of an HTTP round trip.
+    #
+    # This is what makes an architecture request assess itself: the pipeline
+    # ends here, and the app is the only thing that can decide what follows.
+    # It never raises — see notify.py.
+    notify.document_ready(job.document_id)
 
 
 def _set_status(document_id: str, status: str) -> None:
