@@ -107,8 +107,8 @@ function Group({
   // aperture's intensity — the panel is the room, not the event in it.
   const wash =
     role === "reference"
-      ? "radial-gradient(90% 60% at 50% 0%, rgba(124,58,237,0.10), transparent 70%)"
-      : "radial-gradient(90% 60% at 50% 100%, rgba(124,58,237,0.09), transparent 70%)";
+      ? "radial-gradient(90% 60% at 50% 0%, rgba(0,92,146,0.10), transparent 70%)"
+      : "radial-gradient(90% 60% at 50% 100%, rgba(0,92,146,0.09), transparent 70%)";
 
   return (
     <section className="ring-gradient relative overflow-hidden rounded-2xl bg-card p-4 sm:p-5">

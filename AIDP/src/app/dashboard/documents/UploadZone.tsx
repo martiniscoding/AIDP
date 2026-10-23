@@ -23,6 +23,9 @@ const MAX_FILES = 20;
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PNG_MIME = "image/png";
+const JPEG_MIME = "image/jpeg";
+const WEBP_MIME = "image/webp";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -42,21 +45,21 @@ function formatSize(bytes: number): string {
  * and a second colour would read as a status rather than a category.
  *
  * On paper these are pigment rather than light, so they run at roughly half
- * the alpha the dark build used and the lit edge is the *deep* violet: a pale
+ * the alpha the dark build used and the lit edge is the *deep* blue: a pale
  * one had nothing to brighten against.
  */
 const FIELD: Record<Role, { wash: string; ring: string; ringActive: string }> = {
   reference: {
-    wash: "radial-gradient(120% 130% at 50% -10%, rgba(124,58,237,0.14), rgba(109,40,217,0.05) 45%, transparent 72%)",
-    ring: "linear-gradient(160deg, rgba(124,58,237,0.34), rgba(26,20,48,0.06) 44%, transparent 72%)",
+    wash: "radial-gradient(120% 130% at 50% -10%, rgba(0,92,146,0.14), rgba(0,70,113,0.05) 45%, transparent 72%)",
+    ring: "linear-gradient(160deg, rgba(0,92,146,0.34), rgba(2,26,40,0.06) 44%, transparent 72%)",
     ringActive:
-      "linear-gradient(160deg, rgba(109,40,217,0.95), rgba(124,58,237,0.55) 50%, rgba(167,139,250,0.45))",
+      "linear-gradient(160deg, rgba(0,70,113,0.95), rgba(0,92,146,0.55) 50%, rgba(78,159,208,0.45))",
   },
   assessed: {
-    wash: "radial-gradient(120% 130% at 50% 110%, rgba(124,58,237,0.12), rgba(109,40,217,0.04) 45%, transparent 72%)",
-    ring: "linear-gradient(20deg, rgba(124,58,237,0.32), rgba(26,20,48,0.06) 44%, transparent 72%)",
+    wash: "radial-gradient(120% 130% at 50% 110%, rgba(0,92,146,0.12), rgba(0,70,113,0.04) 45%, transparent 72%)",
+    ring: "linear-gradient(20deg, rgba(0,92,146,0.32), rgba(2,26,40,0.06) 44%, transparent 72%)",
     ringActive:
-      "linear-gradient(20deg, rgba(109,40,217,0.95), rgba(124,58,237,0.55) 50%, rgba(167,139,250,0.45))",
+      "linear-gradient(20deg, rgba(0,70,113,0.95), rgba(0,92,146,0.55) 50%, rgba(78,159,208,0.45))",
   },
 };
 
@@ -119,17 +122,28 @@ export function UploadZone({
           file.type === PPTX_MIME ||
           file.type === XLSX_MIME ||
           file.type === DOCX_MIME ||
+          // A diagram on its own. The browser's `type` is unreliable for
+          // images dragged from some applications, so the name is checked too —
+          // and `identify` on the server reads the bytes regardless, which is
+          // the test that actually decides.
+          file.type === PNG_MIME ||
+          file.type === JPEG_MIME ||
+          file.type === WEBP_MIME ||
           name.endsWith(".pdf") ||
           name.endsWith(".docx") ||
           name.endsWith(".pptx") ||
-          name.endsWith(".xlsx");
+          name.endsWith(".xlsx") ||
+          name.endsWith(".png") ||
+          name.endsWith(".jpg") ||
+          name.endsWith(".jpeg") ||
+          name.endsWith(".webp");
         if (!supported) {
           rejected.push({
             id,
             name: file.name,
             size: file.size,
             state: "error",
-            message: "Not a PDF, Word, PowerPoint or Excel file",
+            message: "Not a PDF, Word, PowerPoint, Excel or image file",
           });
         } else if (file.size > MAX_BYTES) {
           rejected.push({
@@ -204,7 +218,10 @@ export function UploadZone({
       <input
         ref={inputRef}
         type="file"
-        accept={`application/pdf,.pdf,${DOCX_MIME},.docx,${PPTX_MIME},.pptx,${XLSX_MIME},.xlsx`}
+        accept={
+          `application/pdf,.pdf,${DOCX_MIME},.docx,${PPTX_MIME},.pptx,${XLSX_MIME},.xlsx,` +
+          `${PNG_MIME},.png,${JPEG_MIME},.jpg,.jpeg,${WEBP_MIME},.webp`
+        }
         multiple
         className="sr-only"
         onChange={(event) => {
@@ -239,8 +256,8 @@ export function UploadZone({
           "transition-[box-shadow,transform,background-color] duration-300",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-royal-mid",
           armed
-            ? "bg-royal/[0.07] shadow-[0_0_0_1px_rgba(124,58,237,0.18),0_18px_44px_-24px_rgba(109,40,217,0.40)]"
-            : "hover:bg-card hover:shadow-[0_16px_40px_-26px_rgba(109,40,217,0.30)]",
+            ? "bg-royal/[0.07] shadow-[0_0_0_1px_rgba(0,92,146,0.18),0_18px_44px_-24px_rgba(0,70,113,0.40)]"
+            : "hover:bg-card hover:shadow-[0_16px_40px_-26px_rgba(0,70,113,0.30)]",
         )}
       >
         {/* Light field. Drifts continuously but slowly, and lifts on contact —
@@ -385,7 +402,7 @@ function SheetStack({ armed }: { armed: boolean }) {
         className={cn(
           sheet,
           "border-line bg-linear-to-b from-card to-canvas-sunk shadow-card",
-          armed && "border-royal/70 shadow-[0_0_18px_-3px_rgba(109,40,217,0.45)]",
+          armed && "border-royal/70 shadow-[0_0_18px_-3px_rgba(0,70,113,0.45)]",
         )}
       >
         {/* Ruled lines, so the sheet reads as a document rather than a card. */}

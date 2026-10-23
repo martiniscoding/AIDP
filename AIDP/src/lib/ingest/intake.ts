@@ -30,6 +30,27 @@ const ZIP_MAGIC = "PK";
 /** Legacy .doc, .xls and .ppt are OLE2 compound files, not ZIPs. */
 const OLE2_MAGIC = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
 
+/**
+ * Images, for the case the brief asks for: an architecture diagram submitted on
+ * its own, with no document around it.
+ *
+ * Matched on their own signatures rather than on an extension, exactly as every
+ * other format here is. PNG's is eight bytes with a deliberate newline pair in
+ * it, JPEG's is the start-of-image marker, and WebP is a RIFF container that
+ * names itself at byte eight.
+ *
+ * GIF and BMP are deliberately absent. Nothing stops them being read, but a
+ * diagram does not arrive as either, and every format accepted here is one the
+ * parse stage then has to keep working on.
+ */
+const PNG_MAGIC = "\x89PNG\r\n\x1A\n";
+const JPEG_MAGIC = "\xFF\xD8\xFF";
+const RIFF_MAGIC = "RIFF";
+
+export const PNG_MIME = "image/png";
+export const JPEG_MIME = "image/jpeg";
+export const WEBP_MIME = "image/webp";
+
 export const PPTX_MIME =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 export const XLSX_MIME =
@@ -64,6 +85,10 @@ export const MAX_FILES = 20;
  * Word and Excel are named specifically when found. "That doesn't look like a
  * PDF" is a bad answer to someone who just dropped a .docx and can see
  * perfectly well what it is.
+ *
+ * Images are documents here too — a diagram submitted on its own, which the
+ * brief treats as a first-class submission. The order matters only in that
+ * every test is on a signature, so none of them can claim a file another owns.
  */
 export function identify(bytes: Uint8Array): Format | Refusal {
   const head = Buffer.from(bytes.subarray(0, 5)).toString("latin1");
@@ -84,10 +109,26 @@ export function identify(bytes: Uint8Array): Format | Refusal {
     }
   }
 
+  // An image, which is a whole document here rather than something inside one.
+  // See `_parse_image` in Workers/aidp/stages/parse.py for what becomes of it.
+  const first8 = Buffer.from(bytes.subarray(0, 8)).toString("latin1");
+  if (first8 === PNG_MAGIC) {
+    return { mimeType: PNG_MIME, extension: "png" };
+  }
+  if (first8.startsWith(JPEG_MAGIC)) {
+    return { mimeType: JPEG_MIME, extension: "jpg" };
+  }
+  if (
+    first8.startsWith(RIFF_MAGIC) &&
+    Buffer.from(bytes.subarray(8, 12)).toString("latin1") === "WEBP"
+  ) {
+    return { mimeType: WEBP_MIME, extension: "webp" };
+  }
+
   // The old binary Office formats. Nothing here can read them, and "that
   // doesn't look like a document" is a useless answer to someone holding a
   // file Word opens perfectly well — so say which format it is and what to do.
-  if (Buffer.from(bytes.subarray(0, 8)).toString("latin1") === OLE2_MAGIC) {
+  if (first8 === OLE2_MAGIC) {
     return {
       error:
         "That's a pre-2007 Office file (.doc, .xls or .ppt). Open it in Office and " +
@@ -98,8 +139,8 @@ export function identify(bytes: Uint8Array): Format | Refusal {
 
   return {
     error:
-      "That doesn't look like a PDF, Word, PowerPoint or Excel file. Only those can " +
-      "be ingested.",
+      "That doesn't look like a PDF, Word, PowerPoint, Excel or image file. Only " +
+      "those can be ingested.",
     status: 415,
   };
 }

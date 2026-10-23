@@ -95,6 +95,34 @@ def _is_word(document: dict) -> bool:
     return str(document.get("storageKey") or "").lower().endswith(".docx")
 
 
+#: What `identify` in src/lib/ingest/intake.ts accepts, by the type it records.
+_IMAGE_MIMES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _is_image(document: dict) -> bool:
+    """A diagram submitted on its own, rather than one inside a document.
+
+    As `_is_deck`: the recorded type is the authority, because the upload route
+    sets it from the file's own signature, and the key is the fallback.
+    """
+    if (document.get("mimeType") or "") in _IMAGE_MIMES:
+        return True
+    key = str(document.get("storageKey") or "").lower()
+    return key.endswith((".png", ".jpg", ".jpeg", ".webp"))
+
+
+def _image_filetype(document: dict) -> str:
+    """What to tell PyMuPDF this is. The recorded type first, then the key."""
+    recorded = _IMAGE_MIMES.get(document.get("mimeType") or "")
+    if recorded:
+        return recorded
+    key = str(document.get("storageKey") or "").lower()
+    for suffix, kind in ((".png", "png"), (".jpeg", "jpg"), (".jpg", "jpg"), (".webp", "webp")):
+        if key.endswith(suffix):
+            return kind
+    return "png"
+
+
 def _is_deck(document: dict) -> bool:
     """Format from the recorded type, with the key as a fallback.
 
@@ -128,6 +156,8 @@ def handle(job: Job, heartbeat) -> None:
         result = _parse_workbook(raw, document, heartbeat)
     elif _is_deck(document):
         result = _parse_deck(raw, document, heartbeat)
+    elif _is_image(document):
+        result = _parse_image(raw, document, heartbeat)
     else:
         doc = fitz.open(stream=raw, filetype="pdf")
         try:
@@ -878,6 +908,149 @@ def _flag_content_loss(out: _Result, read_lines: list) -> None:
         f"({share:.0%} of its text) did not reach any section and are not "
         f"searchable. First: {sample}",
     )
+
+
+#: The longest edge a submitted image is rendered to before it is described.
+#:
+#: A phone photograph of a whiteboard arrives at 4000px and costs real money to
+#: send to a vision model, while an architecture diagram's labels are legible
+#: well below that. 2000 is comfortably past what any model resolves and well
+#: short of what a camera produces.
+_IMAGE_MAX_EDGE = 2000
+
+#: Below this an image is too small to be a diagram — an icon, a logo, a signature
+#: someone attached by mistake. Refused with a sentence rather than described,
+#: because a model will cheerfully describe a logo and the description will reach
+#: a report as though it were the architecture.
+_IMAGE_MIN_EDGE = 200
+
+
+def _parse_image(raw: bytes, document: dict, heartbeat) -> _Result:
+    """A diagram submitted on its own: one figure, and nothing else.
+
+    The brief asks for an architecture diagram as a first-class submission, and
+    a diagram with no document around it has no text, no headings and no tables.
+    So nothing is detected here. The file *is* the figure, and saying so
+    directly is both simpler and more honest than converting it to a PDF and
+    hoping the figure extractor finds it again — which it would not: `_plausible`
+    drops anything covering more than 92% of its page, and a converted image
+    covers all of it.
+
+    Everything after this point is shared with every other format. `_persist`
+    sends the figure to the vision model exactly as it does one lifted out of a
+    PDF, the chunk stage turns that description into the document's one chunk,
+    and retrieval searches it like any other passage.
+
+    **What this cannot do, and says so.** The description is a model's reading of
+    a picture, and the engine already treats that as the weakest evidence there
+    is: `DECISIVE_VERDICTS` in the analyse stage may not be reached on a figure
+    alone, and `_figure_corroborates` demands the diagram use the clause's own
+    words before it counts at all. A submission that is *only* a diagram will
+    therefore come back largely `needs_review`, and that is correct rather than
+    broken — nobody should approve a design on somebody else's reading of a
+    picture. The issue raised below says so on the document, so a reviewer meets
+    that fact before the report does.
+    """
+    out = _Result()
+    out.page_count = 1
+    out.profile = "image"
+    out.title = document["title"]
+
+    filetype = _image_filetype(document)
+
+    # Every way the file can turn out not to be what it says converts here, and
+    # only here. `fitz.open` is lazy — it accepts arbitrary bytes and raises on
+    # the first page read instead — so catching the open alone let a corrupt
+    # upload escape as a MuPDF error nobody could act on.
+    try:
+        image = fitz.open(stream=raw, filetype=filetype)
+        try:
+            if image.page_count == 0:
+                raise ValueError("it holds no page")
+            page = image[0]
+            rect = fitz.Rect(page.rect)
+            # Measured before rendering: an icon is refused below rather than
+            # enlarged and sent to a model.
+            undersized = min(rect.width, rect.height) < _IMAGE_MIN_EDGE
+            png = b""
+            if not undersized:
+                # Rendered rather than passed through, so the vision model is
+                # handed the same kind of PNG whatever came in, at a size worth
+                # paying for. The scale is capped, never raised: enlarging a
+                # small image invents detail that was never in it.
+                scale = min(1.0, _IMAGE_MAX_EDGE / max(rect.width, rect.height))
+                png = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes(
+                    "png"
+                )
+        finally:
+            image.close()
+    except Exception as exc:  # noqa: BLE001 — the message has to name the format
+        raise RuntimeError(
+            f"this file is recorded as {filetype} but could not be opened as one: "
+            f"{str(exc)[:200]}"
+        ) from exc
+
+    # Outside the converter, so it keeps its own words rather than being wrapped
+    # as a format failure. This file is readable; it is just not a diagram.
+    if undersized:
+        raise RuntimeError(
+            f"this image is {int(rect.width)}x{int(rect.height)}, which is too small "
+            "to be an architecture diagram. Upload the diagram itself, or a document "
+            "containing it."
+        )
+
+    heartbeat()
+
+    # One section, named for the document, so the figure has somewhere to hang
+    # and a citation has a heading path to print.
+    out.sections = [
+        sections.Section(
+            ordinal=1,
+            number_text=None,
+            title=out.title,
+            depth=1,
+            heading_path=out.title,
+            page_start=1,
+            page_end=1,
+            lines=[],
+        )
+    ]
+
+    # Complexity at the raster floor, for the reason `complexity_of` gives: an
+    # opaque image is the case where nothing but the vision model can check the
+    # reading, so it is the one most worth a human's eye. A whole-page diagram
+    # is the top of that range.
+    out.figures[0] = [
+        figure_parser.Figure(
+            page=1,
+            bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
+            png=png,
+            caption=None,
+            kind="raster",
+            complexity=100,
+        )
+    ]
+
+    # Said on the document, where a reviewer meets it before the report. Not a
+    # fault — this is a supported submission — but the one thing about it that
+    # changes how its findings should be read.
+    out.issue(
+        "medium",
+        "image_only",
+        "This submission is a diagram and nothing else, so everything the assessment "
+        "knows about it comes from a model's reading of a picture. Verdicts that would "
+        "settle a clause are deliberately withheld on that evidence alone, so expect "
+        "findings that ask for a person rather than ones that conclude. Submit the "
+        "design document alongside it, or complete the architecture details on the "
+        "request, to have it judged properly.",
+        page=1,
+    )
+
+    # No text, so no source lines: a whole-document assessment has nothing to
+    # quote and falls back to search, which is what it should do here. Left as
+    # None rather than an empty list, which is how every other path says the
+    # same thing.
+    return out
 
 
 def _parse_workbook(raw: bytes, document: dict, heartbeat) -> _Result:
