@@ -55,6 +55,9 @@ export default async function DashboardLayout({
         // pointed at the same screen and only raised the question of how the
         // two differed.
         { href: "/dashboard", label: "Home", icon: "home" },
+        // Second, and above the library: filing one is the thing most people
+        // come here to do, and the library is an administrator's shelf.
+        { href: "/dashboard/requests", label: "Requests", icon: "requests" },
         { href: "/dashboard/documents", label: "Reference Library", icon: "library" },
         { href: "/dashboard/decisions", label: "Decisions", icon: "decisions" },
       ],

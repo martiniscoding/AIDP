@@ -7,6 +7,7 @@ import {
   Activity,
   BookMarked,
   Building2,
+  ClipboardList,
   Gavel,
   House,
   Menu,
@@ -37,6 +38,7 @@ import { cn } from "@/lib/cn";
  */
 const ICONS = {
   home: House,
+  requests: ClipboardList,
   library: BookMarked,
   decisions: Gavel,
   activity: Activity,
