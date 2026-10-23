@@ -129,7 +129,7 @@ export function DashboardPreview() {
                 <span className="block size-[11px] rounded-full border-[2.5px] border-white border-b-transparent" />
               </span>
               <span className="font-display text-[16px] font-semibold tracking-[-0.02em] text-ink">
-                Dexter
+                AIDP
               </span>
             </div>
 

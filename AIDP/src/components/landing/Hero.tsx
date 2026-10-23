@@ -72,12 +72,12 @@ export function Hero() {
         <div className="flex flex-col items-center text-center">
           <motion.span
             {...rise(0)}
-            className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 py-1.5 pr-4 pl-1.5 text-[12px] font-medium text-ink/80 shadow-[0_2px_10px_-4px_rgba(46,16,101,0.25)] backdrop-blur-md"
+            className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 py-1.5 pr-4 pl-1.5 text-[11.5px] font-medium text-ink/80 sm:text-[12px] shadow-[0_2px_10px_-4px_rgba(46,16,101,0.25)] backdrop-blur-md"
           >
-            <span className="grid size-[18px] place-items-center rounded-full bg-[linear-gradient(140deg,#8b5cf6_0%,#6d28d9_100%)]">
+            <span className="grid size-[18px] shrink-0 place-items-center rounded-full bg-[linear-gradient(140deg,#8b5cf6_0%,#6d28d9_100%)]">
               <span className="block size-[7px] rounded-full border-[2px] border-white border-b-transparent" />
             </span>
-            Dexter — AI-native architecture governance
+            AIDP — Architecture Intelligence and Decision Platform
           </motion.span>
 
           {/* Two fixed lines rather than text-balance: the break is part of the
@@ -95,7 +95,7 @@ export function Hero() {
             {...rise(0.14)}
             className="mt-6 max-w-[540px] text-[15.5px] leading-[1.6] tracking-[-0.005em] text-ink/55 text-pretty"
           >
-            Dexter assesses every submission against your own principles, standards
+            AIDP assesses every submission against your own principles, standards
             and prior decisions — and cites every one of them.
           </motion.p>
 

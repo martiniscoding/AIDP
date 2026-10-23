@@ -27,7 +27,7 @@ const STATS = [
       </>
     ),
     unit: "days",
-    label: "Same review, assessed automatically by Dexter",
+    label: "Same review, assessed automatically by AIDP",
     // The one figure carrying the product's actual claim, so the one that
     // gets the accent. The rest read as white.
     accent: true,

@@ -76,7 +76,7 @@ export function Footer() {
 
         <div className="mt-14 flex flex-col gap-3 border-t border-line pt-7 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] text-ink/62">
-            © {new Date().getFullYear()} Dexter. All rights reserved.
+            © {new Date().getFullYear()} AIDP. All rights reserved.
           </p>
           <p className="text-[13px] text-ink/62">
             Architecture reviews in days, not weeks.

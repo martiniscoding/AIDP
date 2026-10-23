@@ -48,12 +48,12 @@ export function LandingNav() {
       <div className="mx-auto flex h-[72px] w-full max-w-[1060px] items-center justify-between gap-6 px-5 sm:px-6">
         <Link
           href="/"
-          aria-label="Dexter home"
+          aria-label="AIDP home"
           className="group flex shrink-0 items-center gap-2.5"
         >
           <LogoMark tone="light" className="h-8 w-8 transition-transform duration-500 ease-out group-hover:rotate-[8deg]" />
           <span className="font-display text-[20px] font-semibold tracking-[-0.02em] text-white">
-            Dexter
+            AIDP
           </span>
         </Link>
 

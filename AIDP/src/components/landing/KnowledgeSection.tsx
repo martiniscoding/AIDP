@@ -35,7 +35,7 @@ export function KnowledgeSection() {
             </Reveal>
             <Reveal delay={0.12}>
               <p className="mt-5 text-[17px] leading-relaxed text-ink/72 text-pretty">
-                Dexter does not arrive with an opinion about your architecture. It
+                AIDP does not arrive with an opinion about your architecture. It
                 assesses against the principles, standards, and precedents you
                 give it — and every future assessment reflects the latest ones.
               </p>
