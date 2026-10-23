@@ -1,34 +1,15 @@
-import { Navbar1 } from "@/components/ui/navbar-1";
 import { Hero } from "@/components/landing/Hero";
-import { ScrollPath } from "@/components/landing/ScrollPath";
-import { WorkflowSection } from "@/components/landing/WorkflowSection";
-import { FeatureGrid } from "@/components/landing/FeatureGrid";
-import { KnowledgeSection } from "@/components/landing/KnowledgeSection";
-import { PlatformStrip } from "@/components/landing/PlatformStrip";
-import { StatsStrip } from "@/components/landing/StatsStrip";
-import { FinalCTA } from "@/components/landing/FinalCTA";
-import { Footer } from "@/components/landing/Footer";
+import { PartnerStrip } from "@/components/landing/PartnerStrip";
 
+// Hero only, for now. The rest of the marketing page — the workflow walk,
+// the feature grid, the knowledge section, the stats and the closing CTA —
+// still lives in `src/components/landing/`, unmounted rather than deleted,
+// so putting any of it back is a line in this file.
 export default function LandingPage() {
   return (
-    <>
-      <Navbar1 />
-      <main>
-        <Hero />
-
-        {/* Everything inside ScrollPath is threaded by the connecting line.
-            Sections mark their attachment points with `data-path-anchor`; the
-            hero marks where the line starts with `data-path-origin`. */}
-        <ScrollPath>
-          <WorkflowSection />
-          <FeatureGrid />
-          <KnowledgeSection />
-          <PlatformStrip />
-          <StatsStrip />
-          <FinalCTA />
-        </ScrollPath>
-      </main>
-      <Footer />
-    </>
+    <main className="min-h-dvh bg-white">
+      <Hero />
+      <PartnerStrip />
+    </main>
   );
 }
