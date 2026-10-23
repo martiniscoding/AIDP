@@ -61,7 +61,7 @@ export function StatsStrip() {
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                "radial-gradient(70% 100% at 50% 0%, rgba(139,92,246,0.38), transparent 70%)",
+                "radial-gradient(70% 100% at 50% 0%, rgba(10,110,168,0.38), transparent 70%)",
             }}
           />
           {/* Hairline along the top edge. On a deep block the light comes from

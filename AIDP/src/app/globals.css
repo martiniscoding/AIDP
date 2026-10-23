@@ -3,15 +3,15 @@
 /* ------------------------------------------------------------------ *
  * Dexter design tokens
  *
- * Light, and pitched toward the accent: the ground is a pale violet-grey,
- * cards are true white lifted off it, and a handful of deep violet anchor
+ * Light, and pitched toward the accent: the ground is a pale ice blue,
+ * cards are true white lifted off it, and a handful of deep navy anchor
  * surfaces give the page something dark to push against.
  *
  * The ground is tinted on purpose. A neutral off-white next to white cards
  * separates by about 1.03:1 — which is to say not at all, and the result
- * reads as one blank sheet. Pulling the canvas to #f2f0f9 opens that to
- * 1.13:1, so a card is visibly a card, and it puts the accent's hue in the
- * paper itself rather than saving violet for buttons.
+ * reads as one blank sheet. Pulling the canvas to #e2f5ff opens that to
+ * 1.12:1, so a card is visibly a card, and it puts the accent's hue in the
+ * paper itself rather than saving blue for buttons.
  *
  * Depth works the opposite way round from a dark UI. There, a raised
  * surface was a *lighter* film over near-black. Here it is a white card on
@@ -20,59 +20,69 @@
  *
  * Contrast comes from range, not from mid-greys. Rather than darkening
  * every surface a little — which turns a light theme muddy — the page
- * carries a few `deep` violet blocks at full strength (hero, CTA, the auth
+ * carries a few `deep` navy blocks at full strength (hero, CTA, the auth
  * aside) and leaves everything between them bright.
  *
- * The purple ladder inverts too. On near-black the light violets carried
- * small text and the deep one carried fills. On paper that is backwards —
- * a #a78bfa label on white is 2.2:1. So:
- *   royal-deep  small text sitting on a lavender tint (~11.9:1 on white)
- *   royal       accent text, icons and solid fills (~7.4:1)
- *   royal-mid   hover fills and large display emphasis (~6.1:1)
+ * The blue ladder runs the opposite way from the ink one. The pale blues in
+ * the palette are surfaces, not type — #c2e8ff on white is 1.2:1 — so:
+ *   royal-deep  small text sitting on a blue tint (11.9:1 on white)
+ *   royal       accent text, icons and solid fills (9.9:1)
+ *   royal-mid   hover fills and large display emphasis (7.1:1)
  *   royal-tint  chip and badge grounds — a surface, never a text colour
+ *
+ * The token names still say `royal`. They are the accent's slots, not a
+ * claim about hue, and renaming them would touch every file in the app for
+ * no behavioural gain — so the names stayed put when the hue moved.
  * ------------------------------------------------------------------ */
 @theme {
   /* Grounds. `canvas` is the page, `card` is anything raised off it, and
      `canvas-sunk` is for wells that recede: table headers, inset panels,
      form fields, the tray a hover state opens into. */
-  --color-canvas: #f2f0f9;
-  --color-canvas-sunk: #e7e3f4;
+  --color-canvas: #e2f5ff;
+  --color-canvas-sunk: #cfeaf8;
   --color-card: #ffffff;
 
-  /* Anchor surface. Full-strength violet, for the few blocks that carry white
+  /* Anchor surface. Full-strength navy, for the few blocks that carry white
      copy — the hero, the stats block, the closing CTA, the auth aside and the
      app's header band. These are what keep the page from reading as one flat
      sheet, and they are deliberately few: the contrast comes from range
-     between bright and deep, so darkening anything in between spends it. */
-  --color-deep: #2e1065;
+     between bright and deep, so darkening anything in between spends it.
+     White on it measures 14.9:1. */
+  --color-deep: #042a41;
   /* The accent, inverted for use *on* a deep surface. The ladder's other
-     rungs all assume a light ground and go invisible here. 8.4:1 on deep. */
-  --color-royal-light: #c4b5fd;
+     rungs all assume a light ground and go invisible here. 11.5:1 on deep. */
+  --color-royal-light: #c2e8ff;
 
   /* Hairlines. Tinted to match the ground, not neutral grey — a warm or
-     neutral rule over a violet-grey canvas reads as dirt on the paper. */
-  --color-line-soft: #e9e5f6;
-  --color-line: #dcd5ef;
-  --color-line-strong: #c3b9e0;
+     neutral rule over an ice-blue canvas reads as dirt on the paper. */
+  --color-line-soft: #d6edfa;
+  --color-line: #bfdff0;
+  --color-line-strong: #9bc3da;
 
   /* Foreground. One base colour; the type hierarchy is alpha over it, which
-     keeps every rung warm against the paper rather than drifting grey.
-     Violet-black rather than neutral: against a tinted ground a neutral
-     black drifts visibly warm, and the cool cast ties body copy to the
-     accent instead of fighting it.
+     keeps every rung cool against the paper rather than drifting grey.
+     Navy-black rather than neutral: against a tinted ground a neutral black
+     drifts visibly warm, and the cool cast ties body copy to the accent
+     instead of fighting it.
 
-     Measured against --color-canvas: /62 is 4.78:1 and /74 is 7.12:1, so
+     It is a step darker than the palette's own #042a41, which is reserved
+     for `deep`. At #042a41 the alpha rungs below lose the contrast they are
+     measured for — /62 falls to 4.24:1, under the body-text floor.
+
+     Measured against --color-canvas: /62 is 4.84:1 and /74 is 7.21:1, so
      those are the floors for body copy and for AAA. Everything at /58 and
      below is large-text or decoration only. */
-  --color-ink: #1a1430;
+  --color-ink: #021a28;
 
-  --color-royal-deep: #4c1d95;
-  --color-royal: #6d28d9;
-  --color-royal-mid: #7c3aed;
-  --color-royal-tint: #ede9fe;
+  --color-royal-deep: #003a5c;
+  --color-royal: #004671;
+  --color-royal-mid: #005c92;
+  --color-royal-tint: #dceffb;
 
   /* Status. Text rungs are the 700s so they clear 4.5:1 on both white and
-     their own tint; the 500s are for fills and rules only. */
+     their own tint; the 500s are for fills and rules only. Left on the
+     warm/green/red triad on purpose — recolouring these to fit the blue
+     would cost the one thing they are for, which is reading as not-the-brand. */
   --color-ok: #047857;
   --color-ok-line: #6ee7b7;
   --color-ok-tint: #ecfdf5;
@@ -96,12 +106,12 @@
   --text-display-lg--line-height: 0.95;
   --text-display-lg--letter-spacing: -0.04em;
 
-  /* Elevation. Warm-tinted and layered — a contact shadow for the edge plus
+  /* Elevation. Cool-tinted and layered — a contact shadow for the edge plus
      a wide soft one for the lift. Pure black at one offset is the giveaway
      of a light theme converted from a dark one. */
-  --shadow-card: 0 1px 2px -1px rgb(46 16 101 / 0.10), 0 4px 14px -6px rgb(46 16 101 / 0.12);
-  --shadow-card-hover: 0 2px 4px -2px rgb(46 16 101 / 0.13), 0 14px 34px -12px rgb(46 16 101 / 0.20);
-  --shadow-pop: 0 2px 6px -2px rgb(46 16 101 / 0.14), 0 24px 60px -20px rgb(46 16 101 / 0.28);
+  --shadow-card: 0 1px 2px -1px rgb(4 42 65 / 0.10), 0 4px 14px -6px rgb(4 42 65 / 0.12);
+  --shadow-card-hover: 0 2px 4px -2px rgb(4 42 65 / 0.13), 0 14px 34px -12px rgb(4 42 65 / 0.20);
+  --shadow-pop: 0 2px 6px -2px rgb(4 42 65 / 0.14), 0 24px 60px -20px rgb(4 42 65 / 0.28);
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -194,9 +204,9 @@ button[aria-disabled="true"],
 @utility card-sheen {
   background-image: linear-gradient(
     152deg,
-    rgb(124 58 237 / 0.08),
-    rgb(124 58 237 / 0.022) 38%,
-    rgb(124 58 237 / 0) 68%
+    rgb(0 92 146 / 0.08),
+    rgb(0 92 146 / 0.022) 38%,
+    rgb(0 92 146 / 0) 68%
   );
 }
 
@@ -205,7 +215,7 @@ button[aria-disabled="true"],
 @utility header-bloom {
   background-image: radial-gradient(
     62% 140% at 0% 0%,
-    rgb(124 58 237 / 0.14),
+    rgb(0 92 146 / 0.14),
     transparent 64%
   );
 }
@@ -243,7 +253,7 @@ button[aria-disabled="true"],
     background: linear-gradient(
       90deg,
       transparent,
-      rgb(26 20 48 / 0.12),
+      rgb(2 26 40 / 0.12),
       transparent
     );
   }
@@ -275,8 +285,8 @@ button[aria-disabled="true"],
     --ring,
     linear-gradient(
       140deg,
-      rgb(26 20 48 / 0.18),
-      rgb(26 20 48 / 0.06) 42%,
+      rgb(2 26 40 / 0.18),
+      rgb(2 26 40 / 0.06) 42%,
       transparent 70%
     )
   );
@@ -481,67 +491,64 @@ button[aria-disabled="true"],
  *   - Depth inverts. A raised card is a *lighter* film over near-black
  *     rather than white paper on a tinted ground, so `card` sits above
  *     `canvas` and `canvas-sunk` drops below it.
- *   - The ground stays violet-black rather than neutral. A true #000 next
- *     to the violet accent reads cold and makes the accent look like it is
- *     glowing rather than printed.
- *   - The purple ladder inverts back to what a dark build wants: the light
- *     violets carry text, and the fills carry dark labels. See the fill
- *     rule at the bottom — it is the one thing tokens alone cannot express,
+ *   - The ground stays navy rather than neutral. A true #000 next to the
+ *     blue accent reads cold and makes the accent look like it is glowing
+ *     rather than printed.
+ *   - The blue ladder inverts back to what a dark build wants: the pale
+ *     blues carry text, and the fills carry dark labels. See the fill rule
+ *     at the bottom — it is the one thing tokens alone cannot express,
  *     because `royal` is both a text colour and a button ground.
  * ------------------------------------------------------------------ */
 .app-dark {
-  /* Grounds. Indigo-violet, not near-black. The interior used to sit on
-     #0b0813, which beside the accent reads as plain black and leaves the
-     violet stranded in the header band. The light theme puts its hue in the
-     paper rather than saving it for buttons; this does the same thing in the
-     other direction, so the colour is the ground rather than a decoration
-     laid over it.
+  /* Grounds. Navy, not near-black. The interior used to sit on #0b0813,
+     which beside the accent reads as plain black and leaves the blue
+     stranded in the header band. The light theme puts its hue in the paper
+     rather than saving it for buttons; this does the same thing in the other
+     direction, so the colour is the ground rather than a decoration laid
+     over it.
 
-     The card/canvas step widens with it — 1.07:1 on the old near-black,
-     1.16:1 here by relative luminance — so a panel reads as a panel more
-     clearly than it did, and the separation is carried by hue as much as by
-     lightness. */
-  --color-canvas: #110c28;
-  --color-canvas-sunk: #0b0820;
-  --color-card: #201847;
+     `canvas` is the palette's own darkest step. The card/canvas separation
+     is 1.14:1 by relative luminance and the sunk well 1.17:1 below, so a
+     panel reads as a panel, and the separation is carried by hue as much as
+     by lightness. */
+  --color-canvas: #042a41;
+  --color-canvas-sunk: #021c2c;
+  --color-card: #08344c;
 
   /* The anchor band. On paper this was the one dark block; here it is the
      one *saturated* one, which is what keeps the header from dissolving into
-     the page — and now that the page itself carries violet, the band has to
-     push further to stay separate: it sat 1.30:1 off the old near-black
-     ground and sits 1.58:1 off this one. White copy reads 12.0:1 on it,
-     royal-light 8.3:1. */
-  --color-deep: #3f1594;
-  --color-royal-light: #ddd0ff;
+     the page. It sits 1.50:1 off the ground. White copy reads 9.9:1 on it,
+     royal-light 7.7:1. Same hex as the light theme's accent — the band and
+     the button are the same blue, read from opposite sides. */
+  --color-deep: #004671;
+  --color-royal-light: #c2e8ff;
 
   /* Hairlines, lifting off the ground instead of settling onto it, and
-     carrying the same violet the surfaces do — a neutral grey rule here
-     reads as dust. Strengthened alongside the grounds so an edge still
-     registers against a lighter card: line-strong is 2.47:1 against one,
-     where on the near-black build it was 1.81:1. */
-  --color-line-soft: #2b2352;
-  --color-line: #3b3170;
-  --color-line-strong: #61519c;
+     carrying the same blue the surfaces do — a neutral grey rule here reads
+     as dust. line-strong is 2.3:1 against a card, which is what an edge
+     needs to register on the lighter of the two grounds. */
+  --color-line-soft: #143f58;
+  --color-line: #1d5375;
+  --color-line-strong: #2f6d92;
 
-  /* Foreground. Near-white with the same violet cast the ink had, so the
-     alpha rungs the app already uses stay warm against the ground rather
-     than going grey. Measured on --color-canvas: /58 is 5.97:1 and /40 is
-     3.44:1, and on the lighter card 5.55:1 and 3.36:1 — the card is the
-     tighter of the two and is what the floors are set by, so /58 and up is
-     body copy and below /50 is meta and decoration. Brightening the grounds
-     past this point is what would start to cost body text. */
-  --color-ink: #efecf9;
+  /* Foreground. The palette's lightest step, which carries the same blue
+     cast the ink had, so the alpha rungs the app already uses stay cool
+     against the ground rather than going grey. Measured on --color-canvas:
+     /58 is 5.76:1 and /40 is 3.48:1, and on the lighter card 5.30:1 and
+     3.30:1 — the card is the tighter of the two and is what the floors are
+     set by, so /58 and up is body copy and below /50 is meta and
+     decoration. Brightening the grounds past this point is what would start
+     to cost body text. */
+  --color-ink: #eaffff;
 
   /* The ladder, inverted. These are text colours first now; the fill rule
-     below is what makes them safe as grounds. Lifted with the grounds so the
-     accent stays ahead of them rather than sinking in: accent text reads
-     9.1:1 on the canvas where it read 7.3:1 on the near-black build, and the
-     tint is far enough off a card (1.26:1) to be a surface in its own right
-     rather than a smudge on one. */
-  --color-royal-deep: #d3c4ff;
-  --color-royal: #bfa6ff;
-  --color-royal-mid: #cdb9ff;
-  --color-royal-tint: #332764;
+     below is what makes them safe as grounds. Accent text reads 8.8:1 on the
+     canvas, and the tint is far enough off a card (1.35:1) to be a surface in
+     its own right rather than a smudge on one. */
+  --color-royal-deep: #b6e3fb;
+  --color-royal: #8ed0f5;
+  --color-royal-mid: #a5daf8;
+  --color-royal-tint: #0d4969;
 
   /* Status. The 400s, which clear 7:1 on this ground where the light
      theme's 700s would sit at barely 2:1. Tints are the same hue pulled
@@ -556,9 +563,9 @@ button[aria-disabled="true"],
   --color-danger-line: #7f2337;
   --color-danger-tint: #260d15;
 
-  /* Elevation. Violet-tinted shadow is invisible on a violet-black ground,
-     so the lift comes from black under the card plus the lighter fill
-     above it. Kept shallow — a heavy shadow on dark reads as a halo. */
+  /* Elevation. Blue-tinted shadow is invisible on a navy ground, so the lift
+     comes from black under the card plus the lighter fill above it. Kept
+     shallow — a heavy shadow on dark reads as a halo. */
   --shadow-card: 0 1px 2px -1px rgb(0 0 0 / 0.55), 0 4px 14px -6px rgb(0 0 0 / 0.65);
   --shadow-card-hover: 0 2px 4px -2px rgb(0 0 0 / 0.6), 0 14px 34px -12px rgb(0 0 0 / 0.75);
   --shadow-pop: 0 2px 6px -2px rgb(0 0 0 / 0.65), 0 24px 60px -20px rgb(0 0 0 / 0.85);
@@ -572,12 +579,12 @@ button[aria-disabled="true"],
    `:has` lets the root follow the shell without the root layout needing to
    know which route is rendering. */
 html:has(.app-dark) {
-  background-color: #110c28;
+  background-color: #042a41;
   color-scheme: dark;
 }
 
 html:has(.app-dark) body {
-  background-color: #110c28;
+  background-color: #042a41;
 }
 
 /* Paper tooth becomes light scatter. `multiply` over near-black is a no-op —
@@ -603,14 +610,14 @@ body.grain:has(.app-dark)::after {
 .app-dark .card-sheen {
   background-image: linear-gradient(
     152deg,
-    rgb(191 166 255 / 0.17),
-    rgb(191 166 255 / 0.05) 38%,
-    rgb(191 166 255 / 0) 68%
+    rgb(142 208 245 / 0.17),
+    rgb(142 208 245 / 0.05) 38%,
+    rgb(142 208 245 / 0) 68%
   );
 }
 
 .app-dark .header-bloom {
-  background-image: radial-gradient(62% 140% at 0% 0%, rgb(150 105 255 / 0.36), transparent 64%);
+  background-image: radial-gradient(62% 140% at 0% 0%, rgb(110 190 235 / 0.36), transparent 64%);
 }
 
 .app-dark ::selection {
@@ -624,16 +631,16 @@ body.grain:has(.app-dark)::after {
  * the colour of 23 pieces of accent text and the ground of 14 filled
  * buttons, and on this ground those two pull in opposite directions: text
  * has to be light to be read, and a light ground cannot carry white type
- * (#bfa6ff under white is 2.1:1 — and the brighter the accent gets, the
+ * (#8ed0f5 under white is 1.7:1 — and the brighter the accent gets, the
  * worse that gets, which is what keeps this rule necessary).
  *
  * So the token goes light for the text, and the fills flip their label
- * here — the standard dark-theme inversion, and 8.6:1 either way. The label
- * itself carries the interior's violet rather than a neutral near-black, so
+ * here — the standard dark-theme inversion, and 8.8:1 either way. The label
+ * itself carries the interior's navy rather than a neutral near-black, so
  * a filled button reads as part of the same palette as the page under it.
  *
  * Only opaque fills are matched. `bg-royal/10` and `bg-royal-tint` are
- * different class names, and a violet wash still wants the light
+ * different class names, and a blue wash still wants the light
  * `text-royal` on top of it — which is why the verdict pills, built on the
  * `-tint` rungs, keep their coloured text. `bg-royal-light` is left out too:
  * it already states `text-deep`, and overriding an explicit choice to reach
@@ -645,5 +652,5 @@ body.grain:has(.app-dark)::after {
 .app-dark .bg-ok,
 .app-dark .bg-warn,
 .app-dark .bg-danger {
-  color: #191038;
+  color: #042a41;
 }

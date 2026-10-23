@@ -42,19 +42,19 @@ export function KnowledgeGraph() {
       className="h-full w-full"
     >
       <defs>
-        {/* Same split as the step diagrams: white does the work, purple marks
+        {/* Same split as the step diagrams: white does the work, blue marks
             the one focal element — here the chunk-and-embed hub. */}
         <linearGradient id="kb-g" x1="0" y1="200" x2="420" y2="0">
           <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0.55" />
         </linearGradient>
         <linearGradient id="kb-p" x1="0" y1="200" x2="420" y2="0">
-          <stop offset="0%" stopColor="#7c3aed" />
-          <stop offset="100%" stopColor="#a78bfa" />
+          <stop offset="0%" stopColor="#005c92" />
+          <stop offset="100%" stopColor="#4e9fd0" />
         </linearGradient>
         <radialGradient id="kb-hub">
-          <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.45" />
-          <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
+          <stop offset="0%" stopColor="#0a6ea8" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#0a6ea8" stopOpacity="0" />
         </radialGradient>
       </defs>
 
@@ -67,9 +67,9 @@ export function KnowledgeGraph() {
             width="108"
             height="36"
             rx="9"
-            stroke="rgba(26,20,48,0.16)"
+            stroke="rgba(2,26,40,0.16)"
             strokeWidth="1.25"
-            fill="rgba(26,20,48,0.032)"
+            fill="rgba(2,26,40,0.032)"
           />
           <text
             x="26"
@@ -84,7 +84,7 @@ export function KnowledgeGraph() {
           {/* Feed line into the hub */}
           <path
             d={`M116 ${source.y} C 168 ${source.y}, 176 96, 226 96`}
-            stroke="rgba(26,20,48,0.12)"
+            stroke="rgba(2,26,40,0.12)"
             strokeWidth="1.25"
           />
           {/* Ingest pulse. SMIL rather than Framer here — motion along an
@@ -117,7 +117,7 @@ export function KnowledgeGraph() {
         cx="250"
         cy="96"
         r="20"
-        fill="#0a0b0f"
+        fill="#02151f"
         stroke="url(#kb-p)"
         strokeWidth="1.5"
       />
@@ -166,7 +166,7 @@ export function KnowledgeGraph() {
         y1="96"
         x2="300"
         y2="96"
-        stroke="rgba(26,20,48,0.16)"
+        stroke="rgba(2,26,40,0.16)"
         strokeWidth="1.25"
       />
       {NODES.map((node, i) => (
@@ -175,7 +175,7 @@ export function KnowledgeGraph() {
           cx={node.x}
           cy={node.y}
           r={node.r}
-          fill="#0a0b0f"
+          fill="#02151f"
           stroke="url(#kb-g)"
           strokeWidth="1.5"
           // `initial` is required, not decorative: on a client-side navigation

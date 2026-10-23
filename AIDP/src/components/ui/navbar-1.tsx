@@ -28,8 +28,8 @@ const Navbar1 = () => {
 
   // Unscrolled means the capsule is over the hero, which is the page's one
   // deep block; scrolled means it is over the light body. It carries its own
-  // colour scheme for each, because a 60%-white pill over deep violet washes
-  // to a muddy lavender and takes its ink label down with it.
+  // colour scheme for each, because a 60%-white pill over deep navy washes
+  // to a muddy slate and takes its ink label down with it.
   const onDeep = !scrolled;
 
   const toggleMenu = () => setIsOpen((v) => !v);

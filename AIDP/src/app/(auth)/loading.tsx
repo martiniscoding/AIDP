@@ -19,7 +19,7 @@ export default function AuthLoading() {
   return (
     <div className="w-full max-w-[440px]">
       {/* Decorative: the announcement below is what reaches assistive tech. */}
-      <div aria-hidden="true" className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(60,50,40,0.10),0_18px_50px_-24px_rgba(60,50,40,0.20),0_40px_90px_-60px_rgba(124,58,237,0.35)] backdrop-blur-2xl sm:p-9">
+      <div aria-hidden="true" className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(4,42,65,0.10),0_18px_50px_-24px_rgba(4,42,65,0.20),0_40px_90px_-60px_rgba(0,92,146,0.35)] backdrop-blur-2xl sm:p-9">
         <div className="animate-pulse">
           {/* Tab switch */}
           <div className="mb-7 grid grid-cols-2 gap-1 rounded-full border border-line bg-canvas-sunk p-1">

@@ -329,15 +329,15 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
               fill is drawn straight into the destination, and on a soft round
               glow the two are indistinguishable. */}
           <radialGradient id="node-halo">
-            <stop offset="0" stopColor="#8b5cf6" stopOpacity={1} />
-            <stop offset="0.4" stopColor="#8b5cf6" stopOpacity={0.72} />
-            <stop offset="0.72" stopColor="#8b5cf6" stopOpacity={0.24} />
-            <stop offset="1" stopColor="#8b5cf6" stopOpacity={0} />
+            <stop offset="0" stopColor="#0a6ea8" stopOpacity={1} />
+            <stop offset="0.4" stopColor="#0a6ea8" stopOpacity={0.72} />
+            <stop offset="0.72" stopColor="#0a6ea8" stopOpacity={0.24} />
+            <stop offset="1" stopColor="#0a6ea8" stopOpacity={0} />
           </radialGradient>
           <radialGradient id="node-core-glow">
-            <stop offset="0" stopColor="#7c3aed" stopOpacity={0.78} />
-            <stop offset="0.42" stopColor="#7c3aed" stopOpacity={0.42} />
-            <stop offset="1" stopColor="#7c3aed" stopOpacity={0} />
+            <stop offset="0" stopColor="#005c92" stopOpacity={0.78} />
+            <stop offset="0.42" stopColor="#005c92" stopOpacity={0.42} />
+            <stop offset="1" stopColor="#005c92" stopOpacity={0} />
           </radialGradient>
           <radialGradient id="origin-glow">
             <stop offset="0" stopColor="#ffffff" stopOpacity={0.8} />
@@ -361,8 +361,8 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
             x2={0}
             y2={startY + ORIGIN_FADE}
           >
-            <stop offset="0" stopColor="#1a1430" stopOpacity={0} />
-            <stop offset="1" stopColor="#1a1430" stopOpacity={0.09} />
+            <stop offset="0" stopColor="#021a28" stopOpacity={0} />
+            <stop offset="1" stopColor="#021a28" stopOpacity={0.09} />
           </linearGradient>
           <linearGradient
             id="path-lit-fade"
@@ -372,8 +372,8 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
             x2={0}
             y2={startY + ORIGIN_FADE}
           >
-            <stop offset="0" stopColor="#6d28d9" stopOpacity={0} />
-            <stop offset="1" stopColor="#6d28d9" stopOpacity={1} />
+            <stop offset="0" stopColor="#004671" stopOpacity={0} />
+            <stop offset="1" stopColor="#004671" stopOpacity={1} />
           </linearGradient>
         </defs>
 
@@ -418,7 +418,7 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
         <circle cx={size.w / 2} cy={startY} r={22} fill="url(#origin-glow)" />
         <circle cx={size.w / 2} cy={startY} r={2.5} fill="#ffffff" />
 
-        {/* The playhead — violet core against the light body, with a lighter
+        {/* The playhead — blue core against the light body, with a lighter
             proximity halo, so passing a step reads as an event rather than
             just a brighter dot. */}
         <motion.circle
@@ -433,11 +433,11 @@ export function ScrollPath({ children }: { children: React.ReactNode }) {
           cx={nodeX}
           cy={nodeY}
           r={4.5}
-          fill="#6d28d9"
+          fill="#004671"
           animate={reduced ? { opacity: 1 } : { opacity: [0.8, 1, 0.8] }}
           transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
         />
-        <motion.circle cx={nodeX} cy={nodeY} r={2} fill="#4c1d95" />
+        <motion.circle cx={nodeX} cy={nodeY} r={2} fill="#003a5c" />
       </svg>
 
       <div

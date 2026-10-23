@@ -67,7 +67,7 @@ export function FeatureGrid() {
                   className="pointer-events-none absolute -top-24 left-1/2 size-56 -translate-x-1/2 rounded-full opacity-0 blur-3xl transition-opacity duration-500 group-hover:opacity-100"
                   style={{
                     background:
-                      "radial-gradient(circle, rgba(124,58,237,0.32), transparent 70%)",
+                      "radial-gradient(circle, rgba(0,92,146,0.32), transparent 70%)",
                   }}
                 />
                 <div className="relative">

@@ -13,7 +13,7 @@ export function FinalCTA() {
         className="animate-drift-a pointer-events-none absolute left-1/2 top-16 size-[42rem] -translate-x-1/2 rounded-full blur-[120px]"
         style={{
           background:
-            "radial-gradient(circle, rgba(124,58,237,0.30), rgba(109,40,217,0.10) 45%, transparent 70%)",
+            "radial-gradient(circle, rgba(0,92,146,0.30), rgba(0,70,113,0.10) 45%, transparent 70%)",
         }}
       />
 
@@ -39,7 +39,7 @@ export function FinalCTA() {
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                "radial-gradient(85% 120% at 50% 0%, rgba(139,92,246,0.42), rgba(124,58,237,0.12) 45%, transparent 70%)",
+                "radial-gradient(85% 120% at 50% 0%, rgba(10,110,168,0.42), rgba(0,92,146,0.12) 45%, transparent 70%)",
             }}
           />
 

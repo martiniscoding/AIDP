@@ -68,7 +68,7 @@ export function KnowledgeSection() {
                   className="pointer-events-none absolute inset-0 rounded-xl opacity-60"
                   style={{
                     background:
-                      "radial-gradient(60% 60% at 70% 40%, rgba(26,20,48,0.05), transparent 70%)",
+                      "radial-gradient(60% 60% at 70% 40%, rgba(2,26,40,0.05), transparent 70%)",
                   }}
                 />
                 <div className="relative aspect-[420/200]">

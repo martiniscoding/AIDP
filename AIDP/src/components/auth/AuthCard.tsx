@@ -68,7 +68,7 @@ export function AuthCard({
         className,
       )}
     >
-      <div className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(60,50,40,0.10),0_18px_50px_-24px_rgba(60,50,40,0.20),0_40px_90px_-60px_rgba(124,58,237,0.35)] backdrop-blur-2xl sm:p-9">
+      <div className="edge-light relative overflow-hidden rounded-2xl border border-line bg-card p-7 shadow-[0_1px_2px_-1px_rgba(4,42,65,0.10),0_18px_50px_-24px_rgba(4,42,65,0.20),0_40px_90px_-60px_rgba(0,92,146,0.35)] backdrop-blur-2xl sm:p-9">
         {/* Light falling on the top edge of the glass, from the same side as
             the artwork's glow. Sits under the content, not over it. */}
         <div
@@ -76,7 +76,7 @@ export function AuthCard({
           className="pointer-events-none absolute inset-x-0 top-0 h-48"
           style={{
             background:
-              "radial-gradient(90% 100% at 50% 0%, rgba(139,92,246,0.14), transparent 72%)",
+              "radial-gradient(90% 100% at 50% 0%, rgba(10,110,168,0.14), transparent 72%)",
           }}
         />
 

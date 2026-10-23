@@ -17,15 +17,15 @@ const base =
   "disabled:pointer-events-none disabled:opacity-55";
 
 /**
- * Royal purple is reserved for the primary action — the one thing on any
+ * Deep blue is reserved for the primary action — the one thing on any
  * screen that should pull the eye. Secondary and ghost stay monochrome so
  * it keeps that job to itself.
  */
 const variants: Record<Variant, string> = {
   primary: cn(
-    "bg-royal text-white shadow-[0_1px_0_0_rgba(255,255,255,0.22)_inset,0_2px_6px_-2px_rgba(109,40,217,0.28),0_10px_28px_-12px_rgba(109,40,217,0.45)]",
+    "bg-royal text-white shadow-[0_1px_0_0_rgba(255,255,255,0.22)_inset,0_2px_6px_-2px_rgba(0,70,113,0.28),0_10px_28px_-12px_rgba(0,70,113,0.45)]",
     "hover:-translate-y-px hover:bg-royal-mid active:translate-y-0",
-    "hover:shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset,0_4px_10px_-3px_rgba(109,40,217,0.32),0_18px_40px_-14px_rgba(124,58,237,0.55)]",
+    "hover:shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset,0_4px_10px_-3px_rgba(0,70,113,0.32),0_18px_40px_-14px_rgba(0,92,146,0.55)]",
   ),
   secondary: cn(
     "border border-line bg-card text-ink/88 shadow-card",
@@ -34,7 +34,7 @@ const variants: Record<Variant, string> = {
   ),
   ghost: "text-ink/74 hover:text-ink hover:bg-canvas-sunk rounded-full",
   // For the deep anchor surfaces. `secondary` is a white card, which on a
-  // violet ground shouts louder than the primary action next to it.
+  // blue ground shouts louder than the primary action next to it.
   glass: cn(
     "border border-white/25 bg-white/10 text-white/90 backdrop-blur-md",
     "hover:-translate-y-px hover:border-white/40 hover:bg-white/[0.18] hover:text-white",

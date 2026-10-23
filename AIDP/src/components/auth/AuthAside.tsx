@@ -86,11 +86,23 @@ export function AuthAside() {
              dark ground for the copy. Scaling from the bottom edge trims sky
              off the top instead, lifting the horizon to roughly 58% and
              enlarging the cactus and pylons that make the crop read as a
-             landscape rather than a purple wash. */
+             landscape rather than a blue wash. */
           className="origin-bottom scale-[1.45] object-cover object-[26%_center]"
         />
 
-        {/* Level the whole plate, then pull the lower third to deep violet so
+        {/* The source photograph is a magenta sunset — the one colour on this
+            page that a scrim cannot reach, because the scrims above are part
+            transparent by design and the sky shows through them. A `color`
+            blend keeps the photo's luminance and replaces its hue and
+            saturation wholesale, so the plate is blue whatever the asset
+            underneath happens to be. Cheaper and more durable than reshooting
+            the crop, and it survives the next photo swap. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-[#0a6ea8] mix-blend-color"
+        />
+
+        {/* Level the whole plate, then pull the lower third to deep navy so
             the headline below sits on colour rather than on the magenta band.
             This panel is the auth screen's anchor: it carries the accent at
             full strength so the white form column beside it reads as light by
@@ -98,20 +110,20 @@ export function AuthAside() {
         <div className="absolute inset-0 bg-deep/20" />
         {/* Two jobs, kept apart: a wash over the sky so the logo row reads,
             and a hard ramp that starts below the horizon so the copy block
-            sits on solid violet while the landscape above it stays visible. */}
+            sits on solid blue while the landscape above it stays visible. */}
         <div
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(to bottom, rgba(46,16,101,0.55) 0%, rgba(46,16,101,0.10) 24%, rgba(46,16,101,0.34) 46%, rgba(46,16,101,0.84) 64%, rgba(46,16,101,0.96) 80%, #2e1065 94%)",
+              "linear-gradient(to bottom, rgba(4,42,65,0.55) 0%, rgba(4,42,65,0.10) 24%, rgba(4,42,65,0.34) 46%, rgba(4,42,65,0.84) 64%, rgba(4,42,65,0.96) 80%, #042a41 94%)",
           }}
         />
-        {/* Purple wash ties the photo to the accent used on the form side. */}
+        {/* Blue wash ties the photo to the accent used on the form side. */}
         <div
           className="absolute inset-0 mix-blend-soft-light"
           style={{
             background:
-              "radial-gradient(70% 50% at 30% 20%, rgba(139,92,246,0.55), transparent 70%)",
+              "radial-gradient(70% 50% at 30% 20%, rgba(10,110,168,0.55), transparent 70%)",
           }}
         />
         {/* Engineering grid — faint, and only over the darker lower half. */}
@@ -144,11 +156,11 @@ export function AuthAside() {
         {/* The halo is legibility, not decoration: a short headline on the
             sign-in copy rides higher up the panel, where a viewport crop can
             still slide the bright band under it. */}
-        <h2 className="max-w-[16ch] font-display text-[clamp(2rem,2.9vw,2.75rem)] font-medium leading-[1.06] tracking-[-0.04em] text-white text-balance [text-shadow:0_2px_26px_rgba(46,16,101,0.7)]">
+        <h2 className="max-w-[16ch] font-display text-[clamp(2rem,2.9vw,2.75rem)] font-medium leading-[1.06] tracking-[-0.04em] text-white text-balance [text-shadow:0_2px_26px_rgba(4,42,65,0.7)]">
           {copy.title}
         </h2>
 
-        <p className="mt-5 max-w-[46ch] text-[15px] leading-[1.65] text-white/78 text-pretty [text-shadow:0_1px_14px_rgba(46,16,101,0.7)]">
+        <p className="mt-5 max-w-[46ch] text-[15px] leading-[1.65] text-white/78 text-pretty [text-shadow:0_1px_14px_rgba(4,42,65,0.7)]">
           {copy.body}
         </p>
 

@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
  * architecture resolving to a single decision. Drawn, not imported.
  */
 /**
- * `ink` for the light surfaces, `light` for the deep violet anchors — the
+ * `ink` for the light surfaces, `light` for the deep navy anchors — the
  * mark is drawn rather than imported, so it has to be told which ground it is
  * sitting on instead of inheriting a fill.
  */
@@ -19,7 +19,7 @@ export function LogoMark({
   className?: string;
   tone?: Tone;
 }) {
-  const stroke = tone === "ink" ? "#1a1430" : "#ffffff";
+  const stroke = tone === "ink" ? "#021a28" : "#ffffff";
   return (
     <svg
       viewBox="0 0 32 32"
@@ -50,7 +50,7 @@ export function LogoMark({
         cx="22.5"
         cy="16"
         r="3"
-        fill={tone === "ink" ? "#6d28d9" : "#c4b5fd"}
+        fill={tone === "ink" ? "#004671" : "#c2e8ff"}
       />
     </svg>
   );

@@ -64,7 +64,7 @@ export function Field({
             isPassword ? "pr-11" : null,
             error
               ? "border-danger-line focus:border-danger focus:shadow-[0_0_0_3px_rgba(190,18,60,0.14)]"
-              : "border-line focus:border-royal focus:shadow-[0_0_0_3px_rgba(109,40,217,0.15)]",
+              : "border-line focus:border-royal focus:shadow-[0_0_0_3px_rgba(0,70,113,0.15)]",
           )}
           {...props}
         />

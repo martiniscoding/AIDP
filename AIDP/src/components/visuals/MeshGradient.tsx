@@ -20,7 +20,7 @@ type Props = {
   showGrid?: boolean;
   /**
    * Which ground this is painted on. `light` is pigment over the page canvas
-   * — violet that tints paper, and it has to stay weak or it bruises. `deep`
+   * — blue that tints paper, and it has to stay weak or it bruises. `deep`
    * is emitted light over one of the dark anchor surfaces, where the same
    * composition needs roughly three times the alpha to register at all.
    */
@@ -30,20 +30,20 @@ type Props = {
 /** The same five stops in both tones; only how hard they are pushed changes. */
 const TONE = {
   light: {
-    core: "rgba(124,58,237,0.15), rgba(124,58,237,0) 64%",
-    inner: "rgba(91,33,182,0.10), rgba(91,33,182,0) 62%",
-    a: "rgba(109,40,217,0.14), rgba(109,40,217,0) 68%",
-    b: "rgba(99,102,241,0.11), rgba(99,102,241,0) 66%",
-    c: "rgba(124,58,237,0.11), rgba(124,58,237,0) 70%",
-    grid: "rgba(26,20,48,0.055)",
+    core: "rgba(0,92,146,0.15), rgba(0,92,146,0) 64%",
+    inner: "rgba(0,58,92,0.10), rgba(0,58,92,0) 62%",
+    a: "rgba(0,70,113,0.14), rgba(0,70,113,0) 68%",
+    b: "rgba(23,122,174,0.11), rgba(23,122,174,0) 66%",
+    c: "rgba(0,92,146,0.11), rgba(0,92,146,0) 70%",
+    grid: "rgba(2,26,40,0.055)",
     gridOpacity: 0.5,
   },
   deep: {
-    core: "rgba(139,92,246,0.42), rgba(139,92,246,0) 64%",
-    inner: "rgba(196,181,253,0.28), rgba(196,181,253,0) 62%",
-    a: "rgba(124,58,237,0.44), rgba(124,58,237,0) 68%",
+    core: "rgba(10,110,168,0.42), rgba(10,110,168,0) 64%",
+    inner: "rgba(194,232,255,0.28), rgba(194,232,255,0) 62%",
+    a: "rgba(0,92,146,0.44), rgba(0,92,146,0) 68%",
     b: "rgba(255,255,255,0.14), rgba(255,255,255,0) 66%",
-    c: "rgba(167,139,250,0.30), rgba(167,139,250,0) 70%",
+    c: "rgba(78,159,208,0.30), rgba(78,159,208,0) 70%",
     grid: "rgba(255,255,255,0.06)",
     gridOpacity: 0.28,
   },
@@ -145,7 +145,7 @@ export function MeshGradient({
         className,
       )}
     >
-      {/* Cursor-anchored core wash: one violet field with a denser violet
+      {/* Cursor-anchored core wash: one blue field with a denser blue
           core inside it. No second hue. */}
       <div
         className="absolute inset-0"

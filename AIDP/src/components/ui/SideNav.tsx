@@ -27,7 +27,7 @@ import { cn } from "@/lib/cn";
  * links group under their own headings, and the account sits at the foot where
  * people look for it rather than competing with the links for the same row.
  *
- * It is one deep violet column against light pages. That is the same
+ * It is one deep navy column against light pages. That is the same
  * arrangement the rest of the product uses — a few full-strength anchors with
  * everything between them bright — scaled up to the shell, so a page opens on
  * paper and the chrome is the dark part.

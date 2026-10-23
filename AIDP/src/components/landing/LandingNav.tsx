@@ -16,15 +16,15 @@ const LINKS = [
 ];
 
 /**
- * The landing header: a transparent bar riding on the hero's violet band
+ * The landing header: a transparent bar riding on the hero's blue band
  * rather than a bonded or floating one. It is in normal flow as the hero's
  * first child, so the band's height is what pushes the badge and headline
  * down — nothing here is positioned, and the copy below never has to guess
  * how much room to leave for it.
  *
- * Everything is white-on-violet, which only holds while the bar sits in the
+ * Everything is white-on-blue, which only holds while the bar sits in the
  * top ~90px of the hero where the gradient is still at full strength. The
- * mobile sheet drops to ink-on-paper because it covers the page, violet band
+ * mobile sheet drops to ink-on-paper because it covers the page, blue band
  * included.
  */
 export function LandingNav() {
@@ -130,7 +130,7 @@ export function LandingNav() {
               <Link
                 href="/sign-up"
                 onClick={() => setIsOpen(false)}
-                className="mt-3 inline-flex h-13 items-center justify-center rounded-[11px] bg-[linear-gradient(180deg,#8b5cf6_0%,#6d28d9_100%)] px-7 text-[15px] font-medium text-white"
+                className="mt-3 inline-flex h-13 items-center justify-center rounded-[11px] bg-[linear-gradient(180deg,#0a6ea8_0%,#004671_100%)] px-7 text-[15px] font-medium text-white"
               >
                 Sign up
               </Link>
