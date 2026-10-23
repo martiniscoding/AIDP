@@ -80,6 +80,11 @@ model User {
   // pasted it has left.
   providerCredentials ProviderCredential[]
 
+  // Architecture requests they raised, and reviews routed to them.
+  // Attribution only, in both directions — see ArchitectureRequest.
+  architectureRequests ArchitectureRequest[]
+  reviewAssignments    ReviewAssignment[]
+
   @@map("user")
 }
 
@@ -174,6 +179,10 @@ model Organisation {
   projects    Project[]
   usage       TokenUsage[]
   aiCache     AiCache[]
+  requests    ArchitectureRequest[]
+  /// This customer's own significance criteria. Seeded from the default nine
+  /// and editable thereafter — see SignificanceCriterion.
+  significanceCriteria SignificanceCriterion[]
 
   /// The company's own model key, when they have brought one. Absent is the
   /// normal state and means the deployment's own key does their work.
@@ -396,6 +405,13 @@ model Project {
   /// Rulings that apply to this project alone — a breach the board allowed for
   /// this piece of work and nowhere else. See Decision.scope.
   decisions Decision[]
+
+  /// Architecture requests filed against this piece of work. A project is the
+  /// container and routinely holds several — which is why a request names the
+  /// project it belongs to rather than founding one from its own title: two
+  /// requests sharing a title is ordinary, and `@@unique([organisationId,
+  /// name])` on this model would refuse the second one.
+  requests ArchitectureRequest[]
 
   /// One name per organisation. Two projects called "Portal" in the same
   /// workspace is a support ticket waiting to happen, and the constraint gives
@@ -1064,6 +1080,9 @@ model Framework {
 
   @@unique([organisationId, name, version])
   @@index([organisationId])
+  /// `resolveFramework` asks for the newest version that has not been
+  /// superseded, on every assessment. Created in 20261007090000_framework_superseded.
+  @@index([organisationId, supersededAt])
   @@map("framework")
 }
 
@@ -1273,6 +1292,11 @@ model Finding {
   @@unique([runId, clauseId, designKey])
   @@index([runId, documentId])
   @@index([runId, verdict])
+  /// Severity is a function of verdict and obligation, so the report groups on
+  /// the pair. Created in 20261014090000_finding_obligation and declared here
+  /// only later — an index the database held but the schema did not was one
+  /// `prisma migrate` would offer to drop on the next unrelated change.
+  @@index([runId, obligation], map: "finding_run_obligation_idx")
   @@map("finding")
 }
 
@@ -1444,6 +1468,9 @@ model SubmissionOutcome {
   @@index([organisationId, createdAt])
   @@index([documentId, createdAt])
   @@index([runId])
+  /// A project's decision history, for a run that signed off every design in
+  /// it. Created in 20261002094000_project_submission_outcome.
+  @@index([projectId, createdAt])
   @@map("submission_outcome")
 }
 
@@ -1610,4 +1637,338 @@ model AiCache {
   @@unique([organisationId, kind, fingerprint])
   @@index([organisationId, lastUsedAt])
   @@map("ai_cache")
+}
+
+// ---------------------------------------------------------------------------
+// Architecturally significant review
+//
+// The governance wrapper around the assessment engine. A request is one
+// submission through the five-step workflow: Intake, an Architecture Criteria
+// Check and an Architecture Review running in parallel off the same intake
+// data, a combined Review Report, and a Decision.
+//
+// Nothing here is read by the Python workers. They address twenty tables by
+// name and none of these is among them, which is what keeps this layer from
+// being able to change a verdict: it surrounds the engine and never reaches
+// into it. The one place the two meet is `documentId` below.
+// ---------------------------------------------------------------------------
+
+/// One submission through the ARB workflow.
+///
+/// This is the governance record, and it outlives everything it produced. A
+/// document can be removed from the library and a project archived; the
+/// question "what was submitted, and what was decided about it" still has to
+/// have an answer, which is why the links out of here are deliberately weak.
+model ArchitectureRequest {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// The human-readable identifier, "AR-0001". Quoted in email subjects, in a
+  /// board packet and by whoever rings up to ask about it, none of which can be
+  /// done with a cuid.
+  ///
+  /// Per organisation, not global: a customer counting their own submissions
+  /// from one should not be able to infer how many another has filed.
+  reference String
+
+  /// The piece of work this belongs to. Required, and chosen by the requestor
+  /// rather than created from the title — see the note on Project.requests.
+  ///
+  /// `SetNull` is not available here because the column is required; a project
+  /// is archived rather than deleted, so the cascade is the honest description
+  /// of what removing one would mean for the requests inside it.
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// The design the engine actually assessed, written once the intake answers
+  /// have been rendered into a document and taken in through `record()` in
+  /// src/lib/ingest/intake.ts.
+  ///
+  /// Not a foreign key, for the same reason as Decision.sourceDocumentId: a
+  /// governance record has to survive its source document being removed from
+  /// the library, and a cascade here would erase the submission along with it.
+  ///
+  /// Null until the document exists, which is always *after* this row does. The
+  /// rendered document carries this request's id and submission time inside it
+  /// precisely so that two identical sets of answers do not hash to the same
+  /// bytes — `record()` is content-addressed and would otherwise resolve the
+  /// second submission to the first one's document and never start a run.
+  documentId String?
+
+  /// The diagram, when one was supplied. Relation-free for the same reason.
+  diagramDocumentId String?
+
+  /// The assessment this request opened. Relation-free for the same reason.
+  runId String?
+
+  // --- Group A: request basics ---------------------------------------------
+
+  /// Who raised it. Nullable and paired with a denormalised name, exactly as
+  /// Decision.decidedByName is: the record has to keep naming the requestor
+  /// after their account is gone.
+  requestedById   String?
+  requestedBy     User?   @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  requestedByName String  @default("")
+  /// Their team, as they gave it. A label for routing and the audit trail, not
+  /// a reference to anything this system models.
+  team            String  @default("")
+
+  title   String
+  summary String @default("")
+
+  /// When implementation is planned to begin. Read by the Time Impact
+  /// criterion, which asks whether that is further out than the organisation's
+  /// configured window.
+  plannedStart DateTime?
+
+  // --- Group B: solution description ---------------------------------------
+
+  problemStatement String @default("")
+  /// The components and how they interact. This is the text the compliance
+  /// check actually runs against, so an empty one is a submission with nothing
+  /// to assess — enforced at intake rather than here, because a draft is
+  /// allowed to be incomplete and a submitted request is not.
+  solutionOverview String @default("")
+
+  // --- Group C: structured architecture details ----------------------------
+
+  technologies String[] @default([])
+
+  newTechnologyComponent     Boolean @default(false)
+  newTechnologyComponentName String  @default("")
+
+  replacesTechnologyComponent     Boolean @default(false)
+  replacedTechnologyComponentName String  @default("")
+
+  integrationPoints String @default("")
+
+  /// How the solution authenticates and authorises.
+  ///
+  /// The brief maps this to the Security Impact criterion, but the criterion's
+  /// own trigger is "any major change in the security domain", which free text
+  /// cannot answer deterministically. `securityDomainChange` below is the field
+  /// that actually drives it; this one is prose for the review to read.
+  authMechanism String @default("")
+
+  dataStores         String  @default("")
+  dataClassification String  @default("")
+  newOrDuplicatedStorage Boolean @default(false)
+
+  hostingEnvironment String @default("")
+
+  // --- Group D: business and governance impact -----------------------------
+
+  /// Estimated cost, against the organisation's configured governance
+  /// threshold. No currency column: every threshold a customer configures is in
+  /// their own currency and comparing across customers is not a question this
+  /// product asks. If that ever changes it is a migration, not a default.
+  estimatedCost Decimal? @db.Decimal(18, 2)
+
+  newLicenceRequired Boolean @default(false)
+  newLicenceVendor   String  @default("")
+
+  linesOfBusiness       String[] @default([])
+  newBusinessCapability Boolean  @default(false)
+
+  regulatoryImpact       Boolean @default(false)
+  regulatoryImpactDetail String  @default("")
+
+  /// Not in the brief's field list, and required by its own criteria table.
+  ///
+  /// Security Impact triggers on "a major change in the security domain, e.g.
+  /// one that requires a higher-tier Authority-to-Operate or risk assessment".
+  /// The only field the brief maps to that category is the authentication
+  /// mechanism, which is prose. A significance check that has to be auditable
+  /// cannot rest on a model's reading of a sentence, so the requestor is asked
+  /// the question the criterion actually puts.
+  securityDomainChange       Boolean @default(false)
+  securityDomainChangeDetail String  @default("")
+
+  applicationDecommissioned     Boolean @default(false)
+  applicationDecommissionedName String  @default("")
+
+  /// "standard" | "business_critical" | "mission_critical".
+  ///
+  /// A string rather than an enum, as everywhere else in this schema: the
+  /// vocabulary belongs to the customer's own application inventory and will
+  /// grow without asking us.
+  applicationCriticality String @default("standard")
+
+  newApplicationStandard   Boolean @default(false)
+  dataGovernanceEscalation Boolean @default(false)
+
+  standardsChangeProposed Boolean @default(false)
+  standardsChangeDetail   String  @default("")
+
+  // --- Workflow state ------------------------------------------------------
+
+  /// "draft"     — being filled in. Mandatory fields are not yet enforced.
+  /// "submitted" — accepted; the document is rendered and taken in, and the
+  ///               assessment starts as soon as it has finished indexing.
+  /// "checking"  — the criteria check and the assessment are running.
+  /// "reported"  — both are done and the combined report stands.
+  /// "decided"   — an outcome has been recorded against it.
+  /// "failed"    — it could not be carried further, and `failureReason` says
+  ///               why. A request that cannot proceed has to say so: the
+  ///               alternative is a submission that sits in "submitted" for
+  ///               ever while its requestor waits for a report.
+  ///
+  /// A string with its values written down here rather than a Prisma enum, for
+  /// the reason SubmissionOutcome.decision gives: a vocabulary that grows
+  /// should not cost a migration.
+  state String @default("draft")
+
+  /// Why it stopped, in words the requestor can act on — their standards
+  /// library is empty, or the rendered document could not be read. Null in
+  /// every other state, and cleared when a retry gets further.
+  failureReason String?
+
+  /// The criteria check's answer: "significant" | "not_significant", or null
+  /// while it has not run.
+  ///
+  /// Stored rather than derived from the results below. Criteria are editable,
+  /// and a report has to keep explaining the classification it actually
+  /// reached — the same reasoning that pins a framework version to a run.
+  significance   String?
+  significanceAt DateTime?
+
+  submittedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  significanceResults SignificanceResult[]
+  assignments         ReviewAssignment[]
+
+  /// One reference per customer. The generator counts this customer's existing
+  /// requests, so the constraint is what makes two people filing at the same
+  /// moment collide loudly instead of sharing a reference.
+  @@unique([organisationId, reference])
+  @@index([organisationId, state])
+  @@index([projectId])
+  @@map("architecture_request")
+}
+
+/// One configurable rule for deciding whether a submission is architecturally
+/// significant.
+///
+/// Seeded with the brief's nine categories and editable by an administrator
+/// thereafter, which is the whole point of it being a table: the thresholds are
+/// the customer's governance policy, not ours.
+model SignificanceCriterion {
+  id String @id @default(cuid())
+
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Stable machine name — "major_technology_change", "cost_impact". One per
+  /// customer, and never rewritten: the seed is matched on it, and a stored
+  /// result names it to say which rule was applied.
+  category String
+
+  /// What an administrator sees. Editable, which is exactly why a result
+  /// denormalises it rather than joining to it.
+  label       String
+  description String @default("")
+
+  /// The conditions, any one of which triggers this category — the brief lists
+  /// them as bullets under each heading, and bullets are an "or".
+  ///
+  /// Shape, checked by the evaluator rather than by Postgres:
+  ///
+  ///   [{ "field": "newTechnologyComponent", "operator": "is_true" },
+  ///    { "field": "estimatedCost", "operator": "at_least", "value": 5000000 },
+  ///    { "field": "plannedStart", "operator": "further_out_than_months", "value": 12 }]
+  ///
+  /// `field` names a column on ArchitectureRequest. Json rather than columns
+  /// because this is a small rule language and a table of operators would be a
+  /// schema that changes every time a customer phrases a threshold differently.
+  conditions Json @default("[]")
+
+  /// An administrator turns a category off rather than deleting it, so that
+  /// results recorded while it was on keep making sense.
+  active Boolean @default(true)
+
+  /// Display order. The brief's own ordering, by default.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organisationId, category])
+  @@index([organisationId, active])
+  @@map("significance_criterion")
+}
+
+/// What the criteria check found, one row per criterion it looked at.
+///
+/// Both halves are recorded, not just the triggers: the brief asks for "the
+/// specific criteria checked and triggered", and a list of triggers alone
+/// cannot answer "was this category even considered?" once an administrator has
+/// turned one off.
+model SignificanceResult {
+  id String @id @default(cuid())
+
+  requestId String
+  request   ArchitectureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  /// Not a foreign key, and the wording below is denormalised beside it, for
+  /// the same reason Finding carries `clauseRef` and `clauseStatement`:
+  /// criteria are editable, and a classification reached in March has to keep
+  /// stating the rule it was reached under.
+  criterionId   String
+  category      String
+  categoryLabel String
+  conditionText String @default("")
+
+  triggered Boolean @default(false)
+
+  /// Which answers fired it: [{ field, operator, value, actual }]. Empty when
+  /// nothing did. This is the line an auditor reads — "cost impact triggered
+  /// because 7,500,000 is at least 5,000,000" — and it is why the check stores
+  /// its working rather than only its conclusion.
+  triggeredBy Json @default("[]")
+
+  createdAt DateTime @default(now())
+
+  @@unique([requestId, criterionId])
+  @@index([requestId, triggered])
+  @@map("significance_result")
+}
+
+/// Which architect a request is routed to.
+///
+/// A row per routing rather than a column on the request, because reassignment
+/// is normal — somebody is on leave, somebody else owns that domain — and
+/// "who was it with on the 12th" is a question a governance audit asks. The
+/// live one is the row whose state is "active".
+model ReviewAssignment {
+  id String @id @default(cuid())
+
+  requestId String
+  request   ArchitectureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  /// The architect. Nullable with a denormalised name beside it, as everywhere
+  /// else a person is recorded here.
+  assignedToId   String?
+  assignedTo     User?   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedToName String  @default("")
+
+  /// Who routed it, or empty when the platform did it from the decision logic.
+  assignedById   String?
+  assignedByName String  @default("")
+
+  /// "active" | "completed" | "reassigned"
+  state String @default("active")
+
+  /// Why it was routed here, when somebody chose rather than the rules.
+  note String @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([requestId, state])
+  @@index([assignedToId, state])
+  @@map("review_assignment")
 }
