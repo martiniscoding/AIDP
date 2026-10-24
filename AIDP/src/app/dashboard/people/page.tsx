@@ -10,7 +10,7 @@ import { StatCard } from "@/components/ui/StatCard";
 
 export const metadata: Metadata = {
   title: "People",
-  description: "Who can use Dexter in your organisation, and what they are spending.",
+  description: "Who can use AIDP in your organisation, and what they are spending.",
 };
 
 /**
@@ -49,7 +49,7 @@ export default async function PeoplePage() {
         title="People"
         lede={
           <>
-            Everyone at {access.organisation.name} who can use Dexter. Load your staff
+            Everyone at {access.organisation.name} who can use AIDP. Load your staff
             list, then admit the people who need access — nobody gets in until you
             say so.
           </>

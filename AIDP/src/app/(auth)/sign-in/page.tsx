@@ -3,7 +3,7 @@ import { SignInForm } from "./SignInForm";
 
 export const metadata: Metadata = {
   title: "Sign in",
-  description: "Sign in to Dexter.",
+  description: "Sign in to AIDP.",
 };
 
 export default function SignInPage() {

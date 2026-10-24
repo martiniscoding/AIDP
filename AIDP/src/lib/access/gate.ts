@@ -198,7 +198,7 @@ export async function admit(user: {
 
   // A platform operator is nobody's employee either, but they are not
   // registering a company — they run the product. Founding one for them would
-  // put an organisation named "Dexter" in the customer list the first time they
+  // put an organisation named "AIDP" in the customer list the first time they
   // clicked through to a dashboard, and it would be indistinguishable from a
   // real customer afterwards. An operator who *does* legitimately run a
   // workspace still has a membership, and returned above.

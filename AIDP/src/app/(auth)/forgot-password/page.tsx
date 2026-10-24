@@ -3,7 +3,7 @@ import { ForgotPasswordForm } from "./ForgotPasswordForm";
 
 export const metadata: Metadata = {
   title: "Reset your password",
-  description: "Request a password reset link for your Dexter account.",
+  description: "Request a password reset link for your AIDP account.",
 };
 
 export default function ForgotPasswordPage() {

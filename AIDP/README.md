@@ -1,6 +1,6 @@
-# Dexter — landing page & authentication
+# AIDP — landing page & authentication
 
-Marketing site and auth flow for **Dexter**, an AI-native enterprise architecture
+Marketing site and auth flow for **AIDP**, an AI-native enterprise architecture
 governance platform.
 
 This build covers the public landing page and the four auth screens only. The

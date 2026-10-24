@@ -186,7 +186,7 @@ export function AuthAside() {
 
           <div>
             <dt className="text-[12px] font-medium uppercase tracking-[0.14em] text-royal-light">
-              With Dexter
+              With AIDP
             </dt>
             <dd className="mt-1.5 font-display text-[2rem] font-medium tracking-[-0.045em] text-white tabular-nums">
               3–5{" "}

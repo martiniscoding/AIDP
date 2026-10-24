@@ -3,7 +3,7 @@ import { ResetPasswordForm } from "./ResetPasswordForm";
 
 export const metadata: Metadata = {
   title: "Choose a new password",
-  description: "Set a new password for your Dexter account.",
+  description: "Set a new password for your AIDP account.",
 };
 
 /**

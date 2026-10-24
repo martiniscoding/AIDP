@@ -8,7 +8,7 @@ import { StatCard } from "@/components/ui/StatCard";
 
 export const metadata: Metadata = {
   title: "Companies",
-  description: "Every organisation using Dexter, their people, and their usage.",
+  description: "Every organisation using AIDP, their people, and their usage.",
 };
 
 /**

@@ -310,7 +310,7 @@ decision and an ADR before the embed worker is written.
 
 ## 9. These documents also impose requirements on AIDP itself
 
-Easy to miss: if Dexter delivers a data solution to a client like the one behind
+Easy to miss: if AIDP delivers a data solution to a client like the one behind
 document 4, then *their* standards bind *us*. Security Standards §1.3 and §11 say
 so directly — the standards are "binding for internal teams, contractors, and
 external vendors."

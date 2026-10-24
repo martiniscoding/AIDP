@@ -1,4 +1,4 @@
-# How Dexter chunks a standards document
+# How AIDP chunks a standards document
 
 Written to be explainable to a client. Every figure quoted here is measured from
 the working system, not estimated.
@@ -35,7 +35,7 @@ In a compliance tool that is not a cosmetic problem. It is the difference betwee
 
 ## The principle
 
-**Dexter does not decide where to cut. The document already decided.**
+**AIDP does not decide where to cut. The document already decided.**
 
 A standards document is not a wall of text. It has a structure its authors
 created deliberately — numbered sections, headings, a table of contents. That
@@ -243,7 +243,7 @@ otherwise look complete while testing against half the standard.
 
 ## Summary in one paragraph
 
-Dexter cuts a standards document along the structure its authors already created,
+AIDP cuts a standards document along the structure its authors already created,
 not at arbitrary character counts. Each rule is stored whole and never divided,
 so a requirement is never separated from the principle that gives it meaning.
 Tables are indexed row by row, diagrams are read and described, and narrative

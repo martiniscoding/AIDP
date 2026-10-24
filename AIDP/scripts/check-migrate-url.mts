@@ -67,5 +67,5 @@ if (!direct && host(pooled ?? "").includes("-pooler")) {
 
 // Said once, so a successful deploy's log records which host it migrated.
 console.log(
-  `[dexter] migrating against ${host(chosen)}${direct ? " (DIRECT_DATABASE_URL)" : ""}`,
+  `[aidp] migrating against ${host(chosen)}${direct ? " (DIRECT_DATABASE_URL)" : ""}`,
 );

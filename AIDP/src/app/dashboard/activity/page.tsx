@@ -35,7 +35,7 @@ export default async function ActivityPage() {
         title="Activity"
         lede={
           <>
-            What everyone at {access.organisation.name} has put through Dexter — which
+            What everyone at {access.organisation.name} has put through AIDP — which
             standards they contributed, which designs they submitted, and where each
             one got to.
           </>

@@ -1,4 +1,4 @@
-// Dexter auth schema.
+// AIDP auth schema.
 //
 // These four models are Better Auth's core tables. The field names are not
 // arbitrary — Better Auth addresses them directly through the Prisma adapter,

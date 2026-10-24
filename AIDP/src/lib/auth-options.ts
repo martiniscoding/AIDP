@@ -83,9 +83,9 @@ export const authOptions = {
      *   import { Resend } from "resend";
      *   const resend = new Resend(process.env.RESEND_API_KEY);
      *   await resend.emails.send({
-     *     from: "Dexter <no-reply@yourdomain.com>",
+     *     from: "AIDP <no-reply@yourdomain.com>",
      *     to: user.email,
-     *     subject: "Reset your Dexter password",
+     *     subject: "Reset your AIDP password",
      *     html: `<a href="${url}">Choose a new password</a>`,
      *   });
      */
@@ -96,7 +96,7 @@ export const authOptions = {
         );
       }
       console.info(
-        `\n[Dexter] Password reset requested for ${user.email}\n[Dexter] Reset link: ${url}\n`,
+        `\n[AIDP] Password reset requested for ${user.email}\n[AIDP] Reset link: ${url}\n`,
       );
     },
   },

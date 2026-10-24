@@ -96,13 +96,13 @@ const body = existing
 writeFileSync(envPath, body);
 
 console.log(
-  `[dexter] ${existsSync(envPath) && existing ? "added" : "generated"} ${envPath}: ${missing
+  `[aidp] ${existsSync(envPath) && existing ? "added" : "generated"} ${envPath}: ${missing
     .map((entry) => entry.key)
     .join(", ")}`,
 );
 
 if (missing.some((entry) => entry.key === "DATABASE_URL")) {
   console.log(
-    "[dexter] DATABASE_URL is empty — paste your Neon pooled connection string into .env.local, then run `npm run db:migrate`.",
+    "[aidp] DATABASE_URL is empty — paste your Neon pooled connection string into .env.local, then run `npm run db:migrate`.",
   );
 }
