@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AIDP">
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#06334e"/>
+      <stop offset="1" stop-color="#01131d"/>
+    </linearGradient>
+    <linearGradient id="t0" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#f2fdff"/><stop offset="1" stop-color="#c9f8ff"/>
+    </linearGradient>
+    <linearGradient id="t1" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#b2e6fe"/><stop offset="1" stop-color="#93d9ff"/>
+    </linearGradient>
+    <linearGradient id="t2" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#96c0d6"/><stop offset="1" stop-color="#71a0ba"/>
+    </linearGradient>
+    <linearGradient id="t3" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#3a8dbb"/><stop offset="1" stop-color="#003a66"/>
+    </linearGradient>
+  </defs>
+  <!-- The master sits on black, so the tab icon keeps its ground: the pale
+       tiles need a dark plate to survive a light browser chrome. -->
+  <rect width="512" height="512" rx="112" fill="url(#p)"/>
+  <g transform="translate(87 87) scale(1.04) translate(84.5 7.5) skewX(-17.4)">
+    <rect x="0" y="0" width="152" height="143" rx="11" fill="url(#t0)"/>
+    <rect x="170" y="62" width="85" height="81" rx="9" fill="url(#t1)"/>
+    <rect x="0" y="165" width="85" height="88" rx="9" fill="url(#t2)"/>
+    <rect x="103" y="165" width="153" height="145" rx="11" fill="url(#t3)"/>
+  </g>
+</svg>

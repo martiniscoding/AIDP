@@ -3,6 +3,7 @@ import { EyeOff } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/access/gate";
 import { SideNav, type NavGroup } from "@/components/ui/SideNav";
+import { TopBar } from "@/components/ui/TopBar";
 import { SignOutButton } from "../dashboard/SignOutButton";
 import { SessionTimeout } from "@/components/auth/SessionTimeout";
 
@@ -50,26 +51,25 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   ];
 
   return (
-    <div className="app-dark flex min-h-svh">
+    <div className="app-shell flex min-h-svh">
       <SessionTimeout />
 
-      <SideNav
-        brandHref="/admin"
-        badge="Operator"
-        groups={groups}
-        account={{
-          name: user.name || user.email,
-          // Only when it adds something: with no name on the account the block
-          // already *is* the email address.
-          meta: user.name ? user.email : undefined,
-          initials,
-        }}
-      >
+      <SideNav brandHref="/admin" badge="Operator" groups={groups}>
         <SignOutButton />
       </SideNav>
 
       <main className="min-w-0 flex-1">
-        <div className="mx-auto w-full max-w-[1180px] px-5 pb-20 pt-[76px] sm:px-7 lg:px-10 lg:pt-9">
+        <TopBar
+          account={{
+            name: user.name || user.email,
+            // Only when it adds something: with no name on the account the
+            // block already *is* the email address.
+            meta: user.name ? user.email : undefined,
+            initials,
+          }}
+        />
+
+        <div className="mx-auto w-full max-w-[1180px] px-5 pb-20 pt-7 sm:px-7 lg:px-10 lg:pt-8">
           {/* Stated once, at the top of every page here. The boundary is enforced
               in src/lib/access/platform.ts — no query in this console selects a
               document title, let alone its contents. */}

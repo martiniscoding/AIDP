@@ -11,6 +11,8 @@ import {
   Users,
 } from "lucide-react";
 
+import { LogoMark } from "@/components/ui/Logo";
+
 /**
  * The product shot under the hero: a drawn mock of the app rather than a
  * screenshot.
@@ -125,9 +127,7 @@ export function DashboardPreview() {
               panel and leave the charts, which are the point, unreadable. */}
           <aside className="hidden w-[196px] shrink-0 flex-col gap-1 border-r border-[#ebf4fa] px-3.5 py-4 lg:flex">
             <div className="mb-5 flex items-center gap-2.5 px-1">
-              <span className="grid size-[30px] place-items-center rounded-full bg-[linear-gradient(140deg,#0a6ea8_0%,#004671_100%)]">
-                <span className="block size-[11px] rounded-full border-[2.5px] border-white border-b-transparent" />
-              </span>
+              <LogoMark className="size-[30px]" />
               <span className="font-display text-[16px] font-semibold tracking-[-0.02em] text-ink">
                 AIDP
               </span>

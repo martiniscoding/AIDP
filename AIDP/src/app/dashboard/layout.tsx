@@ -1,5 +1,6 @@
 import { requireWorkspace } from "@/lib/access/gate";
 import { SideNav, type NavGroup } from "@/components/ui/SideNav";
+import { TopBar } from "@/components/ui/TopBar";
 import { SignOutButton } from "./SignOutButton";
 import { SessionTimeout } from "@/components/auth/SessionTimeout";
 
@@ -40,9 +41,8 @@ export default async function DashboardLayout({
       .join("") || "?";
 
   // Destinations only — starting a project belongs on the projects page, next
-  // to the list it adds to. Profile is not in this list either: it lives on
-  // the account block at the foot of the rail, which is where people look for
-  // it.
+  // to the list it adds to. Profile is not in this list either: it is the
+  // account block in the top right, which is where people look for it.
   //
   // Grouped by who they are for. An administrator's two screens are about
   // other people's work rather than their own, and a member never sees them at
@@ -81,24 +81,24 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="app-dark flex min-h-svh">
+    <div className="app-shell flex min-h-svh">
       <SessionTimeout />
 
-      <SideNav
-        brandHref="/dashboard"
-        groups={groups}
-        account={{
-          name: user.name || user.email,
-          meta: `${organisation.name}${isOwner ? " · Administrator" : ""}`,
-          initials,
-          href: "/dashboard/profile",
-        }}
-      >
+      <SideNav brandHref="/dashboard" groups={groups}>
         <SignOutButton />
       </SideNav>
 
       <main className="min-w-0 flex-1">
-        <div className="mx-auto w-full max-w-[1180px] px-5 pb-20 pt-[76px] sm:px-7 lg:px-10 lg:pt-9">
+        <TopBar
+          account={{
+            name: user.name || user.email,
+            meta: `${organisation.name}${isOwner ? " · Administrator" : ""}`,
+            initials,
+            href: "/dashboard/profile",
+          }}
+        />
+
+        <div className="mx-auto w-full max-w-[1180px] px-5 pb-20 pt-7 sm:px-7 lg:px-10 lg:pt-8">
           {children}
         </div>
       </main>

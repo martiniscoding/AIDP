@@ -74,7 +74,7 @@ const Navbar1 = () => {
       >
         <a
           href="#top"
-          aria-label="Dexter home"
+          aria-label="AIDP home"
           className="flex items-center gap-2.5"
         >
           <motion.span
@@ -92,7 +92,7 @@ const Navbar1 = () => {
               onDeep ? "text-white" : "text-ink",
             )}
           >
-            Dexter
+            AIDP
           </span>
         </a>
 
