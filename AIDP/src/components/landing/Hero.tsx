@@ -4,7 +4,6 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { LandingNav } from "@/components/landing/LandingNav";
-import { DashboardPreview } from "@/components/landing/DashboardPreview";
 
 /**
  * The hero.
@@ -35,7 +34,16 @@ export function Hero() {
   });
 
   return (
-    <section id="top" className="relative isolate overflow-hidden bg-white">
+    // The min-height is what keeps the blue band intact. The band is a fixed
+    // 620/700px block and the section clips its overflow, so a section shorter
+    // than the band would cut the ramp off mid-colour and leave a hard edge
+    // against the paper. With the product shot gone the copy alone no longer
+    // reaches that far, so the floor is set just past the band and the slack
+    // lands as white under the buttons — which is where the clearing wants it.
+    <section
+      id="top"
+      className="relative isolate min-h-[660px] overflow-hidden bg-white sm:min-h-[760px]"
+    >
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[620px] sm:h-[700px]">
         <div
           className="absolute inset-0"
@@ -122,9 +130,6 @@ export function Hero() {
         </div>
       </div>
 
-      <motion.div {...rise(0.3)} className="mt-14 sm:mt-16">
-        <DashboardPreview />
-      </motion.div>
     </section>
   );
 }
