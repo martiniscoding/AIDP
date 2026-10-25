@@ -4,6 +4,7 @@ import { DOCX_MIME, record } from "@/lib/ingest/intake";
 import { renderRequest, type RenderableRequest } from "@/lib/ingest/render-request";
 import { ProjectRefused, startProjectRun } from "@/lib/ingest/projects";
 import { canManageStandards } from "@/lib/access/roles";
+import { runCriteriaCheck } from "@/lib/significance/record";
 
 /**
  * Architecture requests — the intake form, and the bridge from it to the engine.
@@ -22,6 +23,11 @@ import { canManageStandards } from "@/lib/access/roles";
  * disagree.
  *
  * ## Three things this file is careful about
+ *
+ * **The criteria check runs here, not on a queue.** The brief's Step 2 is a few
+ * comparisons over answers already in the row; Step 3 is the one that waits for
+ * a document to index and a hundred model calls to return. "In parallel" means
+ * neither gates the other, not that both need a worker.
  *
  * **Submitting is idempotent, explicitly.** It would be neater to lean on
  * `record()` being content-addressed — render the same answers, hash to the
@@ -581,7 +587,10 @@ export async function submitRequest(
     request.reference,
   );
   if (adopted) {
-    return link(request.id, adopted, request.reference);
+    const linked = await link(request.id, adopted, request.reference);
+    // An adopted document is still a submission, and still has to be classified.
+    await checkCriteria(request.id);
+    return linked;
   }
 
   const bytes = await renderRequest({ ...toRenderable(request), submittedAt });
@@ -618,7 +627,31 @@ export async function submitRequest(
     return { documentId: winner.documentId!, reference: request.reference };
   }
 
+  await checkCriteria(request.id);
   return { documentId: document.id, reference: request.reference };
+}
+
+/**
+ * The brief's Step 2, run as the submission is accepted.
+ *
+ * "In parallel with Step 3" means neither gates the other, not that this needs
+ * a worker. It is a few comparisons over answers already in the row and takes
+ * about a millisecond; Step 3 is the one that waits, first for the document to
+ * index and then for a hundred model calls.
+ *
+ * Never throws. A classification that could not be reached must not refuse a
+ * submission whose document is already in and already being read. The request
+ * simply has no significance yet — `significance` stays null, which the screen
+ * reads as "not checked" rather than as "not significant" — and a resubmission
+ * sets it. Losing an assessment over an arithmetic problem would be the worse
+ * trade by a distance.
+ */
+async function checkCriteria(requestId: string): Promise<void> {
+  try {
+    await runCriteriaCheck(requestId);
+  } catch {
+    // Deliberately swallowed; see above.
+  }
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   House,
   Menu,
   Shield,
+  SlidersHorizontal,
   UsersRound,
   X,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import { cn } from "@/lib/cn";
 const ICONS = {
   home: House,
   requests: ClipboardList,
+  criteria: SlidersHorizontal,
   library: BookMarked,
   decisions: Gavel,
   activity: Activity,

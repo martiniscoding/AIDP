@@ -60,6 +60,10 @@ export default async function DashboardLayout({
         { href: "/dashboard/requests", label: "Requests", icon: "requests" },
         { href: "/dashboard/documents", label: "Reference Library", icon: "library" },
         { href: "/dashboard/decisions", label: "Decisions", icon: "decisions" },
+        // Readable by everyone, changeable by an administrator — so it sits in
+        // Workspace rather than under Admin Tools. What a request will be
+        // measured by is not a secret from the person filing it.
+        { href: "/dashboard/criteria", label: "Significance", icon: "criteria" },
       ],
     },
   ];
