@@ -4,26 +4,26 @@
       <stop offset="0" stop-color="#06334e"/>
       <stop offset="1" stop-color="#01131d"/>
     </linearGradient>
-    <linearGradient id="t0" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#f2fdff"/><stop offset="1" stop-color="#c9f8ff"/>
+    <linearGradient id="wall" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#9ec6de"/><stop offset="1" stop-color="#5f93b4"/>
     </linearGradient>
-    <linearGradient id="t1" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#b2e6fe"/><stop offset="1" stop-color="#93d9ff"/>
-    </linearGradient>
-    <linearGradient id="t2" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#96c0d6"/><stop offset="1" stop-color="#71a0ba"/>
-    </linearGradient>
-    <linearGradient id="t3" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#3a8dbb"/><stop offset="1" stop-color="#003a66"/>
+    <linearGradient id="broken" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#e8f8ff"/><stop offset="1" stop-color="#93d9ff"/>
     </linearGradient>
   </defs>
-  <!-- The master sits on black, so the tab icon keeps its ground: the pale
-       tiles need a dark plate to survive a light browser chrome. -->
-  <rect width="512" height="512" rx="112" fill="url(#p)"/>
-  <g transform="translate(87 87) scale(1.04) translate(84.5 7.5) skewX(-17.4)">
-    <rect x="0" y="0" width="152" height="143" rx="11" fill="url(#t0)"/>
-    <rect x="170" y="62" width="85" height="81" rx="9" fill="url(#t1)"/>
-    <rect x="0" y="165" width="85" height="88" rx="9" fill="url(#t2)"/>
-    <rect x="103" y="165" width="153" height="145" rx="11" fill="url(#t3)"/>
+  <!-- The tab icon keeps the master's ground: the pale courses need a dark
+       plate to survive a light browser chrome. -->
+  <rect width="512" height="512" rx="114" fill="url(#p)"/>
+  <!-- The mark is drawn in the component's 120 box, then scaled about its own
+       centre onto the 512 plate — 3.05 leaves roughly a 14% margin, which is
+       what stops the longest course touching the plate's rounded corner. -->
+  <g transform="translate(256 256) scale(3.05) translate(-60 -57)">
+    <g transform="translate(60 57) skewX(-12) translate(-60 -57)">
+      <rect x="14" y="8" width="72" height="20" rx="6" fill="url(#wall)"/>
+      <rect x="14" y="34" width="92" height="20" rx="6" fill="url(#wall)"/>
+      <rect x="14" y="60" width="32" height="20" rx="6" fill="url(#broken)"/>
+      <rect x="66" y="60" width="40" height="20" rx="6" fill="url(#broken)"/>
+      <rect x="14" y="86" width="56" height="20" rx="6" fill="url(#wall)"/>
+    </g>
   </g>
 </svg>

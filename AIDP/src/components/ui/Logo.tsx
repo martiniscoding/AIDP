@@ -16,39 +16,59 @@ type Tone = "ink" | "light";
 type LogoTone = Tone | "rail";
 
 /**
- * The AIDP mark: four rounded tiles on a skewed 2x2 pinwheel — two large,
- * two small, leaning into the reading direction. Traced from the brand
- * master in `public/logo.png` (tile geometry and the colour ramps are
- * measured off it), with the wordmark left out: it is set in live type
- * beside the mark, so it stays legible at 28px and inherits the page's
- * colour instead of carrying a black plate behind it.
+ * The AIDP mark: four courses of a wall leaning into the reading direction,
+ * with the third course broken open and its halves pulled apart.
+ *
+ * The product's own sentence is that it turns standards into a gate every
+ * design is checked against, and what it hands back is the list of what does
+ * not hold. So the mark is a structure with the gap left in it, rather than
+ * the tidy pinwheel of tiles the brand master draws — that one is a shape,
+ * not a claim, and it would sit as comfortably on a hosting company.
+ *
+ * The lean is kept from the master in `public/logo.png`, shallower: 12°
+ * against its 17.4°, because a full-width course is far wider than the
+ * master's tiles and the steeper angle walks the stack off its own footing.
+ *
+ * The wordmark is left out. It is set in live type beside the mark, so it
+ * stays legible at 28px and inherits the page's colour instead of carrying a
+ * black plate behind it.
  */
-const TILES = [
-  { x: 0, y: 0, w: 152, h: 143, r: 11 },
-  { x: 170, y: 62, w: 85, h: 81, r: 9 },
-  { x: 0, y: 165, w: 85, h: 88, r: 9 },
-  { x: 103, y: 165, w: 153, h: 145, r: 11 },
+const COURSE_HEIGHT = 20;
+const COURSE_RADIUS = 6;
+
+const COURSES = [
+  { x: 14, y: 8, w: 72, broken: false },
+  { x: 14, y: 34, w: 92, broken: false },
+  { x: 14, y: 60, w: 32, broken: true },
+  { x: 66, y: 60, w: 40, broken: true },
+  { x: 14, y: 86, w: 56, broken: false },
 ] as const;
 
 /**
- * Ramp per tile, top to bottom. `light` is the master's own palette; `ink`
- * walks the same pinwheel down into the royal ladder so the brightest tile
- * does not vanish into a white footer.
+ * Two rungs, not the master's four. The wall is one colour and the break is
+ * the other, so the eye lands on the gap at any size. Stepping a ramp down
+ * the stack instead — which is what the master does across its tiles — spends
+ * the contrast on decoration, and by 16px the broken course is no longer
+ * distinguishable from its neighbours.
+ *
+ * `light` is the master's own pale palette, for the deep navy anchors. `ink`
+ * walks the same pair down into the royal ladder so that neither rung washes
+ * out against paper.
  */
-const RAMPS: Record<Tone, readonly (readonly [string, string])[]> = {
-  light: [
-    ["#f2fdff", "#c9f8ff"],
-    ["#b2e6fe", "#93d9ff"],
-    ["#96c0d6", "#71a0ba"],
-    ["#3a8dbb", "#003a66"],
-  ],
-  ink: [
-    ["#1d84c0", "#0b6498"],
-    ["#67b2dc", "#4b9bcb"],
-    ["#9dbfd2", "#7fa5bb"],
-    ["#01547f", "#00263f"],
-  ],
+type Ramp = readonly [from: string, to: string];
+
+const RAMPS: Record<Tone, { wall: Ramp; broken: Ramp }> = {
+  light: {
+    wall: ["#9ec6de", "#5f93b4"],
+    broken: ["#e8f8ff", "#93d9ff"],
+  },
+  ink: {
+    wall: ["#0b3c5a", "#021a28"],
+    broken: ["#3aa0d8", "#1273a8"],
+  },
 };
+
+const PARTS = ["wall", "broken"] as const;
 
 export function LogoMark({
   className,
@@ -58,37 +78,43 @@ export function LogoMark({
   tone?: Tone;
 }) {
   // Keyed by tone rather than by instance: every mark of a given tone defines
-  // the same four ramps, so repeated ids resolve to an identical gradient and
+  // the same two ramps, so repeated ids resolve to an identical gradient and
   // the component stays usable from a server component (no useId).
-  const id = (i: number) => `aidp-mark-${tone}-${i}`;
+  const id = (part: (typeof PARTS)[number]) => `aidp-mark-${tone}-${part}`;
 
   return (
     <svg
-      viewBox="0 0 325 325"
+      viewBox="0 0 120 120"
       fill="none"
       aria-hidden="true"
       className={cn("h-7 w-7", className)}
     >
       <defs>
-        {RAMPS[tone].map(([from, to], i) => (
-          <linearGradient key={i} id={id(i)} x1="0" y1="0" x2="0.35" y2="1">
-            <stop offset="0" stopColor={from} />
-            <stop offset="1" stopColor={to} />
-          </linearGradient>
-        ))}
+        {PARTS.map((part) => {
+          const [from, to] = RAMPS[tone][part];
+          return (
+            <linearGradient key={part} id={id(part)} x1="0" y1="0" x2="0.3" y2="1">
+              <stop offset="0" stopColor={from} />
+              <stop offset="1" stopColor={to} />
+            </linearGradient>
+          );
+        })}
       </defs>
       {/* The lean is the mark's whole gesture, so it is one skew on the group
-          rather than four hand-drawn parallelograms. */}
-      <g transform="translate(84.5 7.5) skewX(-17.4)">
-        {TILES.map((tile, i) => (
+          rather than five hand-drawn parallelograms. Pivoted on the stack's
+          own middle (y=57) rather than on y=0, which is where skewX would
+          otherwise hinge — from there the bottom course swings a full 22 units
+          left and takes the mark out of the viewBox with it. */}
+      <g transform="translate(60 57) skewX(-12) translate(-60 -57)">
+        {COURSES.map((course, i) => (
           <rect
             key={i}
-            x={tile.x}
-            y={tile.y}
-            width={tile.w}
-            height={tile.h}
-            rx={tile.r}
-            fill={`url(#${id(i)})`}
+            x={course.x}
+            y={course.y}
+            width={course.w}
+            height={COURSE_HEIGHT}
+            rx={COURSE_RADIUS}
+            fill={`url(#${id(course.broken ? "broken" : "wall")})`}
           />
         ))}
       </g>
@@ -113,7 +139,10 @@ export function Logo({
   href?: string;
   tone?: LogoTone;
 }) {
-  const spin = "transition-transform duration-500 ease-out group-hover:rotate-[8deg]";
+  // Deepening the lean rather than spinning the mark: the lean is the thing
+  // the drawing is already doing, and a rotation on a stack of courses reads
+  // as the wall coming off its footing.
+  const lean = "transition-transform duration-500 ease-out group-hover:-skew-x-6";
 
   return (
     <Link
@@ -126,11 +155,11 @@ export function Logo({
     >
       {tone === "rail" ? (
         <>
-          <LogoMark tone="ink" className={cn("rail-mark-light", spin)} />
-          <LogoMark tone="light" className={cn("rail-mark-dark", spin)} />
+          <LogoMark tone="ink" className={cn("rail-mark-light", lean)} />
+          <LogoMark tone="light" className={cn("rail-mark-dark", lean)} />
         </>
       ) : (
-        <LogoMark tone={tone} className={spin} />
+        <LogoMark tone={tone} className={lean} />
       )}
       <span
         className={cn(
