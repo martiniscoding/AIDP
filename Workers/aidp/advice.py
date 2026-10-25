@@ -102,6 +102,16 @@ CATEGORIES = (
     "cost",
     "maintainability",
     "documentation",
+    # Where a design commits itself to one vendor with no stated way back: a
+    # proprietary managed service with no portable equivalent, a format only
+    # one product reads, an SDK the application is written against.
+    #
+    # Its own category because the brief's risk scoring names it as one, and
+    # because nothing else here answers it. Support dates do not: a design
+    # entirely on one cloud's proprietary services has perfect lifecycle
+    # hygiene and total lock-in, so reading one from the other would report the
+    # lowest risk on exactly the design carrying the most.
+    "lock_in",
 )
 
 # Verdicts that did not pass, in the order a reviewer would fix them.

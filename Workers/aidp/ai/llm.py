@@ -1561,7 +1561,11 @@ dependency with no timeout or fallback. Rank these above polish however tidy the
 of the design is, and remember rule 3: a suggestion that only restates a finding is \
 still not wanted — go further, and name the change.
 8. "category" is one of: security, resilience, data, integration, operations, \
-performance, cost, maintainability, documentation.
+performance, cost, maintainability, documentation, lock_in. Use "lock_in" where \
+the design commits itself to one vendor with no stated way back - a proprietary \
+managed service with no portable equivalent, a data format only one product \
+reads, an application written against one vendor's SDK. A product simply being \
+commercial is not lock-in; being unable to leave it is.
 9. You cannot check today's date, release notes or security advisories, so your own \
 recollection of what is current is not evidence. Never state from memory that a \
 product or version is out of support, end of life, deprecated or vulnerable, and \
@@ -1646,6 +1650,7 @@ _ADVICE_SCHEMA = {
                             "cost",
                             "maintainability",
                             "documentation",
+                            "lock_in",
                         ],
                     },
                     "priority": {"type": "string", "enum": ["high", "medium", "low"]},

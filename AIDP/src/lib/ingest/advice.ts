@@ -24,6 +24,14 @@ export const ADVICE_CATEGORIES = [
   "cost",
   "maintainability",
   "documentation",
+  // Where a design commits itself to one vendor with no stated way back. Its
+  // own category because the brief's risk scoring names it as one, and because
+  // nothing else answers it — a design entirely on one cloud's proprietary
+  // services has perfect lifecycle hygiene and total lock-in.
+  //
+  // Runs from before this existed have none, which the risk view reports as
+  // "not assessed" rather than as "no risk". See src/lib/ingest/risk.ts.
+  "lock_in",
   "other",
 ] as const;
 export type AdviceCategory = (typeof ADVICE_CATEGORIES)[number];
@@ -38,6 +46,7 @@ export const CATEGORY_LABEL: Record<AdviceCategory, string> = {
   cost: "Cost",
   maintainability: "Maintainability",
   documentation: "Documentation",
+  lock_in: "Vendor lock-in",
   other: "Other",
 };
 

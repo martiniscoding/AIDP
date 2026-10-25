@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CircleAlert, FileText, Gauge } from "lucide-react";
+import { ArrowLeft, CircleAlert, FileText, Gauge, ShieldAlert, ShieldCheck } from "lucide-react";
 import { requireWorkspace } from "@/lib/access/gate";
 import {
   CHECKING,
@@ -11,6 +11,7 @@ import {
   getRequestDraft,
   whatIsMissing,
 } from "@/lib/ingest/requests";
+import { resultsFor } from "@/lib/significance/record";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { IntakeWizard, type Draft } from "./IntakeWizard";
 
@@ -73,6 +74,13 @@ export default async function RequestPage({
     label: request.state,
     blurb: "",
   };
+
+  // The brief's Step 2, which runs on submission. Null means it has not run —
+  // a draft, or a check that could not be completed — and reads as "not yet"
+  // rather than as "not significant", which are very different answers.
+  const significance = request.significance;
+  const criteria = significance ? await resultsFor(request.id) : [];
+  const triggered = criteria.filter((result) => result.triggered);
 
   const draft: Draft = {
     id: request.id,
@@ -149,6 +157,63 @@ export default async function RequestPage({
         </div>
       )}
 
+      {significance && (
+        <div
+          className={`mb-5 rounded-xl border px-4 py-3 ${
+            significance === "significant"
+              ? "border-warn-line bg-warn-tint"
+              : "border-ok-line bg-ok-tint"
+          }`}
+        >
+          <div className="flex gap-2">
+            {significance === "significant" ? (
+              <ShieldAlert size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+            ) : (
+              <ShieldCheck size={15} className="mt-0.5 shrink-0 text-ok" aria-hidden="true" />
+            )}
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-ink">
+                {significance === "significant"
+                  ? "Architecturally significant"
+                  : "Not architecturally significant"}
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-ink/75">
+                {significance === "significant"
+                  ? `${triggered.length} of ${criteria.length} categories triggered. This needs a person before it proceeds.`
+                  : `None of the ${criteria.length} categories checked were triggered. It can proceed on its findings alone.`}
+              </p>
+
+              {triggered.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {triggered.map((result) => {
+                    // The working, as the check recorded it. "Cost Impact
+                    // triggered because 7,500,000 is at least 5,000,000" is a
+                    // line a review board can act on; "Cost Impact: triggered"
+                    // is one they have to come back and ask about.
+                    const why = (result.triggeredBy as { text?: string; actual?: string }[]) ?? [];
+                    return (
+                      <li key={result.id} className="text-[12.5px] text-ink/80">
+                        <span className="font-medium">{result.categoryLabel}</span>
+                        {why.length > 0 && (
+                          <span className="text-ink/65">
+                            {" — "}
+                            {why
+                              .map((entry) =>
+                                entry.actual ? `${entry.text} The request says ${entry.actual}.` : entry.text,
+                              )
+                              .join(" ")}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {editable ? (
         <>
           {!mayEdit && (
@@ -178,7 +243,7 @@ export default async function RequestPage({
           <div className="mt-3 flex flex-wrap gap-2">
             {request.runId && (
               <Link
-                href={`/dashboard/projects/${request.projectId}/assessment`}
+                href={`/dashboard/requests/${request.id}/report`}
                 className="inline-flex items-center gap-1.5 rounded-full bg-royal px-4 py-1.5 text-[13px] font-medium text-white"
               >
                 <FileText size={14} aria-hidden="true" />

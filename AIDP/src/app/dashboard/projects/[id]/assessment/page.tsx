@@ -8,6 +8,8 @@ import { readCoverage } from "@/lib/ingest/coverage";
 import { readRootCauses } from "@/lib/ingest/root-causes";
 import { readAdvice } from "@/lib/ingest/advice";
 import { readLifecycle } from "@/lib/ingest/lifecycle";
+import { buildRisk } from "@/lib/ingest/risk";
+import { RiskPanel } from "../../../requests/[id]/report/RiskPanel";
 import { listFindings, verdictCounts } from "@/lib/ingest/assessment";
 import {
   emptyCounts,
@@ -224,6 +226,32 @@ export default async function ProjectAssessmentPage({
           </p>
         )}
       </div>
+
+      {/* Risk, along the five dimensions the brief names.
+         *
+         * Shown here as well as on an architecture request's report, because
+         * none of it depends on there having been an intake form: it is built
+         * from the findings, the suggestions and the support dates this run
+         * already produced. A design uploaded straight into a project gets the
+         * same view of where it is weak — it simply has no significance
+         * classification beside it, which the report page says plainly rather
+         * than leaving blank.
+         */}
+      {run && run.state === "complete" && (
+        <div className="mb-5">
+          <RiskPanel
+            risk={buildRisk(
+              findings.map((f) => ({
+                clauseRef: f.clauseRef,
+                verdict: f.verdict,
+                obligation: f.obligation,
+              })),
+              readAdvice(run.advice),
+              readLifecycle(run.lifecycle),
+            )}
+          />
+        </div>
+      )}
 
       <Assessment
         scope={{ kind: "project", projectId: project.id }}
