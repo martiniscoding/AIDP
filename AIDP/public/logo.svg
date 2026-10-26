@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 873 298" width="873" height="298" role="img" aria-label="AIDP — Architecture Intelligence Decision Platform">
+  <!-- The brand master. The app never loads this file: it draws the mark in
+       Logo.tsx and sets the wordmark in live type beside it, which is what
+       keeps both legible at 28px. This is the lockup to hand out — decks,
+       email signatures, anywhere the whole name has to travel as one image.
+
+       Outlines are the component's, in its own 120 box, placed here at 1:1. -->
+  <rect width="873" height="298" rx="22" fill="#052a44"/>
+  <g transform="translate(132 38)">
+    <path d="M63 78L86 67.5L109 78L63 99Z" fill="#397ca7"/>
+    <path d="M57 96L34 85.5L11 96L57 117Z" fill="#2e6a92"/>
+    <path d="M63 51L86 40.5L109 51L63 72Z" fill="#7eb3d5"/>
+    <path d="M57 69L34 58.5L11 69L57 90Z" fill="#5a9cc5"/>
+    <path d="M63 3L109 24L63 45Z" fill="#d6f0ff"/>
+    <path d="M57 21L11 42L57 63Z" fill="#9ccbe7"/>
+  </g>
+  <g font-family="Inter Tight, Inter, ui-sans-serif, system-ui, sans-serif">
+    <text x="288" y="113" font-size="93" font-weight="600" letter-spacing="-1.9" fill="#ffffff">AIDP</text>
+    <text x="290" y="150" font-size="21" font-weight="400" letter-spacing="0.3" fill="#9ccbe7">Architecture Intelligence Decision Platform</text>
+    <path d="M293 200H593" stroke="#9ccbe7" stroke-opacity="0.35" stroke-width="1.5"/>
+    <text x="436" y="255" font-size="27" font-weight="600" letter-spacing="-0.2" text-anchor="middle" fill="#e6f3fb">Intelligence Behind Every Architecture Decision</text>
+  </g>
+</svg>

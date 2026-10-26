@@ -4,26 +4,21 @@
       <stop offset="0" stop-color="#06334e"/>
       <stop offset="1" stop-color="#01131d"/>
     </linearGradient>
-    <linearGradient id="wall" x1="0" y1="0" x2="0.3" y2="1">
-      <stop offset="0" stop-color="#9ec6de"/><stop offset="1" stop-color="#5f93b4"/>
-    </linearGradient>
-    <linearGradient id="broken" x1="0" y1="0" x2="0.3" y2="1">
-      <stop offset="0" stop-color="#e8f8ff"/><stop offset="1" stop-color="#93d9ff"/>
-    </linearGradient>
   </defs>
-  <!-- The tab icon keeps the master's ground: the pale courses need a dark
+  <!-- The tab icon keeps the master's ground: the pale faces need a dark
        plate to survive a light browser chrome. -->
   <rect width="512" height="512" rx="114" fill="url(#p)"/>
   <!-- The mark is drawn in the component's 120 box, then scaled about its own
-       centre onto the 512 plate — 3.05 leaves roughly a 14% margin, which is
-       what stops the longest course touching the plate's rounded corner. -->
-  <g transform="translate(256 256) scale(3.05) translate(-60 -57)">
-    <g transform="translate(60 57) skewX(-12) translate(-60 -57)">
-      <rect x="14" y="8" width="72" height="20" rx="6" fill="url(#wall)"/>
-      <rect x="14" y="34" width="92" height="20" rx="6" fill="url(#wall)"/>
-      <rect x="14" y="60" width="32" height="20" rx="6" fill="url(#broken)"/>
-      <rect x="66" y="60" width="40" height="20" rx="6" fill="url(#broken)"/>
-      <rect x="14" y="86" width="56" height="20" rx="6" fill="url(#wall)"/>
-    </g>
+       centre onto the 512 plate — 3.1 leaves a 15% margin above and below,
+       which is what keeps the stack clear of the plate's rounded corners.
+       Faces are painted lowest layer first, each cutting the seam into the
+       one beneath it; see Logo.tsx for where the outlines come from. -->
+  <g transform="translate(256 256) scale(3.1) translate(-60 -60)">
+    <path d="M63 78L86 67.5L109 78L63 99Z" fill="#397ca7"/>
+    <path d="M57 96L34 85.5L11 96L57 117Z" fill="#2e6a92"/>
+    <path d="M63 51L86 40.5L109 51L63 72Z" fill="#7eb3d5"/>
+    <path d="M57 69L34 58.5L11 69L57 90Z" fill="#5a9cc5"/>
+    <path d="M63 3L109 24L63 45Z" fill="#d6f0ff"/>
+    <path d="M57 21L11 42L57 63Z" fill="#9ccbe7"/>
   </g>
 </svg>

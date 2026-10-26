@@ -151,7 +151,7 @@ export function Footer() {
             >
               <LogoMark
                 tone="light"
-                className="h-8 w-8 transition-transform duration-500 ease-out group-hover:rotate-[8deg]"
+                className="h-8 w-8 transition-transform duration-500 ease-out group-hover:-translate-y-0.5"
               />
               <span className="font-display text-[20px] font-semibold tracking-[-0.02em] text-white">
                 AIDP

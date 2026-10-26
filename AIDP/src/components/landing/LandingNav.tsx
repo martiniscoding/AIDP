@@ -51,7 +51,7 @@ export function LandingNav() {
           aria-label="AIDP home"
           className="group flex shrink-0 items-center gap-2.5"
         >
-          <LogoMark tone="light" className="h-8 w-8 transition-transform duration-500 ease-out group-hover:-skew-x-6" />
+          <LogoMark tone="light" className="h-8 w-8 transition-transform duration-500 ease-out group-hover:-translate-y-0.5" />
           <span className="font-display text-[20px] font-semibold tracking-[-0.02em] text-white">
             AIDP
           </span>
