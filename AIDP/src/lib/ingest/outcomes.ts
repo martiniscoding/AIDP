@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { canDecideSubmissions } from "@/lib/access/roles";
 import { requireMembership } from "./org";
 import { VERDICTS } from "./verdicts";
 import {
@@ -231,7 +232,22 @@ export async function record(
     },
   });
   if (!run) throw new OutcomeRefused("That assessment no longer exists.");
-  await requireMembership(userId, run.organisationId);
+  const membership = await requireMembership(userId, run.organisationId);
+
+  // Who may resolve a submission at all. The brief routes a finished report to
+  // "an assigned architect", and that assignment means nothing while anyone in
+  // the workspace can record the outcome themselves.
+  //
+  // Before the separation-of-duties check below, deliberately: somebody with no
+  // standing here should be told they cannot decide, not told whose submission
+  // it is. The second message describes the work, and the work is not theirs to
+  // know about.
+  if (!canDecideSubmissions(membership.role)) {
+    throw new OutcomeRefused(
+      "Only an architect, or an administrator, can decide what happens to a submission. " +
+        "Ask one of them to take it.",
+    );
+  }
 
   const own = await ownSubmission(userId, run.documentId, run.designIds);
   if (own) {

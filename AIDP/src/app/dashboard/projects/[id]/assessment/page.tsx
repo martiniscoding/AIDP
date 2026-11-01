@@ -30,6 +30,7 @@ import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { draftView, draftsForRun, requirementsForClauses } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { requireWorkspace } from "@/lib/access/gate";
+import { canDecideSubmissions } from "@/lib/access/roles";
 import { assessableDesigns, getProject, latestProjectRun } from "@/lib/ingest/projects";
 import { Assessment, type FindingView, type RunView } from "../../../documents/[id]/Assessment";
 import { Decide, type OutcomeView } from "../../../documents/[id]/Decide";
@@ -271,6 +272,7 @@ export default async function ProjectAssessmentPage({
           history={outcomes}
           unreviewed={unreviewed}
           open={openFindings}
+          mayDecide={canDecideSubmissions(access.organisation.role)}
         />
       )}
     </>

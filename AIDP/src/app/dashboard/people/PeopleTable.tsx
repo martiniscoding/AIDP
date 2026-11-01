@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronDown,
+  Gavel,
   KeyRound,
   Search,
   ShieldCheck,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatTokens } from "@/lib/access/format";
-import { OWNER, MEMBER, ROLE_LABEL } from "@/lib/access/roles";
+import { OWNER, ARCHITECT, MEMBER, ROLE_LABEL } from "@/lib/access/roles";
 import { STATUS_META, type RosterStatus } from "@/lib/access/roster-status";
 import type { Person } from "@/lib/access/roster";
 import { MIN_PASSWORD } from "@/lib/access/password-policy";
@@ -213,6 +214,17 @@ export function PeopleTable({
           <button
             type="button"
             disabled={pending}
+            onClick={() => act(() => grantAccess(ids, ARCHITECT))}
+            title="Admit as an architect — they decide what happens to a submission once it has been reviewed."
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-40"
+          >
+            <Gavel size={13} />
+            As architect
+          </button>
+
+          <button
+            type="button"
+            disabled={pending}
             onClick={() => act(() => grantAccess(ids, OWNER))}
             title="Admit as an administrator — they can manage people and see spend."
             className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-ink/78 transition-colors hover:border-line-strong hover:text-ink disabled:opacity-40"
@@ -402,7 +414,7 @@ function Row({
         <span
           className={cn(
             "text-[12.5px]",
-            person.role === OWNER ? "text-royal" : "text-ink/68",
+            person.role === OWNER || person.role === ARCHITECT ? "text-royal" : "text-ink/68",
           )}
         >
           {ROLE_LABEL[person.role]}

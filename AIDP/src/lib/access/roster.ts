@@ -175,7 +175,11 @@ export async function addPerson(
   const email = input.email.trim().toLowerCase();
   if (!email.includes("@")) throw new RosterRefused("That is not an email address.");
 
-  const role = input.role === OWNER ? OWNER : MEMBER;
+  // Through `toRole`, which is the only thing that decides what a role string
+  // means. Spelling the comparison out here is how a role added to the
+  // vocabulary silently collapses into "member" at one call site while working
+  // everywhere else.
+  const role = toRole(input.role);
   const status: RosterStatus = options.admit ? "allowed" : "imported";
   const admitted = options.admit
     ? { allowedAt: new Date(), allowedById: actor.user.id, allowedByName: actor.user.name }
@@ -276,7 +280,7 @@ export async function importPeople(actor: Actor, people: ParsedPerson[]): Promis
 export async function grant(actor: Actor, ids: string[], role: string = MEMBER): Promise<number> {
   assertOwner(actor);
   const entries = await loadOwned(actor, ids);
-  const wanted = role === OWNER ? OWNER : MEMBER;
+  const wanted = toRole(role);
 
   let changed = 0;
   for (const entry of entries) {
@@ -337,14 +341,17 @@ export async function revoke(actor: Actor, ids: string[]): Promise<number> {
   return entries.length;
 }
 
-/** Promote to administrator, or demote to member. */
+/** Change what somebody may do: administrator, architect or member. */
 export async function setRole(actor: Actor, id: string, role: string): Promise<void> {
   assertOwner(actor);
   const [entry] = await loadOwned(actor, [id]);
-  const wanted = role === OWNER ? OWNER : MEMBER;
+  const wanted = toRole(role);
   if (!entry || toRole(entry.role) === wanted) return;
 
-  if (isOwner(entry.role) && wanted === MEMBER) {
+  // Any move off administrator, not only the one down to member. Checking for
+  // "member" alone let an owner be made an architect instead, which is still a
+  // workspace with one fewer administrator — and could be the last one.
+  if (isOwner(entry.role) && wanted !== OWNER) {
     if (entry.userId === actor.user.id) {
       throw new RosterRefused(
         "You cannot remove your own administrator rights. Ask another administrator to do it.",

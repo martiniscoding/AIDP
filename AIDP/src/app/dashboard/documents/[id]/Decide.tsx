@@ -65,6 +65,7 @@ export function Decide({
   history,
   unreviewed,
   open,
+  mayDecide,
 }: {
   runId: string;
   history: OutcomeView[];
@@ -72,6 +73,14 @@ export function Decide({
   unreviewed: number;
   /** Findings that contradict the standard or leave it unaddressed. */
   open: number;
+  /** Whether this person may resolve the submission at all — an architect or
+   *  an administrator. `record` in outcomes.ts refuses regardless; this keeps
+   *  the screen from offering a button that would be turned down, which reads
+   *  as a fault rather than as a rule.
+   *
+   *  The history stays visible either way. What was decided about a piece of
+   *  work is not a secret from the person who submitted it. */
+  mayDecide: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -174,6 +183,14 @@ export function Decide({
         </p>
       )}
 
+      {!mayDecide && (
+        <p className="text-[12.5px] text-ink/60">
+          Only an architect, or an administrator, can decide what happens to a submission.
+          Ask one of them to take it.
+        </p>
+      )}
+
+      {mayDecide && (
       <div className="flex flex-wrap gap-2">
         {OUTCOMES.map((outcome) => {
           const outcomeMeta = OUTCOME_META[outcome];
@@ -199,8 +216,9 @@ export function Decide({
           );
         })}
       </div>
+      )}
 
-      {chosen && meta && (
+      {mayDecide && chosen && meta && (
         <div className="mt-3.5 rounded-xl border border-line bg-canvas-sunk p-4">
           <p className="mb-3 text-[12.5px] text-ink/70">{meta.commitment}</p>
 

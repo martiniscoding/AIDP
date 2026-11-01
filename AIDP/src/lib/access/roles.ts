@@ -1,13 +1,17 @@
 /**
  * Who may do what.
  *
- * Three tiers, and they answer different questions:
+ * Four tiers, and they answer different questions:
  *
  *   platform admin — operates the product. Sees every organisation's people and
  *                    spend, and none of their documents.
  *   owner          — the customer's own administrator ("sub-admin"). Admits and
  *                    removes their colleagues, sees their organisation's spend.
- *   member         — an employee. Works in the product.
+ *   architect      — decides what happens to a submission once it has been
+ *                    reviewed. The brief routes reports to "an assigned
+ *                    architect", which means nothing unless some people are
+ *                    architects and others are not.
+ *   member         — an employee. Submits work and reviews findings on it.
  *
  * The point of this file is that role strings are compared in exactly one
  * place. Scattering `role === "owner"` through pages is how an authorisation
@@ -15,9 +19,13 @@
  */
 
 export const OWNER = "owner";
+export const ARCHITECT = "architect";
 export const MEMBER = "member";
 
-export type OrgRole = typeof OWNER | typeof MEMBER;
+export type OrgRole = typeof OWNER | typeof ARCHITECT | typeof MEMBER;
+
+/** Most authority first. Used wherever roles are offered or compared. */
+export const ROLES = [OWNER, ARCHITECT, MEMBER] as const;
 
 /**
  * Normalise a stored role.
@@ -28,7 +36,9 @@ export type OrgRole = typeof OWNER | typeof MEMBER;
  * as an escalation.
  */
 export function toRole(stored: string | null | undefined): OrgRole {
-  return stored === OWNER ? OWNER : MEMBER;
+  if (stored === OWNER) return OWNER;
+  if (stored === ARCHITECT) return ARCHITECT;
+  return MEMBER;
 }
 
 export function isOwner(stored: string | null | undefined): boolean {
@@ -37,15 +47,42 @@ export function isOwner(stored: string | null | undefined): boolean {
 
 export const ROLE_LABEL: Record<OrgRole, string> = {
   [OWNER]: "Administrator",
+  [ARCHITECT]: "Architect",
   [MEMBER]: "Member",
 };
 
 export const ROLE_BLURB: Record<OrgRole, string> = {
   [OWNER]:
     "Can admit and remove colleagues, curate the standards, and see what the organisation is spending.",
+  [ARCHITECT]:
+    "Everything a member can do, and decides what happens to a submission once it has been reviewed — approve it, send it back, or take it to the board.",
   [MEMBER]:
-    "Can submit designs for assessment, review findings, and record decisions. Cannot change the standards.",
+    "Can submit designs for assessment and review findings. Cannot change the standards, and cannot decide what happens to a submission.",
 };
+
+/**
+ * May this role resolve a submission — approve it, reject it, send it back, or
+ * escalate it to the board?
+ *
+ * The architect's whole reason for existing. The brief routes a finished report
+ * to "an assigned architect", and an assignment means nothing while anyone in
+ * the workspace can record the outcome themselves; a submission that may reach
+ * a review board is not something any employee should be able to wave through.
+ *
+ * An administrator can too. They are the customer's own authority over the
+ * workspace, and a company whose only architect is on leave must not be unable
+ * to close anything — the alternative is work piling up behind one person with
+ * no way in.
+ *
+ * Note what this is *not*: it is not permission to rule on your own submission.
+ * Nobody has that, an administrator least of all, and the check lives beside
+ * the work rather than beside the permission — see `ownSubmission` in
+ * src/lib/ingest/outcomes.ts.
+ */
+export function canDecideSubmissions(stored: string | null | undefined): boolean {
+  const role = toRole(stored);
+  return role === OWNER || role === ARCHITECT;
+}
 
 /**
  * May this role add, replace or retire the organisation's standards?

@@ -29,7 +29,7 @@ import { countActive, promotedFrom } from "@/lib/ingest/decisions";
 import { draftView, draftsForRun, requirementsForClauses } from "@/lib/ingest/standards";
 import { historyForRun } from "@/lib/ingest/outcomes";
 import { NotAMember, requireMembership } from "@/lib/ingest/org";
-import { canManageStandards } from "@/lib/access/roles";
+import { canDecideSubmissions, canManageStandards } from "@/lib/access/roles";
 import { currentUser } from "@/lib/access/gate";
 import { Assessment, type FindingView, type RunView } from "./Assessment";
 import { Comparison } from "./Comparison";
@@ -364,6 +364,7 @@ export default async function DocumentPage({
           history={outcomes}
           unreviewed={unreviewed}
           open={openFindings}
+          mayDecide={canDecideSubmissions(membership.role)}
         />
       )}
     </>
