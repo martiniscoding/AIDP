@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { Access } from "@/lib/access/gate";
-import { DOCX_MIME, record } from "@/lib/ingest/intake";
+import { DOCX_MIME, record, type Refusal } from "@/lib/ingest/intake";
 import { renderRequest, type RenderableRequest } from "@/lib/ingest/render-request";
-import { ProjectRefused, startProjectRun } from "@/lib/ingest/projects";
+import { ProjectRefused, assessableDesigns, startProjectRun } from "@/lib/ingest/projects";
 import { canManageStandards } from "@/lib/access/roles";
 import { runCriteriaCheck } from "@/lib/significance/record";
 
@@ -40,26 +40,42 @@ import { runCriteriaCheck } from "@/lib/significance/record";
  * copy it created rather than leaving a second design for the assessment to
  * read twice. See `submitRequest`.
  *
- * **Nothing starts the assessment on its own.** The worker chain stops at
- * embed — `NEXT_STAGE["embed"]` is None — and a person presses "Assess". The
- * brief requires the opposite: the review runs immediately after intake with no
- * further step. `advanceSubmitted` is that step, and it is reached two ways.
+ * **Indexing happens by itself; the assessment is pressed.** The worker chain
+ * stops at embed — `NEXT_STAGE["embed"]` is None — so nothing downstream opens
+ * an analyse job on its own. The work is split in two here: `advanceSubmitted`
+ * notices that a submission has finished indexing and moves it to "ready", and
+ * `startAssessment` opens the run — which somebody calls by pressing a button.
+ *
+ * It used to be one step. Indexing finished and the run began in the same
+ * breath, which was right while the only thing being assessed was the rendered
+ * intake form. The flow now puts the designs inside the request: the requestor
+ * uploads them, finishes, and presses "Start assessing" when the request is
+ * whole. A run that opened itself the moment the first upload indexed would
+ * assess half a submission. So the half that cannot wait for a person stays
+ * automatic, and it is reached two ways.
  *
  * The embed worker calls it the moment a document lands `ready`
- * (Workers/aidp/notify.py). That is the fast path, it is nearly always the only
- * one that runs, and it starts the assessment within the second.
+ * (Workers/aidp/notify.py). That is the fast path and nearly always the only
+ * one that runs.
  *
  * The screens call it too, before they draw. A ping sent while the app was
  * redeploying is not retried — the worker swallows it on purpose — so without a
  * second route in, such a request waits in "submitted" for ever with a document
- * that is ready and no run against it. Sweeping on the two screens somebody
+ * that is ready and a button that never turns on. Sweeping on the two screens somebody
  * waits on costs an indexed lookup that almost always matches nothing, and puts
  * the repair where the problem is noticed. See the note on
  * src/app/dashboard/requests/page.tsx.
  *
- * **A request that cannot proceed says so.** An organisation with no standards
- * indexed, or a document that failed to parse, ends in "failed" with a reason —
- * never in "submitted" for ever while somebody waits for a report.
+ * **A request that cannot proceed says so.** A document that failed to parse
+ * ends in "failed" with a reason — never in "submitted" for ever while somebody
+ * waits for a report.
+ *
+ * An organisation with no standards indexed is no longer one of these. It used
+ * to fail the request, which was the only option while the run opened itself
+ * with nobody watching. Now that somebody presses the button, they are told on
+ * the press and the request stays where it is, so that the same press works
+ * once the library is filled. Failing it outright would have closed a
+ * submission over a library its requestor may not even be allowed to fill.
  */
 
 export class RequestRefused extends Error {
@@ -71,6 +87,18 @@ export class RequestRefused extends Error {
 
 export const DRAFT = "draft";
 export const SUBMITTED = "submitted";
+/**
+ * Indexed, and waiting for somebody to press "Start assessing".
+ *
+ * The state a pressed assessment made necessary. "submitted" used to carry two
+ * meanings at once — "rendered, still indexing" and "indexed, about to run" —
+ * and the second never lasted long enough to need a name, because the run
+ * opened by itself the moment indexing finished. Now that a person opens it,
+ * the difference between the two is the whole question the screen has to
+ * answer: a request still being read has nothing to offer, and one that is
+ * ready offers a button.
+ */
+export const READY = "ready";
 export const CHECKING = "checking";
 export const REPORTED = "reported";
 export const DECIDED = "decided";
@@ -109,7 +137,6 @@ async function reference(organisationId: string): Promise<string> {
 }
 
 export type CreateInput = {
-  projectId: string;
   title: string;
   summary?: string;
   team?: string;
@@ -119,6 +146,42 @@ export type CreateInput = {
  * Open a request. Draft, and deliberately undemanding: the wizard saves as the
  * requestor goes, and a half-filled form is a normal state for one to be in.
  * What a *submission* has to carry is `whatIsMissing`'s problem.
+ *
+ * ## Why this creates a project nobody asked for
+ *
+ * A request used to name one, which meant opening a project before filing
+ * anything — and a requestor who had not done that was shown nothing to press
+ * at all, because `NewRequest` had no projects to offer and returned null. The
+ * request is the unit of work now. It is opened, filled in, has its designs
+ * uploaded into it, and is assessed, and the word "project" appears on none of
+ * those screens.
+ *
+ * The row cannot simply go, because an assessment's scope *is* a project.
+ * `AssessmentRun` carries exactly one of `documentId` or `projectId` — the
+ * `assessment_run_one_scope` check constraint — the analyse job identifies
+ * itself by run id over a project's designs, and the worker's own `designs()`
+ * reads the project. A request holds several documents between them: the
+ * rendered intake answers, every design its requestor uploads, a diagram. So
+ * it is a project run or it is nothing, and teaching a run to name a request
+ * instead would be a change to the engine, which is not ours to make.
+ *
+ * One project per request, therefore, written here and never shown. Its name
+ * carries the reference because `Project` holds `@@unique([organisationId,
+ * name])` while two requests called "Portal Upgrade" are entirely ordinary: the
+ * reference is already unique per customer, so it is what keeps the name unique
+ * too — and what makes the row recognisable in the one place these are still
+ * visible, which is the assessment history.
+ *
+ * Both rows go in one transaction. A reference that collides has to roll the
+ * project back with it; without that, every retry would leave behind a project
+ * belonging to a request that was never created, accumulating where nobody is
+ * looking.
+ *
+ * `designRelationship` is left at its default, "components", which is the right
+ * answer here: the designs in one request describe a single solution between
+ * them, not rival candidates to be judged against each other. A request whose
+ * designs genuinely are alternatives is a question for the brief, not a default
+ * to guess at.
  */
 export async function createRequest(
   access: Access,
@@ -128,29 +191,35 @@ export async function createRequest(
   if (!title) throw new RequestRefused("Give the request a title.");
   if (title.length > 200) throw new RequestRefused("That title is too long.");
 
-  const project = await prisma.project.findFirst({
-    where: { id: input.projectId, organisationId: access.organisation.id },
-    select: { id: true, status: true },
-  });
-  if (!project) throw new RequestRefused("That project no longer exists.");
-  if (project.status !== "active") {
-    throw new RequestRefused("Reopen this project before filing a request against it.");
-  }
-
   for (let attempt = 0; attempt < REFERENCE_ATTEMPTS; attempt += 1) {
+    const next = await reference(access.organisation.id);
     try {
-      return await prisma.architectureRequest.create({
-        data: {
-          organisationId: access.organisation.id,
-          reference: await reference(access.organisation.id),
-          projectId: project.id,
-          title,
-          summary: (input.summary ?? "").trim().slice(0, 2000),
-          team: (input.team ?? "").trim().slice(0, 200),
-          requestedById: access.user.id,
-          requestedByName: access.user.name || access.user.email,
-        },
-        select: { id: true, reference: true },
+      return await prisma.$transaction(async (tx) => {
+        const project = await tx.project.create({
+          data: {
+            organisationId: access.organisation.id,
+            // Both halves on purpose: the reference is what keeps this unique,
+            // the title is what makes it legible to whoever meets it later.
+            name: `${next} ${title}`.slice(0, 120),
+            createdById: access.user.id,
+            createdByName: access.user.name || access.user.email,
+          },
+          select: { id: true },
+        });
+
+        return tx.architectureRequest.create({
+          data: {
+            organisationId: access.organisation.id,
+            reference: next,
+            projectId: project.id,
+            title,
+            summary: (input.summary ?? "").trim().slice(0, 2000),
+            team: (input.team ?? "").trim().slice(0, 200),
+            requestedById: access.user.id,
+            requestedByName: access.user.name || access.user.email,
+          },
+          select: { id: true, reference: true },
+        });
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
@@ -392,6 +461,70 @@ export function canEditRequest(
   return (
     canManageStandards(access.organisation.role) || request.requestedById === access.user.id
   );
+}
+
+/**
+ * Where a design uploaded "into a request" actually goes, and whether this
+ * person may put it there.
+ *
+ * The upload doors store a design against a project, because that is what a
+ * `Document` carries and what an assessment reads. A requestor has no project:
+ * they have a request, which owns one they are never shown. So the id that
+ * arrives from the browser is a request's, and this is the only thing that
+ * turns one into a project id.
+ *
+ * It lives here, with the rest of the request's rules, rather than in
+ * intake.ts — a request's own module is where "may this person touch this
+ * request, in this state" belongs, and putting it in intake.ts would have meant
+ * intake.ts importing this module while this module already imports intake.ts.
+ * Both doors call this one function, so neither can be the lenient one; see the
+ * note on `authorise`, which they call straight afterwards with what comes back.
+ *
+ * ## Why only a draft
+ *
+ * Designs are part of what is being submitted. Once a request is submitted, its
+ * answers and its designs are the thing that was assessed: the findings quote
+ * them, the significance result was reached from them, and the report explains
+ * *those* documents. A design added afterwards would be read by the next run
+ * and by nothing that has already been written down — a report that silently
+ * stops describing its own submission.
+ *
+ * A failed request is editable again, and so takes designs again, for the same
+ * reason `updateRequest` lets one be corrected: it never got as far as a
+ * verdict, so there is nothing yet for a late upload to contradict.
+ *
+ * Statuses rather than thrown refusals, because both callers are HTTP doors and
+ * the shape is intake.ts's `Refusal` — 404 for a request in another customer
+ * (saying "forbidden" would confirm it exists), 403 for somebody else's draft,
+ * 409 for a request that has moved past taking designs.
+ */
+export async function designTarget(
+  access: Access,
+  requestId: string,
+): Promise<{ projectId: string } | Refusal> {
+  const request = await prisma.architectureRequest.findFirst({
+    where: { id: requestId, organisationId: access.organisation.id },
+    select: { id: true, state: true, projectId: true, requestedById: true },
+  });
+  if (!request) return { error: "That request no longer exists.", status: 404 };
+
+  if (!canEditRequest(access, request)) {
+    return {
+      error:
+        "Only the person who raised this request, or an administrator, can add designs to it.",
+      status: 403,
+    };
+  }
+
+  if (request.state !== DRAFT && request.state !== FAILED) {
+    return {
+      error:
+        "This request has been submitted, so its designs are now the thing that was assessed. A changed design is a new request.",
+      status: 409,
+    };
+  }
+
+  return { projectId: request.projectId };
 }
 
 /**
@@ -722,21 +855,21 @@ function toRenderable(
 }
 
 /**
- * Start the assessment for every submitted request whose document has finished
- * indexing.
+ * Move every submitted request whose document has finished indexing to
+ * "ready", so its screen can offer "Start assessing".
  *
  * This exists because the worker chain stops at embed and nothing downstream
- * starts an analyse job on its own — a person presses "Assess". The brief
- * requires the review to run immediately after intake with no further step, and
- * changing `NEXT_STAGE` would mean changing the engine, so the step lives here
- * and runs on a schedule.
+ * reports back on its own. It does not open the run — that is
+ * `startAssessment`, and a person calls it. What this owns is the part a button
+ * cannot answer for itself: whether the document is in, whether it was
+ * readable, and whether there is anything indexed to assess yet.
  *
  * Takes no `Access`: there is no session behind a scheduled run. Every query is
  * scoped by the request's own organisation id, which is read from the row
  * rather than supplied by a caller, so there is no id here that could have come
  * from a URL.
  *
- * Never throws. One request that cannot be started must not stop the others,
+ * Never throws. One request that cannot be moved on must not stop the others,
  * and the scheduler has nobody to report an exception to.
  */
 export async function advanceSubmitted(
@@ -753,7 +886,9 @@ export async function advanceSubmitted(
     documentId?: string;
   } = {},
 ): Promise<{
-  started: number;
+  /** How many were moved to "ready" — not how many were assessed. Nothing here
+   *  starts an assessment any more; see `startAssessment`. */
+  ready: number;
   waiting: number;
   failed: number;
 }> {
@@ -770,7 +905,7 @@ export async function advanceSubmitted(
     take: limit,
   });
 
-  let started = 0;
+  let ready = 0;
   let waiting = 0;
   let failed = 0;
 
@@ -803,52 +938,204 @@ export async function advanceSubmitted(
         continue;
       }
 
-      const { runId } = await startProjectRun(
-        // Only `organisation.id` is read; see startProjectRun. Built from the
-        // request's own row rather than a session, because there isn't one.
-        { organisation: { id: request.organisationId } } as Access,
-        request.projectId,
-      );
-
-      await prisma.architectureRequest.update({
-        where: { id: request.id },
-        data: { runId, state: CHECKING, failureReason: null },
-      });
-      started += 1;
-    } catch (error) {
-      // A refusal is a condition the requestor can act on — most often that
-      // their standards library is empty, which no amount of retrying fixes.
-      if (error instanceof ProjectRefused) {
-        await stop(request.id, error.message);
-        failed += 1;
-        continue;
-      }
-
-      // A project may hold one live run at a time, enforced by the partial
-      // unique index "assessment_run_live_project_idx". Two requests filed
-      // against the same project therefore cannot both be assessed at once,
-      // and the second arrives here as Postgres's 23505 rather than as a
-      // refusal — Prisma cannot see a partial index, so it is not a P2002
-      // either. See `isUniqueViolation`.
+      // And nor is the rendered form the only thing being assessed any more.
+      // The requestor uploads designs into the request, each of which indexes
+      // on its own schedule, and the embed worker pings once per document — so
+      // the form can easily be in while a design is still three stages behind.
       //
-      // Waiting is the right answer and not a workaround: the run in progress
-      // is over the same project, and this request's design will be judged by
-      // the next one. Left to the generic branch below it would have been the
-      // right answer by accident, which is the kind of thing that gets
-      // "cleaned up" later by somebody who cannot see why it mattered.
-      if (isUniqueViolation(error)) {
+      // "Ready" has to mean the whole submission is ready, not the form. A
+      // button offered early gets pressed early, and `startProjectRun` takes
+      // whichever designs happen to be indexed and files the rest under
+      // `unreadyDesignIds` — a request assessed without the design its author
+      // thought they were submitting, with nothing on the screen to say so.
+      const unindexed = await prisma.document.count({
+        where: {
+          projectId: request.projectId,
+          organisationId: request.organisationId,
+          role: "assessed",
+          status: { notIn: ["ready", "failed"] },
+        },
+      });
+      if (unindexed > 0) {
         waiting += 1;
         continue;
       }
 
-      // Anything else — a dropped connection, a provider blip — is left in
-      // "submitted" to be tried again, because a transient fault should not
-      // close a submission.
+      // Indexed, readable, and that is as far as this goes. Opening the run is
+      // somebody's decision now rather than a consequence of indexing
+      // finishing — see `startAssessment`.
+      //
+      // `updateMany` with the state in the filter, not `update` by id: the
+      // sweep is reached from the worker's ping and from two screens, so two
+      // callers can arrive on the same row at the same moment. Naming the state
+      // it must still be in means the second one writes nothing, instead of
+      // dragging a request that has since been started back to "ready" and
+      // offering a button for a run already in flight.
+      const moved = await prisma.architectureRequest.updateMany({
+        where: { id: request.id, state: SUBMITTED },
+        data: { state: READY, failureReason: null },
+      });
+      if (moved.count > 0) ready += 1;
+    } catch {
+      // A dropped connection, a provider blip. Left in "submitted" to be tried
+      // again, because a transient fault should not close a submission.
+      //
+      // There used to be two named branches above this one, for the refusals
+      // `startProjectRun` raises and for the partial unique index that stops a
+      // project holding two live runs. Neither can be reached from here any
+      // more: this function no longer opens a run. Both now live in
+      // `startAssessment`, where the person who pressed the button is standing
+      // there to be told.
       waiting += 1;
     }
   }
 
-  return { started, waiting, failed };
+  return { ready, waiting, failed };
+}
+
+/**
+ * Open the assessment of one request, because somebody pressed the button.
+ *
+ * The step the flow now ends on. A requestor opens a request, answers the
+ * intake questions, uploads the designs into it, submits, and — once the
+ * screen says its documents are in — presses "Start assessing". Nothing in
+ * between happens on its own any more, and that is the point: the person who
+ * assembled the submission is the one who knows it is finished.
+ *
+ * ## Who may press it
+ *
+ * The same rule as editing a draft: the person who raised it, or somebody who
+ * administers the workspace. Deliberately not the submission-decision rule —
+ * starting an assessment is asking for the request to be read, which is the
+ * requestor's own business, while *deciding* what happens to it afterwards is
+ * the one thing a requestor must never do for their own submission. See
+ * `canDecideSubmissions` and `ownSubmission` in src/lib/ingest/outcomes.ts.
+ *
+ * ## Why it refuses while anything is still indexing
+ *
+ * `startProjectRun` assesses the designs that are ready and records the others
+ * in `unreadyDesignIds`. For a project that was the right behaviour: designs
+ * arrive over days and an assessment should not wait for the slowest. For a
+ * request it is a trap. Every document here was uploaded minutes ago as one
+ * submission, so a design that is still embedding is not a straggler — it is
+ * part of what was being submitted, and assessing without it produces a report
+ * that reads as complete and is not.
+ *
+ * So this refuses, with the count, rather than quietly narrowing the scope.
+ * `advanceSubmitted` will not offer the button until they are all in; this is
+ * the same rule enforced where it cannot be raced, because a page can be sitting
+ * open from before the last upload landed.
+ *
+ * A document that *failed* is a different matter and does not block: it will
+ * never be ready, and the request would otherwise be unassessable for ever.
+ * The run records it under `unreadyDesignIds`, which is where a reader of the
+ * report can find out what was not read.
+ */
+export async function startAssessment(
+  access: Access,
+  id: string,
+): Promise<{ runId: string; scope: string }> {
+  const request = await prisma.architectureRequest.findFirst({
+    where: { id, organisationId: access.organisation.id },
+    select: {
+      id: true,
+      reference: true,
+      state: true,
+      projectId: true,
+      runId: true,
+      requestedById: true,
+    },
+  });
+  if (!request) throw new RequestRefused("That request no longer exists.");
+
+  if (!canEditRequest(access, request)) {
+    throw new RequestRefused(
+      "Only the person who raised this request, or an administrator, can start its assessment.",
+    );
+  }
+
+  // Already run. Not an error worth a stack trace — the answer is the report,
+  // and a second run over the same designs would cost a hundred model calls to
+  // reach the same findings.
+  if (request.runId) {
+    throw new RequestRefused("This request has already been assessed — open its report.");
+  }
+  if (request.state === DRAFT) {
+    throw new RequestRefused("Finish this request and submit it first.");
+  }
+  if (request.state === FAILED) {
+    throw new RequestRefused(
+      "This request stopped before it could be assessed. Correct it and submit it again.",
+    );
+  }
+  if (request.state !== READY) {
+    throw new RequestRefused(
+      "Its documents are still being read. This turns on by itself once they are in.",
+    );
+  }
+
+  const designs = await assessableDesigns(access.organisation.id, request.projectId);
+  const indexed = designs.filter(
+    (design) => design.status === "ready" && design._count.chunks > 0,
+  );
+  const stillReading = designs.filter(
+    (design) => design.status !== "failed" && !indexed.includes(design),
+  );
+
+  if (stillReading.length > 0) {
+    const count =
+      stillReading.length === 1
+        ? "One of this request's documents is"
+        : `${stillReading.length} of this request's documents are`;
+    throw new RequestRefused(
+      `${count} still being read. Wait for them, so none is left out of the assessment.`,
+    );
+  }
+  if (indexed.length === 0) {
+    throw new RequestRefused(
+      "None of this request's documents could be read, so there is nothing to assess.",
+    );
+  }
+
+  try {
+    const started = await startProjectRun(access, request.projectId);
+
+    // `updateMany` with `runId: null` in the filter: two presses land here at
+    // once and only the first writes. The second's run is the one that loses,
+    // which is why the index that keeps a project to one live run matters below
+    // — without it the loser's run would sit queued for ever, attached to
+    // nothing a screen reads.
+    await prisma.architectureRequest.updateMany({
+      where: { id: request.id, runId: null },
+      data: { runId: started.runId, state: CHECKING, failureReason: null },
+    });
+    return started;
+  } catch (error) {
+    // The refusals `startProjectRun` raises are conditions the person pressing
+    // can act on — above all an empty standards library, which is why this is
+    // told rather than failed: the request stays in "ready" and the same press
+    // works once the standards are in.
+    //
+    // Their wording is a project's, and three of the four cannot be reached
+    // from here: a request's project is created with the request, is never
+    // archived because nothing in the product can archive it, and its designs
+    // were checked above. The one that can — no reference standards indexed —
+    // says so without mentioning a project. If one of the others ever does
+    // surface, it means something outside this flow has been editing a
+    // request's hidden project, and the project's own words are then the most
+    // useful thing it could say.
+    if (error instanceof ProjectRefused) throw new RequestRefused(error.message);
+
+    // A project holds one live run at a time, by the partial unique index
+    // "assessment_run_live_project_idx". Prisma cannot see a partial index, so
+    // this arrives as Postgres's 23505 and never as P2002 — see
+    // `isUniqueViolation`. Reachable here only by two presses racing past the
+    // `runId` check above.
+    if (isUniqueViolation(error)) {
+      throw new RequestRefused("An assessment of this request is already starting.");
+    }
+    throw error;
+  }
 }
 
 async function stop(id: string, reason: string): Promise<void> {

@@ -76,12 +76,18 @@ export function UploadZone({
   role,
   label,
   projectId,
+  requestId,
 }: {
   role: Role;
   label: string;
   /** Required for a design: it belongs to a piece of work. Standards are
    *  organisation-wide and pass nothing. */
   projectId?: string;
+  /** For a design dropped inside an architecture request, which is the other
+   *  way a design can belong somewhere. The request owns a project that is
+   *  never shown, so the request's id is what this sends and the server
+   *  resolves it — see `designTarget`. Pass one or the other, not both. */
+  requestId?: string;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -191,6 +197,7 @@ export function UploadZone({
             headers: {
               "x-aidp-role": role,
               ...(projectId ? { "x-aidp-project": projectId } : {}),
+              ...(requestId ? { "x-aidp-request": requestId } : {}),
             },
           });
           if (uploaded?.serverData?.duplicate) settle("duplicate", "Already on record");
@@ -204,7 +211,7 @@ export function UploadZone({
 
       startTransition(() => router.refresh());
     },
-    [role, projectId, router],
+    [role, projectId, requestId, router],
   );
 
   const pending = receipts.filter((r) => r.state === "uploading").length;

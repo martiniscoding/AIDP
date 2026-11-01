@@ -9,6 +9,7 @@ import {
   record,
   type Recorded,
 } from "@/lib/ingest/intake";
+import { designTarget } from "@/lib/ingest/requests";
 
 /**
  * Document upload over plain multipart.
@@ -93,7 +94,23 @@ export async function POST(request: Request) {
   // Before the files are read: who may add a standard does not depend on what
   // they attached, and a member should be told that rather than told their
   // first file is empty.
-  const verdict = await authorise(access, role, String(form.get("projectId") ?? ""));
+  // A design arrives against one of two things: a project, which is the
+  // library's own door, or an architecture request, which owns a project it
+  // never shows anybody. `designTarget` is the only thing that turns the second
+  // into the first, and it is also what decides whether this person may add a
+  // design to that request and whether the request is still taking them. The
+  // browser's door does this in the same place, for the same reason.
+  let projectId = String(form.get("projectId") ?? "");
+  const requestId = String(form.get("requestId") ?? "");
+  if (requestId) {
+    const target = await designTarget(access, requestId);
+    if ("error" in target) {
+      return NextResponse.json({ error: target.error }, { status: target.status });
+    }
+    projectId = target.projectId;
+  }
+
+  const verdict = await authorise(access, role, projectId);
   if ("error" in verdict) {
     return NextResponse.json({ error: verdict.error }, { status: verdict.status });
   }

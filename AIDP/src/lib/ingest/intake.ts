@@ -186,6 +186,14 @@ export async function authorise(
   // A design belongs to a piece of work. Resolved before the file is read, so
   // a bad project id costs nothing, and checked against this organisation so a
   // guessed id from another customer is indistinguishable from a typo.
+  //
+  // A design uploaded into an architecture request arrives here as the project
+  // its request owns, already resolved: the browser sends a request id, and
+  // `designTarget` in lib/ingest/requests.ts is the one thing that turns one
+  // into a project id — it is also what decides whether that person may add a
+  // design to that request, and whether the request is still taking them. A
+  // door that accepts a request id and does not call it first is wrong; there
+  // are two, and both do.
   if (!requestedProjectId) {
     return { error: "Choose a project for this design.", status: 400 };
   }

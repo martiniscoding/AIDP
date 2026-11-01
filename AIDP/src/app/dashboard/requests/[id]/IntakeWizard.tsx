@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { saveRequest, submit } from "../actions";
+import { RequestDesigns, type RequestDesign } from "./RequestDesigns";
 import type { UpdateInput } from "@/lib/ingest/requests";
 
 /**
@@ -70,7 +71,10 @@ export type Draft = {
 const STEPS = [
   { label: "Request", blurb: "Who is asking, and when it starts." },
   { label: "Solution", blurb: "The problem, and what is being built." },
-  { label: "Architecture", blurb: "What it runs on, and what it talks to." },
+  {
+    label: "Architecture",
+    blurb: "The designs themselves, what it runs on, and what it talks to.",
+  },
   { label: "Impact", blurb: "What it costs, and what it changes." },
 ] as const;
 
@@ -245,10 +249,15 @@ function YesNo({
 
 export function IntakeWizard({
   draft,
+  designs,
   missing,
   canEdit,
 }: {
   draft: Draft;
+  /** The designs already attached to this request, newest state from the
+   *  server. Passed in rather than fetched here: this is a client component,
+   *  and a document's indexing state is the page's to read and to refresh. */
+  designs: RequestDesign[];
   /** How many answers the server says are still outstanding. Only the count is
    *  needed here — the list itself is printed by the page, which is where it
    *  belongs and where somebody can read it from any step. */
@@ -382,6 +391,12 @@ export function IntakeWizard({
 
         {step === 2 && (
           <div className="grid gap-4 sm:grid-cols-2">
+            {/* First in the step, and deliberately. The answers below describe
+                the architecture in words; this is the architecture. Somebody
+                who has a diagram to hand should not have to read four
+                questions before finding out where it goes. */}
+            <RequestDesigns requestId={form.id} designs={designs} canEdit={canEdit} />
+
             <div className="sm:col-span-2">
               <Text
                 label="Technologies and platforms"

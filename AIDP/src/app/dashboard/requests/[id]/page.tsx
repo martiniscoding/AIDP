@@ -6,14 +6,18 @@ import {
   CHECKING,
   DRAFT,
   FAILED,
+  READY,
   advanceSubmitted,
   canEditRequest,
   getRequestDraft,
   whatIsMissing,
 } from "@/lib/ingest/requests";
+import { assessableDesigns } from "@/lib/ingest/projects";
 import { resultsFor } from "@/lib/significance/record";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { IntakeWizard, type Draft } from "./IntakeWizard";
+import { RequestDesigns } from "./RequestDesigns";
+import { StartAssessing } from "./StartAssessing";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +26,11 @@ const STATE: Record<string, { label: string; blurb: string }> = {
   draft: { label: "Draft", blurb: "Not submitted yet. Nobody else is waiting on it." },
   submitted: {
     label: "Submitted",
-    blurb: "Being read. The review starts as soon as it has been indexed.",
+    blurb: "Its documents are being read. It can be assessed once they are in.",
+  },
+  ready: {
+    label: "Ready to assess",
+    blurb: "Everything in it has been read. Start the assessment when it is complete.",
   },
   checking: { label: "Under review", blurb: "Being checked against your standards." },
   reported: { label: "Reported", blurb: "The review is done and the report is ready." },
@@ -74,6 +82,21 @@ export default async function RequestPage({
     label: request.state,
     blurb: "",
   };
+
+  // What the requestor attached, which is every assessed document in the
+  // project this request owns — except the one the request rendered for itself.
+  // That one is not a design somebody chose to upload, it is the answers turned
+  // into a document, and it already has its own link ("What was submitted").
+  // Listing it as a design would invite somebody to wonder who added it.
+  const attached = await assessableDesigns(access.organisation.id, request.projectId);
+  const designs = attached
+    .filter((design) => design.id !== request.documentId)
+    .map((design) => ({
+      id: design.id,
+      title: design.title,
+      status: design.status,
+      chunks: design._count.chunks,
+    }));
 
   // The brief's Step 2, which runs on submission. Null means it has not run —
   // a draft, or a check that could not be completed — and reads as "not yet"
@@ -232,7 +255,12 @@ export default async function RequestPage({
               </p>
             </div>
           )}
-          <IntakeWizard draft={draft} missing={missing.length} canEdit={mayEdit} />
+          <IntakeWizard
+            draft={draft}
+            designs={designs}
+            missing={missing.length}
+            canEdit={mayEdit}
+          />
         </>
       ) : (
         <div className="rounded-xl border border-line bg-card px-4 py-4">
@@ -240,6 +268,33 @@ export default async function RequestPage({
             This request has been submitted, so its answers are now the thing that was
             assessed. A changed design is a new request.
           </p>
+          {/* Read-only once it is in. This is the screen somebody presses
+              "Start assessing" on, and that button refuses while any of these
+              is still being read — so the list of what is still being read has
+              to be on the same screen as the refusal. */}
+          {designs.length > 0 && (
+            <div className="mt-4 border-t border-line pt-4">
+              <RequestDesigns requestId={request.id} designs={designs} canEdit={false} />
+            </div>
+          )}
+
+          {/* Only in "ready", and only to somebody who may press it. Every
+              other state either has nothing to assess yet or has been assessed
+              already, and `startAssessment` refuses each of them by name — this
+              decides what to *offer*, never what is allowed. */}
+          {request.state === READY && mayEdit && (
+            <div className="mt-3">
+              <StartAssessing id={request.id} />
+            </div>
+          )}
+
+          {request.state === READY && !mayEdit && (
+            <p className="mt-3 text-[12.5px] text-ink/60">
+              Raised by {request.requestedByName || "somebody else"}. Only they, or an
+              administrator, can start its assessment.
+            </p>
+          )}
+
           <div className="mt-3 flex flex-wrap gap-2">
             {request.runId && (
               <Link

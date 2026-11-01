@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { requireWorkspace } from "@/lib/access/gate";
 import { advanceSubmitted, listRequests } from "@/lib/ingest/requests";
-import { listProjects } from "@/lib/ingest/projects";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { NewRequest } from "./new/NewRequest";
 
@@ -67,11 +66,7 @@ export default async function RequestsPage() {
   // its list is a worse failure than a request that waits another minute.
   await advanceSubmitted({ organisationId: organisation.id });
 
-  const [requests, projects] = await Promise.all([
-    listRequests(organisation.id),
-    listProjects(organisation.id),
-  ]);
-  const open = projects.filter((project) => project.status === "active");
+  const requests = await listRequests(organisation.id);
 
   return (
     <>
@@ -79,15 +74,8 @@ export default async function RequestsPage() {
         eyebrow="Governance"
         title="Architecture requests"
         lede="Answer the intake questions and the platform checks the design against your standards, without waiting for anyone to upload anything."
-        action={<NewRequest projects={open.map((p) => ({ id: p.id, name: p.name }))} />}
+        action={<NewRequest />}
       />
-
-      {open.length === 0 && (
-        <p className="mb-5 rounded-xl border border-warn-line bg-warn-tint px-4 py-3 text-[12.5px] text-ink/80">
-          A request belongs to a project, and there are no open ones yet. Start a project
-          from the workspace home first.
-        </p>
-      )}
 
       {requests.length === 0 ? (
         <div className="rounded-xl border border-dashed border-line px-6 py-12 text-center">

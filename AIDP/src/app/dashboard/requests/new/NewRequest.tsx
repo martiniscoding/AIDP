@@ -2,20 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, FilePlus2, X } from "lucide-react";
+import { FilePlus2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { newRequest } from "../actions";
 
 /**
- * Opening a request: the project it belongs to, and what to call it.
+ * Opening a request: what to call it, and nothing else.
  *
- * Only two answers, and deliberately. Everything else is asked in the wizard,
- * which can only save into a row that exists — so this is the smallest thing
- * that creates one, and the reference is issued here.
+ * One answer, and deliberately. Everything else is asked in the wizard, which
+ * can only save into a row that exists — so this is the smallest thing that
+ * creates one, and the reference is issued here.
  *
- * The project is chosen rather than created from the title. A project holds
- * several requests, and `Project` carries a unique name per organisation: two
- * requests called "Portal Upgrade" would collide on the second.
+ * It used to ask which project the request belonged to, and refused to appear
+ * at all when the workspace had none — `projects.length === 0` returned null,
+ * so a new customer met a page about filing requests with nothing on it to
+ * file one with. A request carries its own project now, written for it and
+ * never shown; `createRequest` explains why the row still has to exist.
  *
  * ## Why this is a modal and not the inline form it was
  *
@@ -35,7 +37,7 @@ import { newRequest } from "../actions";
  * The trigger stays mounted while the modal is up. Unmounting it reflowed the
  * header the moment the form opened, and left nothing to return focus to.
  */
-export function NewRequest({ projects }: { projects: { id: string; name: string }[] }) {
+export function NewRequest() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -107,8 +109,6 @@ export function NewRequest({ projects }: { projects: { id: string; name: string 
     };
   }, [open, close]);
 
-  if (projects.length === 0) return null;
-
   /** Field chrome at the size `Field` and `Select` use, so the two questions
    *  asked here look like the ones asked everywhere else. */
   const field = cn(
@@ -173,7 +173,7 @@ export function NewRequest({ projects }: { projects: { id: string; name: string 
                   Open an architecture request
                 </h2>
                 <p className="mt-1 text-[12.5px] leading-relaxed text-ink/62">
-                  Two answers now. The intake questions come next, and it saves as you
+                  One answer now. The intake questions come next, and it saves as you
                   go.
                 </p>
               </div>
@@ -201,31 +201,6 @@ export function NewRequest({ projects }: { projects: { id: string; name: string 
               className="flex min-h-0 flex-1 flex-col"
             >
               <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-5 pb-5 pt-4">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[13px] font-medium text-ink/78">Project</span>
-                  <div className="relative">
-                    <select
-                      name="projectId"
-                      required
-                      className={cn(field, "cursor-pointer appearance-none pr-10")}
-                    >
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      size={16}
-                      aria-hidden="true"
-                      className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-ink/55"
-                    />
-                  </div>
-                  <span className="text-[12.5px] text-ink/64">
-                    The piece of work this belongs to. A project holds several requests.
-                  </span>
-                </label>
-
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[13px] font-medium text-ink/78">
                     Request title

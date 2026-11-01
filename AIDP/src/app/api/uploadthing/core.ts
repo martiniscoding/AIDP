@@ -9,6 +9,7 @@ import {
   readRole,
   record,
 } from "@/lib/ingest/intake";
+import { designTarget } from "@/lib/ingest/requests";
 
 /**
  * The browser's door: it uploads straight to object storage, and storage tells
@@ -25,8 +26,8 @@ import {
  * in lib/ingest/intake is the same function /api/documents/upload calls, so the
  * two doors cannot come to different conclusions about who may add a standard.
  *
- * Role and project arrive as headers rather than as `.input()`, which would
- * mean adding a schema library for two strings that are validated here anyway.
+ * Role and scope arrive as headers rather than as `.input()`, which would mean
+ * adding a schema library for three strings that are validated here anyway.
  */
 
 const f = createUploadthing();
@@ -54,7 +55,21 @@ export const fileRouter = {
       if (!access) throw new UploadThingError("Sign in to upload a document.");
 
       const role = readRole(req.headers.get("x-aidp-role"));
-      const verdict = await authorise(access, role, req.headers.get("x-aidp-project") ?? "");
+
+      // A design uploaded from inside an architecture request names the
+      // request, not the project the request owns and never shows.
+      // `designTarget` is the only thing that turns one into the other, and it
+      // is also what decides whether this person may add a design to that
+      // request at all. /api/documents/upload calls it in the same place.
+      let projectId = req.headers.get("x-aidp-project") ?? "";
+      const requestId = req.headers.get("x-aidp-request") ?? "";
+      if (requestId) {
+        const target = await designTarget(access, requestId);
+        if ("error" in target) throw new UploadThingError(target.error);
+        projectId = target.projectId;
+      }
+
+      const verdict = await authorise(access, role, projectId);
       if ("error" in verdict) throw new UploadThingError(verdict.error);
 
       // Checked before the presigned URL is issued, so an oversized file is

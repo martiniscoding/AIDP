@@ -5,6 +5,7 @@ import { NoAccess, requireAccess } from "@/lib/access/gate";
 import {
   RequestRefused,
   createRequest,
+  startAssessment,
   submitRequest,
   updateRequest,
   type UpdateInput,
@@ -38,7 +39,6 @@ async function run(
 export async function newRequest(form: FormData): Promise<RequestResult> {
   return run(async (access) => {
     const created = await createRequest(access, {
-      projectId: String(form.get("projectId") ?? ""),
       title: String(form.get("title") ?? ""),
       summary: String(form.get("summary") ?? ""),
     });
@@ -68,12 +68,15 @@ export async function saveRequest(id: string, input: UpdateInput): Promise<Reque
 /**
  * Submit it: render the answers, take the document in, and let it index.
  *
- * The assessment is not started here and cannot be — the document has to finish
- * parsing, chunking and embedding first. The embed worker says when that has
- * happened and the app starts the run then; `advanceSubmitted` is called once
- * here anyway, for the case that matters to somebody watching this screen: a
- * resubmission whose document was already indexed by an earlier attempt, which
- * would otherwise sit still until the next sweep.
+ * The assessment is not started here, and no longer starts by itself once the
+ * indexing finishes either — somebody presses "Start assessing". What this
+ * owes the person watching the screen is an honest account of where their
+ * request now is, which is "being read".
+ *
+ * `advanceSubmitted` is called once anyway, for the case that would otherwise
+ * look broken: a resubmission whose documents were already indexed by an
+ * earlier attempt, which would sit in "submitted" with no button until the
+ * next sweep came past.
  */
 export async function submit(id: string): Promise<RequestResult> {
   return run(async (access) => {
@@ -82,7 +85,24 @@ export async function submit(id: string): Promise<RequestResult> {
     revalidatePath(`/dashboard/requests/${id}`);
     return {
       ok: true,
-      message: `${reference} submitted. The review starts as soon as it has been read.`,
+      message: `${reference} submitted. It can be assessed once its documents have been read.`,
     };
+  });
+}
+
+/**
+ * Open the assessment, because somebody pressed the button.
+ *
+ * Separate from `submit` on purpose. Submitting says "these are my answers and
+ * these are my designs"; this says "read them now". They were one step while
+ * the only thing assessed was the rendered form, and came apart when the
+ * designs moved inside the request — see `startAssessment`, which holds the
+ * reasoning and every refusal.
+ */
+export async function startAssessing(id: string): Promise<RequestResult> {
+  return run(async (access) => {
+    const { scope } = await startAssessment(access, id);
+    revalidatePath(`/dashboard/requests/${id}`);
+    return { ok: true, message: `Assessing ${scope}.` };
   });
 }
