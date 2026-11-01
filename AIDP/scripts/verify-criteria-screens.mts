@@ -134,10 +134,7 @@ try {
 
   console.log("\nA classification on the request");
 
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} project` },
-  });
-  const { id } = await createRequest(owner.access, { projectId: project.id, title: "Portal rebuild" });
+  const { id } = await createRequest(owner.access, { title: "Portal rebuild" });
   await updateRequest(owner.access, id, {
     plannedStart: "2026-12-01",
     problemStatement: "The portal is unsupported.",
@@ -174,7 +171,7 @@ try {
 
   console.log("\nAnd one that is not significant");
 
-  const { id: quiet } = await createRequest(owner.access, { projectId: project.id, title: "Copy fix" });
+  const { id: quiet } = await createRequest(owner.access, { title: "Copy fix" });
   await updateRequest(owner.access, quiet, {
     plannedStart: "2026-12-01",
     problemStatement: "A typo.",

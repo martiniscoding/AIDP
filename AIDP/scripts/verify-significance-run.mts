@@ -57,9 +57,6 @@ const ROUTINE = {
 };
 
 try {
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} project` },
-  });
 
   // --- seeding --------------------------------------------------------------
   console.log("\nA customer with no criteria yet");
@@ -88,7 +85,7 @@ try {
   // --- a routine change -----------------------------------------------------
   console.log("\nA routine change");
 
-  const quiet = await createRequest(access, { projectId: project.id, title: "Copy fix" });
+  const quiet = await createRequest(access, { title: "Copy fix" });
   await updateRequest(access, quiet.id, ROUTINE);
   const quietResult = await runCriteriaCheck(quiet.id);
 
@@ -110,7 +107,7 @@ try {
   // --- a significant change -------------------------------------------------
   console.log("\nA change the board should see");
 
-  const loud = await createRequest(access, { projectId: project.id, title: "Portal rebuild" });
+  const loud = await createRequest(access, { title: "Portal rebuild" });
   await updateRequest(access, loud.id, {
     ...ROUTINE,
     newTechnologyComponent: true,
@@ -189,7 +186,7 @@ try {
   // --- submitting runs it ---------------------------------------------------
   console.log("\nSubmitting runs the check");
 
-  const submitted = await createRequest(access, { projectId: project.id, title: "Submitted properly" });
+  const submitted = await createRequest(access, { title: "Submitted properly" });
   await updateRequest(access, submitted.id, { ...ROUTINE, securityDomainChange: true });
   const before = await prisma.architectureRequest.findUniqueOrThrow({ where: { id: submitted.id } });
   ok("a draft has no classification", before.significance === null);
@@ -207,7 +204,7 @@ try {
   // --- time is pinned -------------------------------------------------------
   console.log("\nTime is measured from the submission");
 
-  const far = await createRequest(access, { projectId: project.id, title: "Far off" });
+  const far = await createRequest(access, { title: "Far off" });
   await updateRequest(access, far.id, { ...ROUTINE, plannedStart: "2030-01-01" });
   await prisma.architectureRequest.update({
     where: { id: far.id },
@@ -225,7 +222,7 @@ try {
     farResult?.asOf,
   );
 
-  const near = await createRequest(access, { projectId: project.id, title: "Soon" });
+  const near = await createRequest(access, { title: "Soon" });
   await updateRequest(access, near.id, { ...ROUTINE, plannedStart: "2027-01-01" });
   await prisma.architectureRequest.update({
     where: { id: near.id },

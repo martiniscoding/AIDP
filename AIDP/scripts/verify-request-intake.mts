@@ -74,13 +74,7 @@ const colleague = await person("colleague", "member");
 const admin = await person("admin", "owner");
 
 try {
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} project` },
-  });
-  const { id } = await createRequest(requestor, {
-    projectId: project.id,
-    title: "Portal Upgrade",
-  });
+  const { id } = await createRequest(requestor, { title: "Portal Upgrade" });
   const read = () => prisma.architectureRequest.findUniqueOrThrow({ where: { id } });
 
   // --- a step writes only its own group ------------------------------------

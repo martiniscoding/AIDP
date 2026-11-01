@@ -117,16 +117,11 @@ try {
   const empty = await get("/dashboard/requests", cookie);
   ok("it renders", empty.status === 200, empty.status);
   ok("and says there is nothing yet", empty.body.includes("No requests yet"));
-  // No project, so nothing can be filed. Said plainly rather than by offering a
-  // button that cannot work.
-  ok(
-    "and that a request needs a project first",
-    empty.body.includes("there are no open ones yet"),
-  );
-
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} project` },
-  });
+  // A request needed a project before this, and an empty workspace was told so
+  // rather than offered a button that could not work. Filing one is the first
+  // thing anybody can do now, so what has to be here is the button: a page
+  // about architecture requests with no way to raise one was the bug.
+  ok("and still offers a new request", empty.body.includes("New request"));
 
   const access = {
     user: { id: account.userId, name: "Screen Tester", email },
@@ -134,7 +129,6 @@ try {
   } as Access;
 
   const { id, reference } = await createRequest(access, {
-    projectId: project.id,
     title: "Customer Portal Upgrade",
   });
 
@@ -142,7 +136,15 @@ try {
   ok("a request appears on the list", listed.body.includes("Customer Portal Upgrade"));
   ok("with its reference", listed.body.includes(reference), reference);
   ok("and its state", listed.body.includes("Draft"));
-  ok("and the project it belongs to", listed.body.includes(`${TAG} project`));
+  // The project this request opened for itself is named "AR-0001 Customer
+  // Portal Upgrade", and that whole string is what would appear if the list
+  // ever printed it again. The reference and the title are shown as their own
+  // things, in their own elements, which is why looking for them joined up is
+  // a real check and not an accident of the markup.
+  ok(
+    "and never the project it keeps to itself",
+    !listed.body.includes("AR-0001 Customer Portal Upgrade"),
+  );
 
   // --- the wizard ---------------------------------------------------------
   console.log("\nThe wizard");
@@ -285,10 +287,16 @@ try {
   });
 
   // A design that finished indexing, and a request that never heard about it.
+  // Into the project the request opened for itself, because that is the scope
+  // its assessment runs over — a design anywhere else would not be found.
+  const { projectId: own } = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id },
+    select: { projectId: true },
+  });
   const design = await prisma.document.create({
     data: {
       organisationId: org.id,
-      projectId: project.id,
+      projectId: own,
       role: "assessed",
       title: "AR-0001 Rendered intake",
       storageKey: `${TAG}/design.docx`,
@@ -315,39 +323,44 @@ try {
 
   const beforeOpening = await prisma.architectureRequest.findUniqueOrThrow({
     where: { id },
-    select: { runId: true },
+    select: { state: true },
   });
-  ok("it is stuck with no run", beforeOpening.runId === null);
+  ok("it is stuck in submitted", beforeOpening.state === "submitted", beforeOpening.state);
 
-  // Opening the list is the repair.
+  // Opening the list is the repair, and it carries the request exactly as far
+  // as "ready" — which is as far as anything automatic goes now. The assessment
+  // is pressed, so a page that merely drew the list must not have opened a run
+  // or queued anything a worker would be billed for.
   await get("/dashboard/requests", cookie);
   const afterList = await prisma.architectureRequest.findUniqueOrThrow({
     where: { id },
     select: { runId: true, state: true },
   });
-  ok("opening the list starts it", afterList.runId !== null, afterList.state);
-  ok("and moves it on", afterList.state === "checking", afterList.state);
-
-  // The job this just created would be claimed by a worker and billed for.
-  await prisma.job.deleteMany({ where: { organisationId: org.id, stage: "analyse" } });
+  ok("opening the list readies it", afterList.state === "ready", afterList.state);
+  ok("and opens no run of its own", afterList.runId === null);
+  const queued = await prisma.job.count({
+    where: { organisationId: org.id, stage: "analyse" },
+  });
+  ok("and queues nothing for a worker", queued === 0, `got ${queued}`);
 
   // The detail page does the same, for somebody who went straight there.
-  await prisma.assessmentRun.deleteMany({ where: { organisationId: org.id } });
   await prisma.architectureRequest.update({
     where: { id },
     data: { state: "submitted", runId: null },
   });
-  await get(`/dashboard/requests/${id}`, cookie);
+  const detail = await get(`/dashboard/requests/${id}`, cookie);
   const afterDetail = await prisma.architectureRequest.findUniqueOrThrow({
     where: { id },
     select: { runId: true, state: true },
   });
-  ok("and so does opening the request itself", afterDetail.runId !== null, afterDetail.state);
-  await prisma.job.deleteMany({ where: { organisationId: org.id, stage: "analyse" } });
+  ok("and so does opening the request itself", afterDetail.state === "ready", afterDetail.state);
+  ok("still with no run", afterDetail.runId === null);
+  // And the button is on the page that readied it, because pressing it is now
+  // the only way an assessment begins.
+  ok("the ready request offers the button", detail.body.includes("Start assessing"));
 
   // A draft must not be swept into an assessment by somebody reading the list.
   const { id: draftId } = await createRequest(access, {
-    projectId: project.id,
     title: "Still being written",
   });
   await get("/dashboard/requests", cookie);

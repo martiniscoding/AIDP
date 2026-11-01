@@ -91,10 +91,13 @@ async function reportFor(
   findings: { ref: string; verdict: string; obligation: string }[],
   runExtras: Record<string, unknown> = {},
 ) {
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} ${title}` },
+  const { id } = await createRequest(access, { title });
+  // The project the request opened for itself, which is the scope its
+  // assessment runs over — see `createRequest`.
+  const { projectId: project } = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id },
+    select: { projectId: true },
   });
-  const { id } = await createRequest(access, { projectId: project.id, title });
   await updateRequest(access, id, { ...COMPLETE, ...intake });
   await runCriteriaCheck(id);
 
@@ -106,7 +109,7 @@ async function reportFor(
   const run = await prisma.assessmentRun.create({
     data: {
       organisationId: org.id,
-      projectId: project.id,
+      projectId: project,
       frameworkId: framework.id,
       state: "complete",
       totalClauses: findings.length,
@@ -262,12 +265,7 @@ try {
   // -------------------------------------------------------------------------
   console.log("\nBefore there is anything to report");
 
-  const draftProject = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} draft` },
-  });
-  const { id: draftId } = await createRequest(access, {
-    projectId: draftProject.id, title: "Not submitted",
-  });
+  const { id: draftId } = await createRequest(access, { title: "Not submitted" });
   const draftPage = await get(`/dashboard/requests/${draftId}/report`);
   ok("a draft says so rather than drawing an empty report", draftPage.body.includes("has not been submitted yet"));
   draftIdForExport = draftId;

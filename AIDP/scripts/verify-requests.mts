@@ -24,11 +24,12 @@ import type { Access } from "../src/lib/access/gate";
 import {
   CHECKING,
   DRAFT,
-  FAILED,
+  READY,
   RequestRefused,
   SUBMITTED,
   advanceSubmitted,
   createRequest,
+  startAssessment,
   submitRequest,
   whatIsMissing,
 } from "../src/lib/ingest/requests";
@@ -127,19 +128,55 @@ async function indexedDesign(
   return document.id;
 }
 
-try {
-  const project = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} project` },
+/**
+ * The project a request opened for itself.
+ *
+ * Never shown to anybody, and the scope every assessment of that request runs
+ * over: an `AssessmentRun` names a project, not a request. Read back off the
+ * row rather than created here, because the thing most of what follows is
+ * about is that `createRequest` makes one — see its note for why it must.
+ */
+async function projectOf(requestId: string): Promise<string> {
+  const row = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    select: { projectId: true },
   });
+  return row.projectId;
+}
 
+try {
   // --- references ---------------------------------------------------------
   console.log("\nReferences");
 
-  const first = await createRequest(access, { projectId: project.id, title: "Portal Upgrade" });
-  const second = await createRequest(access, { projectId: project.id, title: "Portal Upgrade" });
+  const first = await createRequest(access, { title: "Portal Upgrade" });
+  const second = await createRequest(access, { title: "Portal Upgrade" });
   ok("the first request is AR-0001", first.reference === "AR-0001", first.reference);
   ok("the second is AR-0002", second.reference === "AR-0002", second.reference);
   ok("two requests may share a title", first.id !== second.id);
+
+  // --- the project a request keeps to itself -------------------------------
+  console.log("\nThe project a request keeps to itself");
+
+  const project = await projectOf(first.id);
+  const secondProject = await projectOf(second.id);
+  ok("a request opens with a project of its own", project !== "");
+  ok("and no two requests share one", project !== secondProject);
+
+  const named = await prisma.project.findUniqueOrThrow({ where: { id: project } });
+  // The reference, not the title alone: `Project` is unique on name per
+  // customer and both requests above are called "Portal Upgrade". Without the
+  // reference in it the second would have collided, which is the whole reason
+  // the name is built this way.
+  ok("its name carries the reference", named.name.startsWith("AR-0001 "), named.name);
+  ok("and the title, so it can be recognised", named.name.includes("Portal Upgrade"), named.name);
+  ok("it is attributed to the requestor", named.createdById === user.id);
+  // Not "alternatives": the designs in one request describe a single solution
+  // between them, rather than rival candidates to be judged against each other.
+  ok(
+    "its designs are read as one solution",
+    named.designRelationship === "components",
+    named.designRelationship,
+  );
 
   // --- what a submission has to carry -------------------------------------
   console.log("\nWhat a submission has to carry");
@@ -196,7 +233,7 @@ try {
   });
   ok("a document is created", Boolean(document.id));
   ok("it is a design, not a standard", document.role === "assessed", document.role);
-  ok("it is in the request's project", document.projectId === project.id);
+  ok("it is in the request's project", document.projectId === project);
   ok("it is attributed to the requestor", document.uploadedById === user.id);
   ok("it is a Word document", document.mimeType.includes("wordprocessingml"));
   // "AR 0001 ...", not "AR-0001 ...": `record()` normalises separators when it
@@ -221,7 +258,7 @@ try {
   const again = await submitRequest(access, first.id);
   ok("the same document comes back", again.documentId === submitted.documentId);
   const designs = await prisma.document.count({
-    where: { projectId: project.id, role: "assessed" },
+    where: { projectId: project, role: "assessed" },
   });
   ok("and no second design is created", designs === 1, `got ${designs}`);
 
@@ -235,7 +272,7 @@ try {
   const recovered = await submitRequest(access, first.id);
   ok("an unlinked earlier document is adopted", recovered.documentId === submitted.documentId);
   const stillOne = await prisma.document.count({
-    where: { projectId: project.id, role: "assessed" },
+    where: { projectId: project, role: "assessed" },
   });
   ok("and still no second design", stillOne === 1, `got ${stillOne}`);
 
@@ -243,34 +280,78 @@ try {
   console.log("\nThe sweep, while the document is still indexing");
 
   const indexing = await advanceSubmitted({ organisationId: org.id });
-  ok("nothing is started", indexing.started === 0, JSON.stringify(indexing));
+  ok("nothing is made ready", indexing.ready === 0, JSON.stringify(indexing));
   ok("and the request is left waiting", indexing.waiting === 1, JSON.stringify(indexing));
 
-  console.log("\nThe sweep, with no standards indexed");
-  // Ready, with chunks, but the customer's library is empty. The run cannot be
-  // opened and no amount of retrying changes that, so the request has to say so
-  // rather than sit in "submitted" for ever.
-  //
-  // The submitted document is swapped for a fixture here, so that nothing in
-  // the queue can move underneath these checks. See `indexedDesign`.
+  // From here the sweep's fixtures stand in for the real thing, so the document
+  // `submitRequest` really rendered goes. Its parse job was deleted above, so it
+  // would sit at "pending" for ever — and the sweep will not call a request
+  // ready while any of its documents is still unread, which is exactly the rule
+  // being relied on later.
   await prisma.job.deleteMany({ where: { organisationId: org.id } });
-  const design = await indexedDesign(project.id, "AR-0001");
+  // Its blob goes with it. The cleanup at the end collects storage keys from
+  // the rows that still exist, so a row deleted here would leave its file
+  // behind in the bucket — paid for, every run.
+  const rendered = await prisma.document.findUniqueOrThrow({
+    where: { id: submitted.documentId },
+    select: { storageKey: true },
+  });
+  await remove([rendered.storageKey]).catch(() => 0);
+  await prisma.chunk.deleteMany({ where: { documentId: submitted.documentId } });
+  await prisma.document.delete({ where: { id: submitted.documentId } });
+
+  const design = await indexedDesign(project, "AR-0001");
   await prisma.architectureRequest.update({
     where: { id: first.id },
     data: { documentId: design },
   });
 
-  const noStandards = await advanceSubmitted({ organisationId: org.id });
-  ok("the request is failed", noStandards.failed === 1, JSON.stringify(noStandards));
-  const stopped = await prisma.architectureRequest.findUniqueOrThrow({ where: { id: first.id } });
-  ok("in the failed state", stopped.state === FAILED, stopped.state);
+  console.log("\nThe sweep, once the document is in");
+
+  const swept = await advanceSubmitted({ organisationId: org.id });
+  ok("the request is made ready", swept.ready === 1, JSON.stringify(swept));
+  const readied = await prisma.architectureRequest.findUniqueOrThrow({ where: { id: first.id } });
+  ok("it is in the ready state", readied.state === READY, readied.state);
+  // The sweep's whole job now. It used to open the run itself; a person does
+  // that, so until they do there must be no run and nothing for a worker.
+  ok("with no run against it yet", readied.runId === null);
+  const nothingQueued = await prisma.job.count({
+    where: { organisationId: org.id, stage: "analyse" },
+  });
+  ok("and nothing queued for a worker", nothingQueued === 0, `got ${nothingQueued}`);
+
+  console.log("\nThe sweep does not repeat itself");
+  const resweep = await advanceSubmitted({ organisationId: org.id });
+  ok("a request already ready is left alone", resweep.ready === 0, JSON.stringify(resweep));
+
+  // --- pressing it ---------------------------------------------------------
+  console.log("\nStarting the assessment, with no standards indexed");
+
+  // Ready, with chunks, but the customer's library is empty. This used to fail
+  // the request outright, which was the only option while the run opened itself
+  // with nobody watching. Somebody is standing here now, so they are told — and
+  // the request stays where it is, so the same press works once the standards
+  // are in. A submission must not be closed over a library its requestor may
+  // not even be allowed to fill.
+  let noStandards = "";
+  try {
+    await startAssessment(access, first.id);
+  } catch (error) {
+    if (error instanceof RequestRefused) noStandards = error.message;
+  }
+  ok("the press is refused", noStandards !== "", noStandards);
+  ok("and says what is missing", noStandards.includes("reference standards"), noStandards);
+  const survived = await prisma.architectureRequest.findUniqueOrThrow({
+    where: { id: first.id },
+  });
+  ok("the request is not failed", survived.state === READY, survived.state);
   ok(
-    "with a reason the requestor can act on",
-    (stopped.failureReason ?? "").includes("reference standards"),
-    String(stopped.failureReason),
+    "and nothing is held against it",
+    survived.failureReason === null,
+    String(survived.failureReason),
   );
 
-  console.log("\nThe sweep, with a standard indexed");
+  console.log("\nStarting the assessment, with a standard indexed");
   const standard = await prisma.document.create({
     data: {
       organisationId: org.id,
@@ -300,15 +381,9 @@ try {
     },
   });
 
-  // Back to submitted: the standards are there now, and a failed request is
-  // allowed to be tried again.
-  await prisma.architectureRequest.update({
-    where: { id: first.id },
-    data: { state: SUBMITTED, failureReason: null },
-  });
-
-  const swept = await advanceSubmitted({ organisationId: org.id });
-  ok("the assessment is started", swept.started === 1, JSON.stringify(swept));
+  const opened = await startAssessment(access, first.id);
+  ok("it opens a run", opened.runId !== "", opened.runId);
+  ok("and says what it is assessing", opened.scope.includes("1 design"), opened.scope);
 
   const running = await prisma.architectureRequest.findUniqueOrThrow({ where: { id: first.id } });
   ok("the request is checking", running.state === CHECKING, running.state);
@@ -317,7 +392,7 @@ try {
   const run = await prisma.assessmentRun.findUniqueOrThrow({
     where: { id: running.runId! },
   });
-  ok("the run is over the request's project", run.projectId === project.id);
+  ok("the run is over the request's own project", run.projectId === project);
   ok("it counted the clause", run.totalClauses === 1, String(run.totalClauses));
   const analyse = await prisma.job.count({
     where: { organisationId: org.id, stage: "analyse" },
@@ -328,11 +403,17 @@ try {
   // framework against the rendered document and bill for it.
   await prisma.job.deleteMany({ where: { organisationId: org.id } });
 
-  console.log("\nThe sweep is not repeated");
-  const resweep = await advanceSubmitted({ organisationId: org.id });
-  ok("a request already checking is left alone", resweep.started === 0, JSON.stringify(resweep));
-  const runs = await prisma.assessmentRun.count({ where: { organisationId: org.id } });
-  ok("and no second run is opened", runs === 1, `got ${runs}`);
+  console.log("\nPressing it a second time");
+  let twice = "";
+  try {
+    await startAssessment(access, first.id);
+  } catch (error) {
+    if (error instanceof RequestRefused) twice = error.message;
+  }
+  ok("the second press is refused", twice !== "", twice);
+  ok("and points at the report instead", twice.includes("report"), twice);
+  const runCount = await prisma.assessmentRun.count({ where: { organisationId: org.id } });
+  ok("no second run is opened", runCount === 1, `got ${runCount}`);
 
   console.log("\nThe worker's push, scoped to one document");
   // What Workers/aidp/notify.py sends the moment a document lands ready. The
@@ -357,29 +438,23 @@ try {
   const pushed = await advanceSubmitted({ documentId: stranger.id });
   ok(
     "a document belonging to no request does nothing",
-    pushed.started === 0 && pushed.waiting === 0 && pushed.failed === 0,
+    pushed.ready === 0 && pushed.waiting === 0 && pushed.failed === 0,
     JSON.stringify(pushed),
   );
 
-  // And a push naming one request must not advance another's. A second request
-  // is made ready here, then the push names the first one's document.
-  // Its own project, deliberately. A project holds one live run at a time —
-  // "assessment_run_live_project_idx" — and the first request's run is still
-  // queued, so filing this one alongside it would be testing contention rather
-  // than scoping. Contention gets its own check below.
-  const secondProject = await prisma.project.create({
-    data: { organisationId: org.id, name: `${TAG} second project` },
-  });
-  const secondDesign = await indexedDesign(secondProject.id, "AR-0002");
+  // And a push naming one document must not advance another request. The second
+  // request is made submittable here, with its own indexed design, and then the
+  // push names the stranger's document instead.
+  const secondDesign = await indexedDesign(secondProject, "AR-0002");
   await prisma.architectureRequest.update({
     where: { id: second.id },
-    data: { ...COMPLETE, state: SUBMITTED, projectId: secondProject.id, documentId: secondDesign },
+    data: { ...COMPLETE, state: SUBMITTED, documentId: secondDesign },
   });
 
   const elsewhere = await advanceSubmitted({ documentId: stranger.id });
   ok(
     "a push for one document leaves another request waiting",
-    elsewhere.started === 0,
+    elsewhere.ready === 0,
     JSON.stringify(elsewhere),
   );
   const stillWaiting = await prisma.architectureRequest.findUniqueOrThrow({
@@ -389,49 +464,58 @@ try {
   ok("which is still submitted", stillWaiting.state === SUBMITTED, stillWaiting.state);
   ok("with no run", stillWaiting.runId === null);
 
-  // Now name its own document, and it goes.
+  // Now name its own document, and it is made ready — still not assessed.
   const itsOwn = await advanceSubmitted({ documentId: secondDesign });
-  ok("naming its own document starts it", itsOwn.started === 1, JSON.stringify(itsOwn));
-  await prisma.job.deleteMany({ where: { organisationId: org.id } });
+  ok("naming its own document readies it", itsOwn.ready === 1, JSON.stringify(itsOwn));
 
-  console.log("\nTwo requests against one project");
-  // A project may hold one live run, and both earlier runs are still queued.
-  // A third request filed against the first project therefore has to wait for
-  // them rather than fail: its design will be judged by the next run over that
-  // project. The failure this pins down is the opposite one — a submission
-  // closed as "failed" because somebody else's assessment happened to be
-  // running when it landed.
-  const contending = await createRequest(access, {
-    projectId: project.id,
-    title: "Filed while another is running",
-  });
+  console.log("\nTwo requests sharing one project");
+  // This can no longer arise through `createRequest`: every request opens a
+  // project of its own, so two of them never contend for the single live-run
+  // slot a project has ("assessment_run_live_project_idx"). The invariant is
+  // pinned down anyway, by putting a second request onto the first one's
+  // project by hand — because what it guards against is severe and silent: a
+  // submission closed as "failed" because somebody else's assessment happened
+  // to be running when it landed. If projects are ever shared again, this is
+  // the check that notices.
+  const contending = await createRequest(access, { title: "Filed while another is running" });
+  const contendingDesign = await indexedDesign(project, "AR-0003");
   await prisma.architectureRequest.update({
     where: { id: contending.id },
-    data: COMPLETE,
-  });
-  const contendingDesign = await indexedDesign(project.id, "AR-0003");
-  await prisma.architectureRequest.update({
-    where: { id: contending.id },
-    data: { ...COMPLETE, state: SUBMITTED, documentId: contendingDesign },
+    data: { ...COMPLETE, state: READY, projectId: project, documentId: contendingDesign },
   });
 
-  const contended = await advanceSubmitted({ documentId: contendingDesign });
-  ok("it waits rather than starting", contended.started === 0, JSON.stringify(contended));
-  ok("and is not failed", contended.failed === 0, JSON.stringify(contended));
+  let contended = "";
+  try {
+    await startAssessment(access, contending.id);
+  } catch (error) {
+    if (error instanceof RequestRefused) contended = error.message;
+  }
+  ok("the press is refused rather than the request failed", contended !== "", contended);
   const held = await prisma.architectureRequest.findUniqueOrThrow({
     where: { id: contending.id },
     select: { state: true, failureReason: true },
   });
-  ok("the request is still submitted", held.state === SUBMITTED, held.state);
+  ok("the request is still ready", held.state === READY, held.state);
   ok("with nothing held against it", held.failureReason === null, String(held.failureReason));
 
   console.log("\nDrafts are untouched by all of this");
-  const third = await createRequest(access, { projectId: project.id, title: "Never submitted" });
+  const third = await createRequest(access, { title: "Never submitted" });
   await advanceSubmitted({ organisationId: org.id });
   const untouched = await prisma.architectureRequest.findUniqueOrThrow({ where: { id: third.id } });
   ok("a draft is never swept", untouched.state === DRAFT, untouched.state);
   ok("and gets no document", untouched.documentId === null);
   ok("and the references kept counting", third.reference === "AR-0004", third.reference);
+
+  // Nor can a draft be assessed, and the refusal says what to do about it
+  // rather than naming a state nobody outside this file has heard of.
+  let draftPress = "";
+  try {
+    await startAssessment(access, third.id);
+  } catch (error) {
+    if (error instanceof RequestRefused) draftPress = error.message;
+  }
+  ok("pressing a draft is refused", draftPress !== "", draftPress);
+  ok("and asks for it to be submitted first", draftPress.includes("submit"), draftPress);
 } finally {
   // Ordered, children first, rather than one cascading delete of the
   // organisation. Removing an organisation cascades into a dozen tables at
