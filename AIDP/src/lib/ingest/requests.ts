@@ -242,8 +242,10 @@ export type RequestSummary = {
   significance: string | null;
   failureReason: string | null;
   requestedByName: string;
+  /** The project this request opened for itself. An id and no name, because
+   *  there is no name worth showing: it is the scope an assessment runs over,
+   *  not a thing anybody manages. See `createRequest`. */
   projectId: string;
-  projectName: string;
   documentId: string | null;
   runId: string | null;
   submittedAt: Date | null;
@@ -264,15 +266,7 @@ const SUMMARY_SELECT = {
   runId: true,
   submittedAt: true,
   createdAt: true,
-  project: { select: { name: true } },
 } as const;
-
-function toSummary(
-  row: { project: { name: string } } & Omit<RequestSummary, "projectName">,
-): RequestSummary {
-  const { project, ...rest } = row;
-  return { ...rest, projectName: project.name };
-}
 
 /**
  * Every request in the organisation, newest first.
@@ -287,7 +281,7 @@ export async function listRequests(organisationId: string): Promise<RequestSumma
     select: SUMMARY_SELECT,
     orderBy: { createdAt: "desc" },
   });
-  return rows.map(toSummary);
+  return rows;
 }
 
 /** One request, scoped to the caller's organisation. Null rather than a
@@ -301,7 +295,7 @@ export async function getRequest(
     where: { id, organisationId },
     select: SUMMARY_SELECT,
   });
-  return row ? toSummary(row) : null;
+  return row;
 }
 
 /** The whole row, for the wizard, which writes every field it reads. */

@@ -100,9 +100,11 @@ export default async function RequestsPage() {
                   <span className="block truncate text-[13.5px] font-medium text-ink">
                     {request.title || "Untitled request"}
                   </span>
+                  {/* No project here. Every request opens one for itself and
+                      it is never shown — naming it would invite somebody to go
+                      looking for a thing they cannot manage. */}
                   <span className="block truncate text-[12px] text-ink/55">
-                    {request.projectName}
-                    {request.requestedByName && ` · ${request.requestedByName}`}
+                    {request.requestedByName}
                   </span>
                 </span>
                 <span
