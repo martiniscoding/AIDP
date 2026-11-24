@@ -1062,8 +1062,9 @@ Choose exactly one verdict:
 - "needs_review" - you cannot tell: the document touches the subject but is
                    ambiguous, or the only support is a figure description
 - "not_applicable" - the clause does not govern the architecture described, on a
-                   condition the clause itself states. Never because the document
-                   is silent - that is "not_assessable".
+                   condition the clause itself states (rule 5b). Never because the
+                   document is silent on what the clause requires - that is
+                   "absent" or "not_assessable".
 
 Before the verdict, two findings of fact. Answer both from the document, and answer \
 them whatever verdict you go on to reach.
@@ -1213,6 +1214,18 @@ would hold it. Rule 5a governs that case and that case only.
 silence. Quote the passage establishing what this architecture is, and name the \
 stated condition of the clause that excludes it. Where the clause states no such \
 condition, you may not answer "not_applicable".
+5b-i. A clause whose subject is one particular kind of workload or component states \
+its own condition: "GPU capacity for training and self-hosted inference is \
+provisioned ...", "Production generative AI applications should ...". It governs a \
+design only if the design has that kind of workload or component. You have the whole \
+document, so you can tell: where the design describes what it runs and nothing it \
+runs is of that kind, the answer is "not_applicable" - not "absent", and there is no \
+gap to report. Quote the passage that says what the design runs (its compute, its \
+applications, its scope) and name the kind the clause is about. This is NOT for a \
+clause that tells designs in general what to build on or how to work - "services \
+shall log to ...", "solutions shall use the approved ..." - which governs every \
+design it names; that clause is never "not_applicable", and the other rules decide \
+its verdict exactly as before.
 5c. Never state a rule the clause does not. Before answering "contradicts", read \
 the clause's own force: one that says an option "shall be assessed as the primary \
 preference", or that provides for "other platforms" under stated conditions, is a \
@@ -2191,6 +2204,25 @@ _LIFECYCLE_SCHEMA = {
 }
 
 _LIFECYCLE_MAX_TOKENS = 8192
+
+# The names a design uses, and nothing else: no product ids, no versions, no
+# quotes. The caller checks every one against the document and the stack in
+# code, so this is a list of candidates and carries no claim of its own.
+_NAMES_SCHEMA = {
+    "type": "object",
+    "properties": {"names": {"type": "array", "items": {"type": "string"}}},
+    "required": ["names"],
+    "propertyOrdering": ["names"],
+}
+_NAMES_SYSTEM = (
+    "List every distinct software product, platform, framework, database, cloud service, "
+    "integration engine or tool that the design below names, each exactly as the design "
+    "writes it: same spelling, same capitalisation, no version number. Leave out companies, "
+    "standards, protocols, file formats and generic capabilities such as \"API gateway\" "
+    "unless the design names a specific product. Names only.\n\n<design>\n{design}\n</design>"
+)
+_NAMES_USER = "List the names."
+_NAMES_MAX_TOKENS = 1500
 
 
 def _lifecycle_system(*, design: str, products: str, title: str) -> str:
@@ -3743,6 +3775,20 @@ class OpenRouterLLM:
             raise RuntimeError("openrouter returned no technologies")
         return _parse_json(text)
 
+    def find_named_technologies(self, *, design: str) -> dict:
+        text = self._chat(
+            [
+                {"role": "system", "content": _NAMES_SYSTEM.format(design=design)},
+                {"role": "user", "content": _NAMES_USER},
+            ],
+            max_tokens=_NAMES_MAX_TOKENS,
+            schema=_NAMES_SCHEMA,
+            name="names",
+        )
+        if not text:
+            raise RuntimeError("openrouter returned no technology names")
+        return _parse_json(text)
+
     def read_intake(self, *, designs: str, questions: str) -> dict:
         text = self._chat(
             [
@@ -4057,6 +4103,18 @@ def find_technologies(*, design: str, products: str, title: str) -> dict:
     against the product list and the design before anything is looked up.
     """
     return client().find_technologies(design=design, products=products, title=title)
+
+
+def find_named_technologies(*, design: str) -> dict:
+    """The technology names a design uses, as candidates for the caller to check.
+
+    OpenRouter only. Another provider has no such method and answers with no
+    names, which leaves the stack block exactly as it was.
+    """
+    method = getattr(client(), "find_named_technologies", None)
+    if method is None:
+        return {"names": []}
+    return method(design=design)
 
 
 def read_intake(*, designs: str, questions: str) -> dict:

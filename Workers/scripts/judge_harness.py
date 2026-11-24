@@ -196,7 +196,11 @@ def corpus(conn, refs: set[str]) -> tuple[whole_document.WholeDocument, list[dic
 
     rows = stack.load(conn, design["organisationId"])
     text = stack.design_text(conn, [design["id"]])
-    block = stack.render(rows, stack.names_in(rows, text)) if rows and text else ""
+    block = (
+        stack.render(rows, stack.names_in(rows, text), analyse._unmatched(rows, text))
+        if rows and text
+        else ""
+    )
 
     print(
         f"  design     {design['title']} ({whole.tokens:,} tokens, {len(whole.pages)} pages)\n"

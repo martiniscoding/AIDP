@@ -147,6 +147,7 @@ class Config:
     #: settings on the same clause set with
     #: `scripts/judge_harness.py --baseline <saved>`.
     verdict_procedure: bool = False
+    stack_unlisted: bool = False
 
     # Independent readings per standard. The second is the cross-check: lines
     # the two readings disagree about are put in front of a reviewer. One
@@ -307,6 +308,7 @@ class Config:
             contextual_preambles=_flag("CONTEXTUAL_PREAMBLES", True),
             rules_by_model=_flag("RULES_BY_MODEL", True),
             verdict_procedure=_flag("VERDICT_PROCEDURE", False),
+            stack_unlisted=_flag("STACK_UNLISTED", False),
             rules_readings=max(1, min(2, _int("RULES_READINGS", 2))),
             judge_readings=max(1, min(5, _int("JUDGE_READINGS", 3))),
             assess_concurrency=max(1, min(32, _int("ASSESS_CONCURRENCY", 8))),

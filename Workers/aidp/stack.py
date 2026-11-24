@@ -321,6 +321,69 @@ def names_in(stack: Stack, text: str) -> list[Hit]:
     return hits
 
 
+#: The most unmatched names put in front of the judge. A block of fifty lines
+#: stops being a fact and starts being noise.
+MAX_UNLISTED = 20
+
+
+def _initials(name: str) -> str:
+    """"Amazon Elastic Kubernetes Service" -> "EKS": the vendor dropped, then initials."""
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", name) if w.lower() not in _VENDOR_PREFIXES]
+    return "".join(w[0] for w in words).upper() if len(words) > 1 else ""
+
+
+def _recorded(stack: Stack, name: str) -> bool:
+    """Whether some stack row is this name, written in full, shortened or in its bracket.
+
+    A design says "EKS", "Step Functions" or "Redis" where the stack says "Amazon
+    Elastic Kubernetes Service", "AWS Step Functions" or "Amazon ElastiCache
+    (Redis)". Reporting those as missing would bury the technology that really is
+    absent, and tell the judge something false about a technology that is not.
+    """
+    if names_in(stack, name):
+        return True
+    low = re.escape(name.lower())
+    word = re.compile(rf"(?<![a-z0-9]){low}(?![a-z0-9])")
+    acronym = name.replace(" ", "").upper() if " " not in name.strip() else ""
+    for row in stack.rows:
+        if word.search(row.name.lower()):
+            return True
+        if acronym and 2 <= len(acronym) <= 6 and _initials(row.primary) == acronym:
+            return True
+    return False
+
+
+def unlisted(stack: Stack, text: str, names: list[str]) -> list[Hit]:
+    """Names the design uses that no stack entry matches, each checked in code.
+
+    The model proposes names; it is never trusted on them. A name counts only if
+    it is literally in the design (so one the model invented is dropped) and no
+    stack row matches it by the same gazetteer `names_in` uses (so a technology
+    the stack already records is not reported as missing). What is left is
+    reported as a fact with the design's own words beside it, and no verdict.
+    """
+    seen: set[str] = set()
+    out: list[Hit] = []
+    for raw in names:
+        name = " ".join(str(raw or "").split())
+        key = name.lower()
+        if len(name) < 3 or key in seen:
+            continue
+        seen.add(key)
+        found = re.search(re.escape(name), text, flags=re.IGNORECASE)
+        if not found or _recorded(stack, name):
+            continue
+        out.append(
+            Hit(
+                row=Row(name=name, status="unlisted"),
+                quote=_around(text, found.start(), found.end()),
+            )
+        )
+        if len(out) >= MAX_UNLISTED:
+            break
+    return out
+
+
 def _around(text: str, start: int, end: int, width: int = 90) -> str:
     """The design's own words around a match, for a reviewer to check it by."""
     left = max(0, start - width)
@@ -345,7 +408,7 @@ def concerns_technology(clause: dict) -> bool:
     return any(phrase in haystack for phrase in _CONCERNS)
 
 
-def render(stack: Stack, hits: list[Hit]) -> str:
+def render(stack: Stack, hits: list[Hit], unmatched: list[Hit] | None = None) -> str:
     """The stack as the judge reads it, for a clause that is about the stack.
 
     Two blocks, and the order is the point. What the design actually names comes
@@ -385,6 +448,15 @@ def render(stack: Stack, hits: list[Hit]) -> str:
         parts.append(
             "No technology from the organisation's technology stack was found by name "
             "in this design."
+        )
+
+    if unmatched:
+        lines = [f"- {hit.row.name}\n  Design says: {hit.quote}" for hit in unmatched]
+        parts.append(
+            "Technologies this design names that could not be matched, by name, to any "
+            "entry in the organisation's technology stack below. The stack may write a "
+            "name differently, so look for it in the full list before concluding it is "
+            "absent:\n" + "\n".join(lines)
         )
 
     # Grouped and comma-separated rather than one row per line: the same facts
